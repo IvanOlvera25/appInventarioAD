@@ -5,6 +5,9 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy import func  # <— lo usas en agregaciones
+from sqlalchemy.orm import joinedload, selectinload  # <— eager loading
+from flask_compress import Compress
+from flask_caching import Cache
 from datetime import datetime, timedelta, timezone
 import pandas as pd
 import os
@@ -30,8 +33,17 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_pre_ping': True,
     'pool_recycle': 300,
+    'pool_size': 5,           # conexiones permanentes en el pool
+    'max_overflow': 10,        # conexiones adicionales temporales
+    'pool_timeout': 30,        # espera máxima para obtener conexión
     'connect_args': {'connect_timeout': 10},
 }
+# ===== COMPRESIÓN GZIP/BROTLI =====
+app.config['COMPRESS_ALGORITHM'] = ['br', 'gzip', 'deflate']
+app.config['COMPRESS_MIN_SIZE'] = 500  # Comprimir respuestas > 500 bytes
+# ===== CACHE EN MEMORIA =====
+app.config['CACHE_TYPE'] = 'SimpleCache'
+app.config['CACHE_DEFAULT_TIMEOUT'] = 60  # 60 segundos de cache por defecto
 
 # Configuración para archivos
 UPLOAD_FOLDER = 'uploads'
@@ -79,6 +91,8 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 db.init_app(app)
+Compress(app)   # Compresión automática de respuestas HTML/JSON
+cache = Cache(app)  # Cache en memoria
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -1970,7 +1984,11 @@ def requests():
     client_filter = request.args.get('client', '', type=str)
     sort_by = request.args.get('sort', 'created_at_desc', type=str)
 
-    query = Request.query
+    query = Request.query.options(
+        joinedload(Request.user),
+        joinedload(Request.project),
+        selectinload(Request.items)
+    )
 
     # Obtener lista de clientes únicos para el filtro
     clients = db.session.query(Project.client).filter(Project.client.isnot(None), Project.client != '').distinct().order_by(Project.client).all()
@@ -2025,12 +2043,14 @@ def requests():
 
     # Datos para la vista "Por Proyectos" y "Todos los Proyectos"
     # Proyectos Activos: Aquellos con al menos una requisición NO completada ni cancelada
-    active_projects = Project.query.join(Request).filter(
+    active_projects = Project.query.options(
+        selectinload(Project.requests).selectinload(Request.items)
+    ).join(Request).filter(
         Request.status.notin_(['completada', 'cancelada'])
     ).distinct().order_by(Project.fp_code.desc()).all()
 
     # Todos los proyectos (para la nueva sección)
-    all_projects = Project.query.order_by(Project.fp_code.desc()).all()
+    all_projects = Project.query.order_by(Project.fp_code.desc()).limit(100).all()
 
     return render_template('requests.html',
                          requests=requests,
