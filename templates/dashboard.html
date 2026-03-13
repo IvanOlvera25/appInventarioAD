@@ -134,6 +134,38 @@
 
 <div class="row">
   <!-- KPIs -->
+  {% if is_requisitador %}
+  <!-- KPIs personalizados para requisitadores -->
+  <div class="col-md-3 mb-4">
+    <div class="stat-card text-primary">
+      <div class="stat-icon"><i class="fas fa-file-alt"></i></div>
+      <h3>{{ req_total }}</h3>
+      <p>Mis Requisiciones</p>
+    </div>
+  </div>
+  <div class="col-md-3 mb-4">
+    <div class="stat-card text-warning">
+      <div class="stat-icon"><i class="fas fa-clock"></i></div>
+      <h3>{{ req_pendientes }}</h3>
+      <p>Pendientes</p>
+    </div>
+  </div>
+  <div class="col-md-3 mb-4">
+    <div class="stat-card text-info">
+      <div class="stat-icon"><i class="fas fa-truck"></i></div>
+      <h3>{{ req_en_entrega }}</h3>
+      <p>En Entrega</p>
+    </div>
+  </div>
+  <div class="col-md-3 mb-4">
+    <div class="stat-card text-success">
+      <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+      <h3>{{ req_completadas }}</h3>
+      <p>Completadas</p>
+    </div>
+  </div>
+  {% else %}
+  <!-- KPIs generales de almacén -->
   <div class="col-md-3 mb-4">
     <div class="stat-card text-primary">
       <div class="stat-icon"><i class="fas fa-boxes"></i></div>
@@ -162,7 +194,9 @@
       <p>Sin Movimiento 6M</p>
     </div>
   </div>
+  {% endif %}
 </div>
+
 
 {% if alerts %}
 <!-- Alertas del sistema (persistentes, con mostrar/ocultar) -->

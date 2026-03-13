@@ -256,7 +256,7 @@
               <p>{% if search or category or consumibles_filter or reciclables_filter or reciclados_filter or
                 error_stock_filter %}Intenta cambiar los filtros de búsqueda{% else %}Comienza agregando tu primer
                 material{% endif %}</p>
-              {% if not search and not category %}
+            {% if not search and not category and current_user.role != 'requisitador' %}
               <a href="{{ url_for('add_material') }}" class="btn btn-primary">
                 <i class="fas fa-plus me-1"></i>Agregar Primer Material
               </a>
@@ -506,6 +506,7 @@
 
 {% block scripts %}
 <script>
+  const CURRENT_USER_ROLE = '{{ current_user.role }}';
   // ----- Navegación entre tabs -----
   function switchToConsumibles() {
     const params = new URLSearchParams(window.location.search);
@@ -665,15 +666,16 @@
         <!-- Botones de acción -->
         <div class="col-12">
           <div class="d-flex flex-wrap gap-2">
+            ${CURRENT_USER_ROLE !== 'requisitador' ? `
             <button class="btn btn-warning btn-sm" onclick="window.location.href='/materials/${m.id}/edit'" data-bs-dismiss="modal">
               <i class="fas fa-edit me-1"></i>Editar Material
             </button>
+            <button class="btn btn-success btn-sm" onclick="window.location.href='/materials/${m.id}/add-stock'" data-bs-dismiss="modal">
+              <i class="fas fa-plus me-1"></i>Agregar Stock
+            </button>` : ''}
             <a class="btn btn-info btn-sm" href="/stock-movements?material=${encodeURIComponent(m.name)}" target="_blank">
               <i class="fas fa-history me-1"></i>Ver Historial de Movimientos
             </a>
-            <button class="btn btn-success btn-sm" onclick="window.location.href='/materials/${m.id}/add-stock'" data-bs-dismiss="modal">
-              <i class="fas fa-plus me-1"></i>Agregar Stock
-            </button>
             ${m.is_fabric_roll ? `
             <button class="btn btn-primary btn-sm" onclick="window.location.href='/fabric-rolls?material_id=${m.id}'" data-bs-dismiss="modal">
               <i class="fas fa-scroll me-1"></i>Ver Rollos

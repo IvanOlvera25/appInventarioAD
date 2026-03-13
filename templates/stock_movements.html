@@ -995,6 +995,9 @@
                     option.dataset.unit = mat.unit;
                     option.dataset.code = mat.code;
                     option.dataset.name = mat.name;
+                    option.dataset.totalRequested = mat.total_requested || 0;
+                    option.dataset.totalDelivered = mat.total_delivered || 0;
+                    option.dataset.abastecidaPendiente = mat.abastecida_pendiente || 0;
                     exitMaterialSelect.add(option);
                 }
             });
@@ -1014,7 +1017,13 @@
             const pending = parseFloat(selected.dataset.pending);
             const stock = parseFloat(selected.dataset.stock);
             const unit = selected.dataset.unit;
-            const maxAllowed = Math.min(pending, stock);
+            const totalRequested = parseFloat(selected.dataset.totalRequested || 0);
+            const totalDelivered = parseFloat(selected.dataset.totalDelivered || 0);
+            const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
+
+            // El máximo permitido es: stock disponible + abastecida pendiente (ya salió del almacén pero no se ha marcado como entregado)
+            // Pero no puede superar el pendiente de la requisición
+            const maxAllowed = Math.min(pending, stock + abastecidaPendiente);
 
             exitQuantityInput.max = maxAllowed;
             exitQuantityInput.value = '';
@@ -1024,9 +1033,32 @@
             exitPendingLabel.textContent = `/ ${pending.toFixed(2)} ${unit}`;
 
             exitQuantityHelp.innerHTML = `
-            <i class="fas fa-info-circle me-1"></i>
-            <strong>Máximo permitido:</strong> ${maxAllowed.toFixed(2)} ${unit}
-            <br><small class="text-muted">Stock disponible: ${stock} | Pendiente: ${pending}</small>
+            <div class="mt-2 p-2 rounded" style="background: rgba(0,0,0,0.04); font-size: 0.85em;">
+                <div class="row g-1">
+                    <div class="col-6">
+                        <span class="text-muted">Total Requisitado:</span>
+                        <strong class="text-dark ms-1">${totalRequested.toFixed(2)} ${unit}</strong>
+                    </div>
+                    <div class="col-6">
+                        <span class="text-muted">Total Abastecido:</span>
+                        <strong class="text-success ms-1">${totalDelivered.toFixed(2)} ${unit}</strong>
+                    </div>
+                    <div class="col-6">
+                        <span class="text-muted">Stock Disponible:</span>
+                        <strong class="text-primary ms-1">${stock.toFixed(2)} ${unit}</strong>
+                    </div>
+                    <div class="col-6">
+                        <span class="text-muted">Abastecido Pendiente:</span>
+                        <strong class="text-warning ms-1">${abastecidaPendiente.toFixed(2)} ${unit}</strong>
+                    </div>
+                    <div class="col-12 mt-1 border-top pt-1">
+                        <i class="fas fa-arrow-circle-right text-danger me-1"></i>
+                        <span class="text-muted">Máximo a entregar ahora:</span>
+                        <strong class="text-danger ms-1">${maxAllowed.toFixed(2)} ${unit}</strong>
+                        <small class="text-muted ms-1">(Stock + Abastecido Pendiente, sin superar el Pendiente de req.)</small>
+                    </div>
+                </div>
+            </div>
         `;
 
             exitAddMaterialBtn.disabled = true;
@@ -1057,13 +1089,14 @@
                     const selected = exitMaterialSelect.options[exitMaterialSelect.selectedIndex];
                     const pending = parseFloat(selected.dataset.pending);
                     const stock = parseFloat(selected.dataset.stock);
+                    const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
 
-                    if (quantity > stock && quantity <= pending) {
-                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible en inventario.';
-                    } else if (quantity > pending && quantity <= stock) {
+                    if (quantity > (stock + abastecidaPendiente) && quantity <= pending) {
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible más el Abastecido Pendiente.';
+                    } else if (quantity > pending && quantity <= (stock + abastecidaPendiente)) {
                         alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el límite Pendiente de la requisición.';
                     } else {
-                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock y el límite Pendiente de la requisición.';
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible y el límite Pendiente de la requisición.';
                     }
                 } else {
                     this.classList.remove('is-invalid');

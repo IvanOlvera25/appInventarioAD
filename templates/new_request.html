@@ -3,14 +3,6 @@
 {% block page_title %}Nueva Requisición{% endblock %}
 
 {% block content %}
-<!-- DEBUG BANNER - OCULTO PARA PRODUCCIÓN
-<div id="debugBanner" class="alert alert-info position-fixed"
-  style="top: 70px; right: 20px; z-index: 9999; min-width: 300px; display: none;">
-  <h6>🔍 Debug Info</h6>
-  <div id="debugContent"></div>
-</div>
--->
-
 <div class="row justify-content-center">
   <div class="col-md-12">
     <div class="card">
@@ -22,6 +14,7 @@
 
       <div class="card-body">
         <form method="POST" id="requestForm" action="{{ url_for('new_request') }}">
+
           <!-- ===== Solicitante ===== -->
           <div class="card bg-light mb-4">
             <div class="card-header">
@@ -31,12 +24,12 @@
               <div class="row g-3">
                 <div class="col-md-6">
                   <label class="form-label">Solicitante</label>
-                  <input type="text" class="form-control" value="{{ current_user.username }}" readonly>
+                  <input type="text" class="form-control bg-light" value="{{ current_user.username }}" readonly>
                   <small class="text-muted">{{ current_user.email }}</small>
                 </div>
                 <div class="col-md-6">
                   <label class="form-label">Departamento <span class="text-danger">*</span></label>
-                  <select class="form-select" name="department" required>
+                  <select class="form-select" name="department" id="departmentSelect" required>
                     <option value="">Seleccionar departamento...</option>
                     <option value="Metal">Metal</option>
                     <option value="Costura">Costura</option>
@@ -50,41 +43,6 @@
             </div>
           </div>
 
-          <script>
-            // Lógica de validación de fechas según departamento
-            document.addEventListener('DOMContentLoaded', function () {
-              const deptSelect = document.querySelector('select[name="department"]');
-              const dateFields = document.querySelectorAll('.date-field');
-              const reqIndicators = document.querySelectorAll('.req-date');
-
-              function updateDateValidation() {
-                const dept = deptSelect.value;
-                // Lógica específica: Si es Producción o Montaje, fechas obligatorias
-                // Ajustar según reglas de negocio exactas
-                const isProductionOrMounting = ['Producción', 'Montaje', 'Metal', 'Costura', 'Impresión'].includes(dept);
-
-                dateFields.forEach(field => {
-                  field.required = isProductionOrMounting;
-                  if (isProductionOrMounting) {
-                    field.classList.add('border-primary');
-                  } else {
-                    field.classList.remove('border-primary');
-                  }
-                });
-
-                reqIndicators.forEach(ind => {
-                  if (isProductionOrMounting) ind.classList.remove('d-none');
-                  else ind.classList.add('d-none');
-                });
-              }
-
-              if (deptSelect) {
-                deptSelect.addEventListener('change', updateDateValidation);
-                updateDateValidation(); // Inicializar
-              }
-            });
-          </script>
-
           <!-- ===== Proyecto ===== -->
           <div class="card bg-light mb-4">
             <div class="card-header">
@@ -94,8 +52,7 @@
               <div class="row">
                 <div class="col-md-4 mb-3">
                   <label class="form-label">Código FP <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control" name="fp_code" id="fp_code" required
-                    placeholder="Ej: 2025001">
+                  <input type="text" class="form-control" name="fp_code" id="fp_code" required placeholder="Ej: 2025001">
                   <input type="hidden" id="selected_project_id" name="project_id">
                   <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="searchProject">
                     <i class="fas fa-search me-1"></i>Buscar Proyecto
@@ -105,17 +62,14 @@
                 <div class="col-md-8">
                   <div id="projectSearchResults" class="d-none">
                     <label class="form-label">Resultados de la Búsqueda:</label>
-                    <div id="projectResultsList" class="border rounded p-2" style="max-height:200px;overflow-y:auto;">
-                    </div>
+                    <div id="projectResultsList" class="border rounded p-2" style="max-height:200px;overflow-y:auto;"></div>
                   </div>
-
                   <div id="projectInfo" class="d-none">
                     <div class="alert alert-success mb-0">
                       <h6 class="mb-2"><i class="fas fa-check-circle me-2"></i>Proyecto Seleccionado</h6>
                       <div id="projectDetails"></div>
                     </div>
                   </div>
-
                   <div id="projectNotFound" class="d-none">
                     <div class="alert alert-warning mb-0">
                       <i class="fas fa-exclamation-triangle me-2"></i>No se encontraron proyectos
@@ -125,38 +79,42 @@
               </div>
 
               <!-- Fechas del proyecto -->
-              <!-- Fechas del proyecto -->
               <div class="row g-3 mt-2">
-                <div class="col-md-3">
-                  <label class="form-label">Fecha Límite Adquisición <span
-                      class="text-danger d-none req-date">*</span></label>
-                  <input type="date" class="form-control date-field" name="acquisition_deadline"
-                    id="acquisition_deadline">
+                <!-- Fecha Límite Adquisición: Producción + Montaje -->
+                <div class="col-md-3" id="fieldAcquisition">
+                  <label class="form-label">
+                    Fecha Límite Adquisición
+                    <span class="text-danger req-date-indicator" style="display:none;">*</span>
+                  </label>
+                  <input type="date" class="form-control" name="acquisition_deadline" id="acquisition_deadline">
+                  <small class="text-muted req-date-note" style="display:none;"><i class="fas fa-exclamation-circle text-danger"></i> Requerida</small>
                 </div>
-                <div class="col-md-3">
-                  <label class="form-label">Fecha Inicio Producción <span
-                      class="text-danger d-none req-date">*</span></label>
-                  <input type="date" class="form-control date-field" name="production_start_date"
-                    id="production_start_date">
+                <!-- Fecha Inicio Producción: solo Producción -->
+                <div class="col-md-3" id="fieldProductionStart">
+                  <label class="form-label">
+                    Fecha Inicio Producción
+                    <span class="text-danger req-prod-indicator" style="display:none;">*</span>
+                  </label>
+                  <input type="date" class="form-control" name="production_start_date" id="production_start_date">
+                  <small class="text-muted req-prod-note" style="display:none;"><i class="fas fa-exclamation-circle text-danger"></i> Requerida para Producción</small>
                 </div>
-                <div class="col-md-3">
-                  <label class="form-label">Fecha Inicio Montaje <span
-                      class="text-danger d-none req-date">*</span></label>
-                  <input type="date" class="form-control date-field" name="assembly_start_date"
-                    id="assembly_start_date">
+                <!-- Fecha Inicio Montaje: solo Montaje -->
+                <div class="col-md-3" id="fieldAssemblyStart">
+                  <label class="form-label">
+                    Fecha Inicio Montaje
+                    <span class="text-danger req-montaje-indicator" style="display:none;">*</span>
+                  </label>
+                  <input type="date" class="form-control" name="assembly_start_date" id="assembly_start_date">
+                  <small class="text-muted req-montaje-note" style="display:none;"><i class="fas fa-exclamation-circle text-danger"></i> Requerida para Montaje</small>
                 </div>
-                <div class="col-md-3">
-                  <label class="form-label">Fecha Término Montaje <span
-                      class="text-danger d-none req-date">*</span></label>
-                  <input type="date" class="form-control date-field" name="assembly_end_date" id="assembly_end_date">
-                </div>
-              </div>
-
-              <!-- ID de Incidencia (Oculto visualmente pero manteniendo lógica por si acaso) -->
-              <div class="row mt-3 d-none">
-                <div class="col-md-4">
-                  <label class="form-label">ID de Incidencia</label>
-                  <input type="text" class="form-control" name="incident_id" placeholder="Opcional">
+                <!-- Fecha Término Montaje: solo Montaje -->
+                <div class="col-md-3" id="fieldAssemblyEnd">
+                  <label class="form-label">
+                    Fecha Término Montaje
+                    <span class="text-danger req-montaje-indicator" style="display:none;">*</span>
+                  </label>
+                  <input type="date" class="form-control" name="assembly_end_date" id="assembly_end_date">
+                  <small class="text-muted req-montaje-note" style="display:none;"><i class="fas fa-exclamation-circle text-danger"></i> Requerida para Montaje</small>
                 </div>
               </div>
             </div>
@@ -167,7 +125,6 @@
             <textarea class="form-control" name="notes" rows="3" placeholder="Comentarios adicionales..."></textarea>
           </div>
 
-
           <!-- ===== Materiales ===== -->
           <div class="card mb-4">
             <div class="card-header">
@@ -176,96 +133,120 @@
             <div class="card-body">
               <div class="row mb-4">
                 <div class="col-md-6">
-                  <label class="form-label">Buscar Material Existente</label>
+                  <label class="form-label fw-bold">Buscar Material en Base de Datos</label>
                   <div class="input-group">
-                    <input type="text" class="form-control" id="materialSearch"
-                      placeholder="Buscar por código o nombre...">
+                    <input type="text" class="form-control" id="materialSearch" placeholder="Buscar por código o nombre...">
                     <button type="button" class="btn btn-outline-primary" id="searchMaterialBtn">
                       <i class="fas fa-search"></i>
                     </button>
                   </div>
                   <div id="materialResults" class="mt-2" style="max-height:200px;overflow-y:auto;"></div>
                 </div>
-                <div class="col-md-6">
-                  <label class="form-label">o</label>
-                  <button type="button" class="btn btn-success w-100" id="addNewMaterialBtn">
+                <div class="col-md-6 d-flex flex-column justify-content-start">
+                  <label class="form-label fw-bold">o</label>
+                  <button type="button" class="btn btn-success" id="addNewMaterialBtn">
                     <i class="fas fa-plus me-1"></i>Agregar Nuevo Material
                   </button>
                 </div>
               </div>
 
+              <!-- ---- Formulario: Material en BD o Nuevo ---- -->
               <div id="addMaterialForm" style="display:none;">
                 <div class="card border-primary">
-                  <div class="card-header bg-primary text-white">
-                    <h6 class="mb-0">Agregar Material a la Requisición</h6>
+                  <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0" id="addMaterialFormTitle">Agregar Material a la Requisición</h6>
+                    <small id="addMaterialFormSubtitle" class="opacity-75"></small>
                   </div>
                   <div class="card-body">
-                    <div id="materialForm">
+                    <input type="hidden" id="selectedMaterialId" name="material_id">
+                    <input type="hidden" id="isNewMaterial" name="is_new_material" value="false">
+                    <!-- Hidden para unidad (se mantiene aunque se oculte del formulario) -->
+                    <input type="hidden" id="materialUnit" name="material_unit">
 
-                      <input type="hidden" id="selectedMaterialId" name="material_id">
-                      <input type="hidden" id="isNewMaterial" name="is_new_material" value="false">
+                    <div class="row g-3">
+                      <!-- Código: sólo visible en modo BD, solo lectura -->
+                      <div class="col-md-3" id="materialCodeField">
+                        <label class="form-label text-muted small">
+                          <i class="fas fa-lock me-1"></i>Código
+                        </label>
+                        <input type="text" class="form-control form-control-sm bg-light text-muted fst-italic"
+                               id="materialCode" name="material_code" readonly placeholder="Auto-generado" tabindex="-1">
+                      </div>
+                      <!-- Nombre -->
+                      <div class="col-md-5">
+                        <label class="form-label text-muted small">
+                          <i class="fas fa-lock me-1"></i>Nombre <span class="text-danger">*</span>
+                        </label>
+                        <input type="text" class="form-control form-control-sm bg-light text-muted fst-italic"
+                               id="materialName" name="material_name" readonly>
+                      </div>
+                      <!-- Categoría -->
+                      <div class="col-md-2">
+                        <label class="form-label text-muted small">
+                          <i class="fas fa-lock me-1"></i>Categoría
+                        </label>
+                        <input type="text" class="form-control form-control-sm bg-light text-muted fst-italic"
+                               id="materialCategory" name="material_category" readonly>
+                      </div>
+                      <!-- Stock Actual -->
+                      <div class="col-md-2">
+                        <label class="form-label text-muted small">
+                          <i class="fas fa-warehouse me-1"></i>Stock Actual
+                        </label>
+                        <input type="text" class="form-control form-control-sm bg-light text-muted text-center fw-bold"
+                               id="materialStock" readonly tabindex="-1">
+                      </div>
+                    </div>
 
-                      <!-- CORRECCIÓN: Removidos los atributos 'required' para evitar conflicto con validación HTML5 cuando está oculto -->
-                      <div class="row g-3">
-                        <div class="col-md-3">
-                          <label class="form-label">Código</label>
-                          <input type="text" class="form-control" id="materialCode" name="material_code" readonly
-                            placeholder="Auto">
-                        </div>
-                        <div class="col-md-4">
-                          <label class="form-label">Nombre <span class="text-danger">*</span></label>
-                          <input type="text" class="form-control" id="materialName" name="material_name" readonly>
-                        </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Unidad <span class="text-danger">*</span></label>
-                          <input type="text" class="form-control" id="materialUnit" name="material_unit" readonly>
-                        </div>
-                        <div class="col-md-2">
-                          <label class="form-label">Categoría</label>
-                          <input type="text" class="form-control" id="materialCategory" name="material_category"
-                            readonly>
+                    <div class="row g-3 mt-2">
+                      <!-- Cantidad con unidad integrada -->
+                      <div class="col-md-3">
+                        <label class="form-label fw-bold">Cantidad <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                          <input type="number" class="form-control" id="materialQuantity" name="quantity" step="0.01" min="0.01">
+                          <span class="input-group-text fw-bold" id="quantityUnitLabel" style="min-width:50px;">-</span>
                         </div>
                       </div>
-
-                      <div class="row g-3 mt-2">
-                        <div class="col-md-3">
-                          <label class="form-label">Cantidad <span class="text-danger">*</span></label>
-                          <input type="number" class="form-control" id="materialQuantity" name="quantity" step="0.01"
-                            min="0.01">
-                        </div>
-                        <div class="col-md-3">
-                          <label class="form-label">Tipo de Item</label>
-                          <select class="form-select" id="materialItemType" name="item_type">
-                            <option value="nuevo">Nuevo</option>
-                            <option value="reutilizado">Reutilizado</option>
-                            <option value="reciclado">Reciclado</option>
-                          </select>
-                        </div>
-                        <div class="col-md-3">
-                          <label class="form-label">¿Se devolverá?</label>
-                          <div class="form-check form-switch mt-2">
-                            <input class="form-check-input" type="checkbox" name="will_return" id="willReturnCheck"
-                              onchange="toggleReturnDate()">
-                            <label class="form-check-label" for="willReturnCheck">Sí</label>
-                          </div>
-                        </div>
-                        <div class="col-md-3" id="returnDateContainer" style="display:none;">
-                          <label class="form-label">Fecha esperada retorno <span class="text-danger">*</span></label>
-                          <input type="date" class="form-control" id="materialReturnDate" name="return_expected_date">
+                      <!-- Tipo de Item: solo lectura, auto -->
+                      <div class="col-md-3">
+                        <label class="form-label text-muted small">
+                          <i class="fas fa-lock me-1"></i>Tipo de Item
+                        </label>
+                        <input type="hidden" id="materialItemType" name="item_type" value="nuevo">
+                        <div class="input-group input-group-sm">
+                          <input type="text" class="form-control bg-light text-muted fst-italic"
+                                 id="materialItemTypeDisplay" readonly tabindex="-1">
+                          <span class="input-group-text" id="itemTypeBadgeContainer">
+                            <span id="itemTypeBadge" class="badge bg-primary">Nuevo</span>
+                          </span>
                         </div>
                       </div>
-
-                      <div class="mt-3">
-                        <label class="form-label">Notas del item</label>
-                        <textarea class="form-control" id="materialNotes" name="item_notes" rows="2"></textarea>
+                      <!-- ¿Se devolverá? -->
+                      <div class="col-md-3">
+                        <label class="form-label fw-bold">¿Se devolverá?</label>
+                        <div class="form-check form-switch mt-2">
+                          <input class="form-check-input" type="checkbox" name="will_return" id="willReturnCheck"
+                                 onchange="toggleReturnDate()">
+                          <label class="form-check-label" for="willReturnCheck">Sí</label>
+                        </div>
                       </div>
-
-                      <div class="mt-3 text-end">
-                        <button type="button" class="btn btn-secondary" onclick="cancelAddMaterial()">Cancelar</button>
-                        <button type="button" class="btn btn-primary" onclick="addMaterialToList()">
-                          <i class="fas fa-plus me-1"></i>Agregar a la Lista
-                        </button>
+                      <!-- Fecha de retorno (condicional) -->
+                      <div class="col-md-3" id="returnDateContainer" style="display:none;">
+                        <label class="form-label fw-bold">Fecha esperada retorno <span class="text-danger">*</span></label>
+                        <input type="date" class="form-control" id="materialReturnDate" name="return_expected_date">
                       </div>
+                    </div>
+
+                    <div class="mt-3">
+                      <label class="form-label">Notas del item</label>
+                      <textarea class="form-control" id="materialNotes" name="item_notes" rows="2"></textarea>
+                    </div>
+
+                    <div class="mt-3 d-flex justify-content-end gap-2">
+                      <button type="button" class="btn btn-secondary" onclick="cancelAddMaterial()">Cancelar</button>
+                      <button type="button" class="btn btn-primary" onclick="addMaterialToList()">
+                        <i class="fas fa-plus me-1"></i>Agregar a la Lista
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -281,8 +262,8 @@
                         <th>Código</th>
                         <th>Material</th>
                         <th>Cantidad</th>
-                        <th>Unidad</th>
                         <th>Tipo</th>
+                        <th>Stock Actual</th>
                         <th>Retorna</th>
                         <th>Fecha Retorno</th>
                         <th>Acción</th>
@@ -307,7 +288,7 @@
   </div>
 </div>
 
-<!-- Modal para nuevo material -->
+<!-- ===== Modal para nuevo material ===== -->
 <div class="modal fade" id="newMaterialModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -317,24 +298,26 @@
       </div>
       <div class="modal-body">
         <form id="newMaterialForm">
-          <!-- Formulario Material Nuevo: CÓDIGO ELIMINADO (Auto-generado) -->
-          <input type="hidden" id="newMaterialCode" value=""> <!-- Hidden para compatibilidad JS -->
+          <input type="hidden" id="newMaterialCode" value="">
 
-          <div class="mb-3">
+          <div class="mb-3 position-relative">
             <label class="form-label">Nombre <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" id="newMaterialName" required placeholder="Nombre del material">
-            <!-- Autocomplete suggestion container could go here -->
+            <input type="text" class="form-control" id="newMaterialName" required placeholder="Nombre del material" autocomplete="off">
+            <!-- Dropdown de sugerencias de duplicados -->
+            <div id="newMaterialSuggestions" class="dropdown-menu w-100" style="max-height:200px;overflow-y:auto;display:none;"></div>
+            <small class="text-warning d-none mt-1" id="duplicateWarning">
+              <i class="fas fa-exclamation-triangle me-1"></i>Existen materiales similares. Verifica que no sea un duplicado.
+            </small>
           </div>
+
           <div class="row">
             <div class="col-md-6 mb-3">
               <label class="form-label">Unidad <span class="text-danger">*</span></label>
-              <!-- Select de Unidades desde Backend -->
               <select class="form-select" id="newMaterialUnit" required>
                 <option value="">Seleccionar...</option>
                 {% for u in units %}
-                <option value="{{ u.unidad }}">{{ u.unidad }} ({{ u.singular }})</option>
+                <option value="{{ u.unidad }}">{{ u.unidad }}{% if u.singular %} ({{ u.singular }}){% endif %}</option>
                 {% endfor %}
-                <!-- Fallback options if list empty -->
                 {% if not units %}
                 <option value="pza">pza</option>
                 <option value="m">m</option>
@@ -345,7 +328,6 @@
             </div>
             <div class="col-md-6 mb-3">
               <label class="form-label">Categoría</label>
-              <!-- Select de Categorías desde Backend -->
               <select class="form-select" id="newMaterialCategory">
                 <option value="">Seleccionar...</option>
                 {% for c in categories %}
@@ -353,8 +335,6 @@
                 {% endfor %}
                 {% if not categories %}
                 <option value="General">General</option>
-                <option value="Software">Software</option>
-                <option value="Hardware">Hardware</option>
                 {% endif %}
               </select>
             </div>
@@ -371,42 +351,76 @@
   </div>
 </div>
 
+<style>
+  /* Campos no editables */
+  .form-control[readonly].bg-light {
+    cursor: not-allowed;
+    border-color: #dee2e6;
+    opacity: 0.85;
+  }
+  /* Stock badge */
+  #materialStock.stock-ok { color: #198754; border-color: #198754; }
+  #materialStock.stock-low { color: #dc3545; border-color: #dc3545; }
+  /* Resaltado de fechas obligatorias */
+  input.date-required-active { border-color: #dc3545 !important; }
+</style>
+
 <script>
   /* ===== Variables globales ===== */
   let selectedProject = null;
   let materialsList = [];
   let materialIdCounter = 0;
 
-  // DEBUG: Función para mostrar info en tiempo real
-  function updateDebugInfo(info) {
-    const banner = document.getElementById('debugBanner');
-    const content = document.getElementById('debugContent');
-    banner.style.display = 'block';
-    content.innerHTML = `
-        <small>
-            <strong>Proyecto:</strong> ${selectedProject ? 'ID: ' + selectedProject.project_id : 'NO'}<br>
-            <strong>Materiales:</strong> ${materialsList.length}<br>
-            <strong>Botón:</strong> ${document.getElementById('submitBtn').disabled ? 'DESHABILITADO' : 'HABILITADO'}<br>
-            ${info || ''}
-        </small>
-    `;
+  /* ===== LÓGICA DE FECHAS POR DEPARTAMENTO ===== */
+  const PROD_DEPTS = ['Metal', 'Costura', 'Impresión', 'Stagging', 'Administración'];
+  const MONTAJE_DEPTS = ['Montaje'];
+
+  function updateDateValidation() {
+    const dept = document.getElementById('departmentSelect').value;
+    const isProduccion = PROD_DEPTS.includes(dept);
+    const isMontaje = MONTAJE_DEPTS.includes(dept);
+
+    // acquisition → obligatorio para AMBOS
+    const acqInput = document.getElementById('acquisition_deadline');
+    const acqInd = document.querySelectorAll('.req-date-indicator');
+    const acqNote = document.querySelectorAll('.req-date-note');
+
+    acqInput.required = isProduccion || isMontaje;
+    acqInput.classList.toggle('date-required-active', isProduccion || isMontaje);
+    acqInd.forEach(el => el.style.display = (isProduccion || isMontaje) ? '' : 'none');
+    acqNote.forEach(el => el.style.display = (isProduccion || isMontaje) ? '' : 'none');
+
+    // production_start → obligatorio solo para Producción
+    const prodInput = document.getElementById('production_start_date');
+    const prodInd = document.querySelectorAll('.req-prod-indicator');
+    const prodNote = document.querySelectorAll('.req-prod-note');
+    prodInput.required = isProduccion;
+    prodInput.classList.toggle('date-required-active', isProduccion);
+    prodInd.forEach(el => el.style.display = isProduccion ? '' : 'none');
+    prodNote.forEach(el => el.style.display = isProduccion ? '' : 'none');
+
+    // assembly_start y assembly_end → obligatorio solo para Montaje
+    const asmStartInput = document.getElementById('assembly_start_date');
+    const asmEndInput = document.getElementById('assembly_end_date');
+    const montajeInd = document.querySelectorAll('.req-montaje-indicator');
+    const montajeNote = document.querySelectorAll('.req-montaje-note');
+    asmStartInput.required = isMontaje;
+    asmEndInput.required = isMontaje;
+    asmStartInput.classList.toggle('date-required-active', isMontaje);
+    asmEndInput.classList.toggle('date-required-active', isMontaje);
+    montajeInd.forEach(el => el.style.display = isMontaje ? '' : 'none');
+    montajeNote.forEach(el => el.style.display = isMontaje ? '' : 'none');
   }
 
-  function ensureProjectHiddenInput() {
-    return document.getElementById('selected_project_id');
-  }
+  document.getElementById('departmentSelect').addEventListener('change', updateDateValidation);
+  updateDateValidation();
 
   /* ===== Búsqueda de Proyecto con Enter ===== */
   document.getElementById('fp_code').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      document.getElementById('searchProject').click();
-    }
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('searchProject').click(); }
   });
 
-  document.getElementById('searchProject').addEventListener('click', function () {
-    searchProject();
-  });
+  document.getElementById('searchProject').addEventListener('click', function () { searchProject(); });
 
   function searchProject() {
     const fpCode = document.getElementById('fp_code').value.trim();
@@ -420,81 +434,32 @@
     fetch(`/search_fp?fp=${encodeURIComponent(fpCode)}`)
       .then(r => r.json())
       .then(data => {
-        btn.innerHTML = original;
-        btn.disabled = false;
-
-        if (!data.success || data.error) { showProjectNotFound(); console.error(data.error); return; }
+        btn.innerHTML = original; btn.disabled = false;
+        if (!data.success || data.error) { showProjectNotFound(); return; }
         if (data.data && Array.isArray(data.data) && data.data.length > 0) showProjectResults(data.data);
         else showProjectNotFound();
       })
-      .catch(err => {
-        btn.innerHTML = original;
-        btn.disabled = false;
-        console.error(err);
-        showProjectNotFound();
-        alert('Error al buscar el proyecto. Verifique la conexión.');
-      });
-  }
-
-  function clearProjectResults() {
-    document.getElementById('projectSearchResults').classList.add('d-none');
-    document.getElementById('projectInfo').classList.add('d-none');
-    document.getElementById('projectNotFound').classList.add('d-none');
-    selectedProject = null;
-    const hidden = document.getElementById('selected_project_id');
-    if (hidden) hidden.value = '';
-    updateSubmitButton();
-    updateDebugInfo();
+      .catch(() => { btn.innerHTML = original; btn.disabled = false; showProjectNotFound(); });
   }
 
   function showProjectResults(projects) {
     const resultsDiv = document.getElementById('projectSearchResults');
     const listDiv = document.getElementById('projectResultsList');
-
     let html = '';
     projects.forEach(p => {
-      const pid = Number(p.id || 0);
-      const fp = p.fp_code || '';
-      const nombre = p.nombre || '';
-      const cliente = p.cliente || '';
-
-      html += `
-      <div class="project-option border-bottom p-2" tabindex="0"
-           data-fp="${String(fp).replace(/"/g, '&quot;')}"
-           data-proyecto="${String(nombre).replace(/"/g, '&quot;')}"
-           data-cliente="${String(cliente).replace(/"/g, '&quot;')}"
-           data-project-id="${pid}" style="cursor:pointer">
+      const pid = Number(p.id || 0), fp = p.fp_code || '', nombre = p.nombre || '', cliente = p.cliente || '';
+      html += `<div class="project-option border-bottom p-2" tabindex="0"
+           data-fp="${fp}" data-proyecto="${nombre}" data-cliente="${cliente}" data-project-id="${pid}" style="cursor:pointer">
         <div class="d-flex justify-content-between">
-          <div>
-            <strong>FP: ${fp}</strong><br>
-            <span class="text-primary">${nombre}</span><br>
-            <small class="text-muted">Cliente: ${cliente}</small>
-          </div>
-          <div class="text-end">
-            <small class="badge ${p.source === 'local' ? 'bg-success' : 'bg-info'}">
-              ${p.source === 'local' ? 'Local' : 'Remoto'}
-            </small>
-          </div>
-        </div>
-      </div>`;
+          <div><strong>FP: ${fp}</strong><br><span class="text-primary">${nombre}</span><br><small class="text-muted">Cliente: ${cliente}</small></div>
+          <small class="badge ${p.source === 'local' ? 'bg-success' : 'bg-info'}">${p.source === 'local' ? 'Local' : 'Remoto'}</small>
+        </div></div>`;
     });
-
     listDiv.innerHTML = html;
     resultsDiv.classList.remove('d-none');
     document.getElementById('projectNotFound').classList.add('d-none');
-
     listDiv.querySelectorAll('.project-option').forEach(el => {
-      el.addEventListener('click', () => {
-        selectProject(
-          el.dataset.fp,
-          el.dataset.proyecto,
-          el.dataset.cliente,
-          Number(el.dataset.projectId || 0)
-        );
-      });
-      el.addEventListener('keydown', e => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
-      });
+      el.addEventListener('click', () => selectProject(el.dataset.fp, el.dataset.proyecto, el.dataset.cliente, Number(el.dataset.projectId || 0)));
     });
   }
 
@@ -503,58 +468,29 @@
     document.getElementById('projectInfo').classList.add('d-none');
     document.getElementById('projectNotFound').classList.remove('d-none');
     updateSubmitButton();
-    updateDebugInfo();
   }
 
   function selectProject(fp, proyecto, cliente, projectId) {
-    console.log('=== selectProject llamada ===');
-    console.log('projectId recibido:', projectId, 'tipo:', typeof projectId);
-
-    const hidden = ensureProjectHiddenInput();
-    if (!hidden) {
-      console.error('ERROR: No se encontró el input hidden selected_project_id');
-      alert('Error interno: No se puede guardar el proyecto seleccionado');
-      return;
-    }
-
+    const hidden = document.getElementById('selected_project_id');
     const validProjectId = projectId && !isNaN(projectId) && projectId > 0 ? Number(projectId) : 0;
-
-    if (validProjectId === 0) {
-      console.error('ERROR: projectId no válido:', projectId);
-      alert('Error: El ID del proyecto no es válido');
-      return;
-    }
+    if (validProjectId === 0) { alert('Error: El ID del proyecto no es válido'); return; }
 
     selectedProject = { fp, proyecto, cliente, project_id: validProjectId };
     hidden.value = String(validProjectId);
-
-    console.log('✓ Proyecto guardado:', selectedProject);
-    console.log('✓ hidden.value:', hidden.value);
-
     document.getElementById('fp_code').value = fp || '';
     document.getElementById('projectDetails').innerHTML = `
-    <strong>FP:</strong> ${fp}<br>
-    <strong>Proyecto:</strong> ${proyecto}<br>
-    <strong>Cliente:</strong> ${cliente}<br>
-    <small class="text-muted">ID: ${validProjectId}</small>
-  `;
-
+      <strong>FP:</strong> ${fp}<br><strong>Proyecto:</strong> ${proyecto}<br><strong>Cliente:</strong> ${cliente}<br>
+      <small class="text-muted">ID: ${validProjectId}</small>`;
     document.getElementById('projectSearchResults').classList.add('d-none');
     document.getElementById('projectNotFound').classList.add('d-none');
     document.getElementById('projectInfo').classList.remove('d-none');
-
     updateSubmitButton();
-    updateDebugInfo();
     showSuccessMessage(`Proyecto ${fp} seleccionado correctamente`);
   }
 
-  /* ===== Materiales ===== */
-  // Búsqueda de material con Enter
+  /* ===== Búsqueda de materiales ===== */
   document.getElementById('materialSearch').addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      document.getElementById('searchMaterialBtn').click();
-    }
+    if (e.key === 'Enter') { e.preventDefault(); document.getElementById('searchMaterialBtn').click(); }
   });
 
   document.getElementById('searchMaterialBtn').addEventListener('click', function () {
@@ -568,136 +504,200 @@
         if (data.materials && data.materials.length > 0) {
           let html = '<div class="list-group">';
           data.materials.forEach(m => {
-            html += `
-            <div class="list-group-item list-group-item-action"
+            const itemType = m.can_recycle ? 'reciclado' : (m.can_reuse ? 'reutilizado' : 'nuevo');
+            const badgeColor = itemType === 'nuevo' ? 'primary' : (itemType === 'reutilizado' ? 'success' : 'warning');
+            const stockClass = m.current_stock > 0 ? 'text-success' : 'text-danger';
+            html += `<div class="list-group-item list-group-item-action"
                  data-mid="${m.id}" data-code="${m.code}" data-name="${m.name}"
-                 data-unit="${m.unit}" data-category="${m.category}" data-stock="${m.current_stock}">
-              <div class="d-flex justify-content-between">
+                 data-unit="${m.unit}" data-category="${m.category || ''}" data-stock="${m.current_stock}"
+                 data-can-recycle="${m.can_recycle}" data-can-reuse="${m.can_reuse}" style="cursor:pointer">
+              <div class="d-flex justify-content-between align-items-center">
                 <div>
-                  <strong>${m.code}</strong> - ${m.name}
-                  <br><small class="text-muted">${m.category} | ${m.unit}</small>
+                  <strong>${m.code}</strong> — ${m.name}
+                  <br><small class="text-muted">${m.category || 'Sin categoría'} | ${m.unit}</small>
                 </div>
                 <div class="text-end">
-                  <small class="text-muted">Stock: ${m.current_stock}</small>
+                  <span class="badge bg-${badgeColor} mb-1">${itemType}</span><br>
+                  <small class="${stockClass} fw-bold">Stock: ${m.current_stock} ${m.unit}</small>
                 </div>
               </div>
             </div>`;
           });
           html += '</div>';
           resultsDiv.innerHTML = html;
-
           resultsDiv.querySelectorAll('.list-group-item').forEach(el => {
-            el.addEventListener('click', () => {
-              selectMaterial(
-                Number(el.dataset.mid),
-                el.dataset.code,
-                el.dataset.name,
-                el.dataset.unit,
-                el.dataset.category,
-                Number(el.dataset.stock)
-              );
-            });
+            el.addEventListener('click', () => selectMaterial(
+              Number(el.dataset.mid), el.dataset.code, el.dataset.name,
+              el.dataset.unit, el.dataset.category, Number(el.dataset.stock),
+              el.dataset.canRecycle === 'true', el.dataset.canReuse === 'true'
+            ));
           });
         } else {
           resultsDiv.innerHTML = '<div class="alert alert-info">No se encontraron materiales</div>';
         }
       })
-      .catch(err => {
-        console.error(err);
-        alert('Error al buscar materiales');
-      });
+      .catch(() => alert('Error al buscar materiales'));
   });
 
-  function selectMaterial(id, code, name, unit, category, stock) {
+  function selectMaterial(id, code, name, unit, category, stock, canRecycle, canReuse) {
+    // Determinar tipo de item automáticamente
+    const itemType = canRecycle ? 'reciclado' : (canReuse ? 'reutilizado' : 'nuevo');
+    const itemTypeLabel = itemType === 'nuevo' ? 'Nuevo' : (itemType === 'reutilizado' ? 'Reutilizado' : 'Reciclado');
+    const badgeColor = itemType === 'nuevo' ? 'primary' : (itemType === 'reutilizado' ? 'success' : 'warning');
+
     document.getElementById('selectedMaterialId').value = String(id);
     document.getElementById('isNewMaterial').value = 'false';
     document.getElementById('materialCode').value = code;
     document.getElementById('materialName').value = name;
     document.getElementById('materialUnit').value = unit;
     document.getElementById('materialCategory').value = category || '';
+    document.getElementById('materialItemType').value = itemType;
+    document.getElementById('materialItemTypeDisplay').value = itemTypeLabel;
+    document.getElementById('itemTypeBadge').textContent = itemTypeLabel;
+    document.getElementById('itemTypeBadge').className = `badge bg-${badgeColor}`;
+    document.getElementById('quantityUnitLabel').textContent = unit || '-';
 
-    ['materialCode', 'materialName', 'materialUnit', 'materialCategory'].forEach(id_ => {
-      const el = document.getElementById(id_); if (el) el.readOnly = true;
-    });
+    // Stock actual con indicador de color
+    const stockEl = document.getElementById('materialStock');
+    stockEl.value = `${stock} ${unit}`;
+    stockEl.className = `form-control form-control-sm bg-light text-center fw-bold ${stock > 0 ? 'stock-ok' : 'stock-low'}`;
 
+    // Mostrar campo de código sólo en modo BD
+    document.getElementById('materialCodeField').style.display = '';
+
+    document.getElementById('addMaterialFormTitle').textContent = 'Material en Base de Datos';
+    document.getElementById('addMaterialFormSubtitle').textContent = `ID: ${id}`;
     document.getElementById('addMaterialForm').style.display = 'block';
     document.getElementById('materialResults').innerHTML = '';
     document.getElementById('materialSearch').value = '';
   }
 
+  /* ===== Nuevo Material (Modal) ===== */
   document.getElementById('addNewMaterialBtn').addEventListener('click', function () {
     const modal = new bootstrap.Modal(document.getElementById('newMaterialModal'));
     document.getElementById('newMaterialForm').reset();
+    document.getElementById('newMaterialSuggestions').style.display = 'none';
+    document.getElementById('duplicateWarning').classList.add('d-none');
     modal.show();
+  });
+
+  // Autocompletado de nombre con sugerencias de duplicados
+  let nameSearchTimeout;
+  document.getElementById('newMaterialName').addEventListener('input', function () {
+    const term = this.value.trim();
+    clearTimeout(nameSearchTimeout);
+    const suggestions = document.getElementById('newMaterialSuggestions');
+    const warning = document.getElementById('duplicateWarning');
+
+    if (term.length < 3) {
+      suggestions.style.display = 'none';
+      warning.classList.add('d-none');
+      return;
+    }
+
+    nameSearchTimeout = setTimeout(() => {
+      fetch(`/api/materials/search?q=${encodeURIComponent(term)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.materials && data.materials.length > 0) {
+            warning.classList.remove('d-none');
+            suggestions.innerHTML = '';
+            data.materials.forEach(m => {
+              const item = document.createElement('a');
+              item.className = 'dropdown-item py-2';
+              item.href = '#';
+              item.innerHTML = `<strong>${m.code}</strong> — ${m.name} <small class="text-muted">(${m.unit})</small>
+                <br><small class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>¿Es este el material que buscas? Selecciónalo para evitar duplicados</small>`;
+              item.addEventListener('click', (e) => {
+                e.preventDefault();
+                // Cerrar modal y usar el material existente
+                bootstrap.Modal.getInstance(document.getElementById('newMaterialModal')).hide();
+                selectMaterial(m.id, m.code, m.name, m.unit, m.category, m.current_stock, m.can_recycle, m.can_reuse);
+                showSuccessMessage(`Material existente seleccionado: ${m.name}`);
+              });
+              suggestions.appendChild(item);
+            });
+            suggestions.style.display = 'block';
+          } else {
+            suggestions.style.display = 'none';
+            warning.classList.add('d-none');
+          }
+        });
+    }, 350);
+  });
+
+  // Cerrar sugerencias al hacer click fuera
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#newMaterialName') && !e.target.closest('#newMaterialSuggestions')) {
+      document.getElementById('newMaterialSuggestions').style.display = 'none';
+    }
   });
 
   function createAndAddNewMaterial() {
     const form = document.getElementById('newMaterialForm');
     if (!form.checkValidity()) { form.reportValidity(); return; }
 
-    const code = document.getElementById('newMaterialCode').value.trim();
     const name = document.getElementById('newMaterialName').value.trim();
     const unit = document.getElementById('newMaterialUnit').value.trim();
     const category = document.getElementById('newMaterialCategory').value.trim();
 
     document.getElementById('selectedMaterialId').value = '';
     document.getElementById('isNewMaterial').value = 'true';
-    document.getElementById('materialCode').value = code || 'Auto-Generado';
+    document.getElementById('materialCode').value = 'Auto-Generado';
     document.getElementById('materialName').value = name;
     document.getElementById('materialUnit').value = unit;
     document.getElementById('materialCategory').value = category;
+    document.getElementById('materialItemType').value = 'nuevo';
+    document.getElementById('materialItemTypeDisplay').value = 'Nuevo';
+    document.getElementById('itemTypeBadge').textContent = 'Nuevo';
+    document.getElementById('itemTypeBadge').className = 'badge bg-primary';
+    document.getElementById('quantityUnitLabel').textContent = unit || '-';
 
-    ['materialCode', 'materialName', 'materialUnit', 'materialCategory'].forEach(id_ => {
-      const el = document.getElementById(id_); if (el) el.readOnly = false;
-    });
+    const stockEl = document.getElementById('materialStock');
+    stockEl.value = 'N/A (nuevo)';
+    stockEl.className = 'form-control form-control-sm bg-light text-center fw-bold text-muted';
 
+    // Ocultar código en modo nuevo
+    document.getElementById('materialCodeField').style.display = 'none';
+
+    document.getElementById('addMaterialFormTitle').textContent = 'Nuevo Material';
+    document.getElementById('addMaterialFormSubtitle').textContent = 'Se creará al guardar';
     document.getElementById('addMaterialForm').style.display = 'block';
     bootstrap.Modal.getInstance(document.getElementById('newMaterialModal')).hide();
     form.reset();
   }
 
   function addMaterialToList() {
-    const codeEl = document.getElementById('materialCode');
-    // Code validation loosened for auto-generated
     const nameEl = document.getElementById('materialName');
     const qtyEl = document.getElementById('materialQuantity');
-
-    if (!codeEl || !nameEl || !qtyEl) {
-      alert('Error: Campos del formulario no encontrados');
-      return false;
-    }
-
-    const code = codeEl.value.trim();
     const name = nameEl.value.trim();
     const qty = parseFloat(qtyEl.value);
 
-    if (!name || !qty || qty <= 0) {
-      alert('Complete correctamente Nombre y Cantidad');
-      return false;
-    }
+    if (!name || !qty || qty <= 0) { alert('Complete correctamente Nombre y Cantidad'); return false; }
 
-    // Allow empty code if it's new (backend handles it)
     const isNew = document.getElementById('isNewMaterial').value === 'true';
-    if (!isNew && !code) {
-      alert('Error: Material existente debe tener código');
-      return false;
+    const code = document.getElementById('materialCode').value.trim();
+    const matId = document.getElementById('selectedMaterialId').value;
+
+    if (!isNew && !matId) { alert('Error: Material existente debe tener ID'); return false; }
+
+    // Verificar duplicados en lista
+    if (matId && materialsList.some(m => m.material_id === matId)) {
+      alert('Este material ya está en la lista'); return false;
     }
 
-    if (materialsList.some(m => m.code === code)) {
-      alert('Este material ya está en la lista');
-      return false;
-    }
-
+    const stockEl = document.getElementById('materialStock');
     const material = {
       id: ++materialIdCounter,
-      material_id: document.getElementById('selectedMaterialId').value || null,
-      is_new_material: document.getElementById('isNewMaterial').value === 'true',
+      material_id: matId || null,
+      is_new_material: isNew,
       code,
       name,
       unit: document.getElementById('materialUnit').value || 'pza',
-      category: document.getElementById('materialCategory').value || 'General',
+      category: document.getElementById('materialCategory').value || '',
       quantity: qty,
       item_type: document.getElementById('materialItemType').value || 'nuevo',
+      stock: stockEl.value || '?',
       will_return: document.getElementById('willReturnCheck').checked || false,
       return_expected_date: document.getElementById('materialReturnDate').value || null,
       notes: document.getElementById('materialNotes').value || ''
@@ -707,7 +707,6 @@
     updateMaterialsTable();
     cancelAddMaterial();
     updateSubmitButton();
-    updateDebugInfo();
     showSuccessMessage('Material agregado correctamente a la lista');
     return true;
   }
@@ -726,14 +725,16 @@
     section.style.display = 'block';
 
     tbody.innerHTML = materialsList.map(m => {
-      const badge = m.item_type === 'nuevo' ? 'primary' : (m.item_type === 'reutilizado' ? 'success' : 'warning');
+      const badgeColor = m.item_type === 'nuevo' ? 'primary' : (m.item_type === 'reutilizado' ? 'success' : 'warning');
+      const itemLabel = m.item_type === 'nuevo' ? 'Nuevo' : (m.item_type === 'reutilizado' ? 'Reutilizado' : 'Reciclado');
+      const stockClass = m.is_new_material ? 'text-muted' : (m.stock && m.stock.startsWith('0') ? 'text-danger' : 'text-success');
       return `
       <tr>
         <td><strong>${m.code}</strong></td>
         <td>${m.name}${m.is_new_material ? '<span class="badge bg-warning text-dark ms-1">NUEVO</span>' : ''}<br><small class="text-muted">${m.category}</small></td>
-        <td><strong>${m.quantity}</strong></td>
-        <td>${m.unit}</td>
-        <td><span class="badge bg-${badge}">${m.item_type}</span></td>
+        <td><strong>${m.quantity} ${m.unit}</strong></td>
+        <td><span class="badge bg-${badgeColor}">${itemLabel}</span></td>
+        <td class="${stockClass} fw-bold small">${m.stock}</td>
         <td>${m.will_return ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-danger"></i>'}</td>
         <td>${m.return_expected_date ? new Date(m.return_expected_date).toLocaleDateString() : '-'}</td>
         <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeMaterial(${m.id})"><i class="fas fa-trash"></i></button></td>
@@ -747,85 +748,46 @@
     materialsList = materialsList.filter(m => m.id !== id);
     updateMaterialsTable();
     updateSubmitButton();
-    updateDebugInfo();
   }
 
   function cancelAddMaterial() {
-    // Limpiar todos los campos del formulario de material
-    const fieldIds = [
-      'selectedMaterialId', 'isNewMaterial', 'materialCode',
-      'materialName', 'materialUnit', 'materialCategory',
-      'materialQuantity', 'materialItemType', 'materialReturnDate', 'materialNotes'
-    ];
-
-    fieldIds.forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
-
-      if (el.type === 'checkbox') {
-        el.checked = false;
-      } else if (el.tagName.toLowerCase() === 'select') {
-        el.selectedIndex = 0;
-      } else {
-        el.value = '';
-      }
+    ['selectedMaterialId', 'materialCode', 'materialName', 'materialUnit', 'materialCategory',
+     'materialQuantity', 'materialReturnDate', 'materialNotes'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
     });
-
-    // Limpiar el checkbox de retorno
-    const returnCheck = document.getElementById('willReturnCheck');
-    if (returnCheck) returnCheck.checked = false;
-
-    // Ocultar campo de fecha de retorno
-    const returnDateContainer = document.getElementById('returnDateContainer');
-    if (returnDateContainer) returnDateContainer.style.display = 'none';
-
-    // Restaurar valores por defecto
-    const isNewEl = document.getElementById('isNewMaterial');
-    if (isNewEl) isNewEl.value = 'false';
-
-    const itemTypeEl = document.getElementById('materialItemType');
-    if (itemTypeEl) itemTypeEl.value = 'nuevo';
-
-    // Ocultar el formulario
-    const addWrap = document.getElementById('addMaterialForm');
-    if (addWrap) addWrap.style.display = 'none';
-
-    // Limpiar búsqueda
-    const results = document.getElementById('materialResults');
-    if (results) results.innerHTML = '';
-    const search = document.getElementById('materialSearch');
-    if (search) search.value = '';
+    document.getElementById('isNewMaterial').value = 'false';
+    document.getElementById('materialItemType').value = 'nuevo';
+    document.getElementById('materialItemTypeDisplay').value = '';
+    document.getElementById('itemTypeBadge').textContent = 'Nuevo';
+    document.getElementById('itemTypeBadge').className = 'badge bg-primary';
+    document.getElementById('quantityUnitLabel').textContent = '-';
+    document.getElementById('materialStock').value = '';
+    document.getElementById('materialStock').className = 'form-control form-control-sm bg-light text-muted text-center fw-bold';
+    document.getElementById('willReturnCheck').checked = false;
+    document.getElementById('returnDateContainer').style.display = 'none';
+    document.getElementById('addMaterialForm').style.display = 'none';
+    document.getElementById('materialResults').innerHTML = '';
+    document.getElementById('materialSearch').value = '';
+    document.getElementById('materialCodeField').style.display = '';
   }
 
-  // Función para mostrar/ocultar campo de fecha de retorno
   function toggleReturnDate() {
     const willReturn = document.getElementById('willReturnCheck').checked;
     const container = document.getElementById('returnDateContainer');
     if (container) {
       container.style.display = willReturn ? 'block' : 'none';
-      // Limpiar fecha si se desmarca
-      if (!willReturn) {
-        document.getElementById('materialReturnDate').value = '';
-      }
+      if (!willReturn) document.getElementById('materialReturnDate').value = '';
     }
   }
 
-  /* ===== Submit & util ===== */
+  /* ===== Submit ===== */
   function updateSubmitButton() {
     const submitBtn = document.getElementById('submitBtn');
     if (!submitBtn) return;
-
-    const projectIdInput = document.getElementById('selected_project_id');
-    const projectIdValue = projectIdInput ? projectIdInput.value : '';
-    const hasValidProjectId = projectIdValue && projectIdValue !== '' && !isNaN(Number(projectIdValue)) && Number(projectIdValue) > 0;
-    const hasProject = !!(selectedProject && selectedProject.project_id && hasValidProjectId);
+    const projectIdValue = document.getElementById('selected_project_id').value;
+    const hasProject = !!(selectedProject && projectIdValue && !isNaN(Number(projectIdValue)) && Number(projectIdValue) > 0);
     const hasMaterials = materialsList.length > 0;
-
-    console.log('=== updateSubmitButton DEBUG ===');
-    console.log('hasProject:', hasProject, 'hasMaterials:', hasMaterials);
-
     const enable = hasProject && hasMaterials;
-
     submitBtn.disabled = !enable;
     if (enable) {
       submitBtn.innerHTML = '<i class="fas fa-save me-1"></i>Crear Requisición';
@@ -834,9 +796,7 @@
       submitBtn.className = 'btn btn-secondary';
       submitBtn.innerHTML = !hasProject && !hasMaterials
         ? '<i class="fas fa-lock me-1"></i>Seleccione proyecto y agregue materiales'
-        : (!hasProject
-          ? '<i class="fas fa-search me-1"></i>Seleccione un proyecto'
-          : '<i class="fas fa-plus me-1"></i>Agregue materiales a la lista');
+        : (!hasProject ? '<i class="fas fa-search me-1"></i>Seleccione un proyecto' : '<i class="fas fa-plus me-1"></i>Agregue materiales a la lista');
     }
   }
 
@@ -849,109 +809,45 @@
     setTimeout(() => el.remove(), 3000);
   }
 
-  /* ===== MANEJO DEL SUBMIT - VERSIÓN CORREGIDA ===== */
+  /* ===== MANEJO DEL SUBMIT ===== */
   document.getElementById('requestForm').addEventListener('submit', function (e) {
     e.preventDefault();
-    console.log('🚀 ===== SUBMIT INICIADO =====');
-
     const form = this;
     const submitBtn = document.getElementById('submitBtn');
+    const projectIdValue = document.getElementById('selected_project_id').value;
 
-    // Validar proyecto
-    const projectIdInput = document.getElementById('selected_project_id');
-    const projectIdValue = projectIdInput ? projectIdInput.value : '';
-    console.log('Project ID Input:', projectIdValue);
-    console.log('Selected Project:', selectedProject);
-
-    if (!selectedProject || !projectIdValue || projectIdValue === '' || isNaN(Number(projectIdValue)) || Number(projectIdValue) <= 0) {
-      console.error('❌ Proyecto inválido');
-      alert('Debe seleccionar un proyecto válido');
-      return;
+    if (!selectedProject || !projectIdValue || isNaN(Number(projectIdValue)) || Number(projectIdValue) <= 0) {
+      alert('Debe seleccionar un proyecto válido'); return;
     }
-    console.log('✓ Proyecto válido:', projectIdValue);
+    if (!materialsList.length) { alert('Debe agregar al menos un material'); return; }
+    if (!form.querySelector('[name="department"]').value) { alert('Debe seleccionar un departamento'); return; }
 
-    // Validar materiales
-    console.log('Lista de materiales:', materialsList);
-    if (!materialsList.length) {
-      console.error('❌ Sin materiales');
-      alert('Debe agregar al menos un material');
-      return;
-    }
-    console.log('✓ Materiales válidos:', materialsList.length);
-
-    // Validar campos requeridos del formulario principal
-    const department = form.querySelector('[name="department"]');
-
-    if (!department || !department.value) {
-      alert('Debe seleccionar un departamento');
-      department.focus();
-      return;
-    }
-
-    // Crear FormData
     const fd = new FormData(form);
     fd.set('project_id', String(projectIdValue));
     fd.append('materials_json', JSON.stringify(materialsList));
 
-    console.log('📦 FormData creado:');
-    for (let pair of fd.entries()) {
-      console.log('  -', pair[0] + ':', pair[1]);
-    }
-
-    // Deshabilitar botón
     const originalBtn = submitBtn.innerHTML;
     submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Creando...';
     submitBtn.disabled = true;
-    console.log('⏳ Enviando petición...');
 
-    // Fetch
-    const url = form.action || window.location.pathname;
-    console.log('URL destino:', url);
-
-    fetch(url, {
-      method: 'POST',
-      body: fd
-    })
-      .then(response => {
-        console.log('📨 Response recibida:', response.status, response.statusText);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        return response.json();
-      })
+    fetch(form.action || window.location.pathname, { method: 'POST', body: fd })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(data => {
-        console.log('📥 Datos recibidos:', data);
-
         if (data.success) {
-          console.log('✅ ÉXITO:', data.message);
           alert('✅ ' + (data.message || 'Requisición creada exitosamente'));
-
-          if (data.redirect_url) {
-            console.log('↪️ Redirigiendo a:', data.redirect_url);
-            window.location.href = data.redirect_url;
-          } else {
-            console.log('↪️ Redirigiendo a /requests');
-            window.location.href = '/requests';
-          }
+          window.location.href = data.redirect_url || '/requests';
         } else {
-          console.error('❌ ERROR del servidor:', data.message);
           alert('❌ Error: ' + (data.message || 'No se pudo crear la requisición'));
-          submitBtn.innerHTML = originalBtn;
-          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalBtn; submitBtn.disabled = false;
         }
       })
-      .catch(error => {
-        console.error('🔥 ERROR en fetch:', error);
-        alert('❌ Error de conexión: ' + error.message);
-        submitBtn.innerHTML = originalBtn;
-        submitBtn.disabled = false;
+      .catch(err => {
+        alert('❌ Error de conexión: ' + err.message);
+        submitBtn.innerHTML = originalBtn; submitBtn.disabled = false;
       });
   });
 
   // Inicialización
-  document.addEventListener('DOMContentLoaded', () => {
-    updateSubmitButton();
-    updateDebugInfo();
-  });
+  document.addEventListener('DOMContentLoaded', () => { updateSubmitButton(); });
 </script>
 {% endblock %}

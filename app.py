@@ -1663,27 +1663,51 @@ def dashboard():
     alerts = []
     
     if current_user.role == 'requisitador':
-        # Solo sus propias requisiciones pendientes
-        pending_requests = Request.query.filter_by(
-            user_id=current_user.id, 
-            status='pendiente'
-        ).count()
-        
-        # Alertas de sus requisiciones (ej. cambios recientes o estado actual)
-        # Por ahora mostramos las últimas 5
-        my_recent_requests = Request.query.filter_by(user_id=current_user.id).order_by(Request.created_at.desc()).limit(5).all()
-        for req in my_recent_requests:
-            alert_type = 'info'
-            if req.status == 'pendiente': alert_type = 'warning'
-            elif req.status == 'aprobada': alert_type = 'success'
-            elif req.status == 'rechazada': alert_type = 'danger'
-            elif req.status == 'entregada': alert_type = 'primary'
-            
+        # KPIs propios del usuario
+        req_pendientes = Request.query.filter_by(user_id=current_user.id, status='pendiente').count()
+        req_completadas = Request.query.filter_by(user_id=current_user.id, status='completada').count()
+        req_en_entrega  = Request.query.filter_by(user_id=current_user.id, status='en_entrega').count()
+        req_total       = Request.query.filter_by(user_id=current_user.id).count()
+        pending_requests = req_pendientes
+
+        # Alertas de sus requisiciones
+        my_recent = Request.query.filter_by(user_id=current_user.id)\
+                        .order_by(Request.created_at.desc()).limit(10).all()
+        STATUS_LABELS = {
+            'pendiente': 'Pendiente',
+            'abastecido': 'Abastecida',
+            'pendiente_compra': 'Pendiente de Compra',
+            'en_entrega': 'En Entrega',
+            'completada': 'Completada',
+            'cancelada': 'Cancelada',
+        }
+        for req in my_recent:
+            atype = {
+                'pendiente': 'warning',
+                'abastecido': 'info',
+                'pendiente_compra': 'secondary',
+                'en_entrega': 'primary',
+                'completada': 'success',
+                'cancelada': 'danger',
+            }.get(req.status, 'info')
+            label = STATUS_LABELS.get(req.status, req.status.upper())
             alerts.append({
-                'type': alert_type,
-                'message': f'Tu Requisición #{req.id} está actualmente: {req.status.upper()}'
+                'type': atype,
+                'message': f'Requisición {req.request_number} — Estado: {label}'
             })
-            
+
+        return render_template('dashboard.html',
+                             total_materials=None,
+                             low_stock_materials=None,
+                             pending_requests=pending_requests,
+                             no_movement_materials=None,
+                             alerts=alerts,
+                             is_requisitador=True,
+                             req_total=req_total,
+                             req_pendientes=req_pendientes,
+                             req_completadas=req_completadas,
+                             req_en_entrega=req_en_entrega)
+
     else:
         # Admin / Almacenista / Líder
         pending_requests = Request.query.filter_by(status='pendiente').count()
@@ -1707,7 +1731,9 @@ def dashboard():
                          low_stock_materials=low_stock_materials,
                          pending_requests=pending_requests,
                          no_movement_materials=no_movement_materials,
-                         alerts=alerts)
+                         alerts=alerts,
+                         is_requisitador=False)
+
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -1951,8 +1977,11 @@ def requests():
     unique_clients = [c[0] for c in clients]
 
     # Aplicar filtros de permisos
-    if not current_user.role == 'admin':
+    # Admin y requisitadores ven todas las requisiciones
+    # Usuario regular solo ve las suyas
+    if current_user.role not in ('admin', 'requisitador'):
         query = query.filter_by(user_id=current_user.id)
+
 
     # Aplicar filtros
     if status_filter:
@@ -4534,7 +4563,7 @@ def get_requisitioned_materials():
     if not project:
         return jsonify({'success': False, 'materials': []})
 
-    # Consulta usando 'department' en lugar de 'area'
+    # Consulta usando 'department' en lugar de 'area', excluyendo materiales de categoría Telas
     items = db.session.query(
         Material.id,
         Material.code,
@@ -4547,14 +4576,34 @@ def get_requisitioned_materials():
      .join(Request, RequestItem.request_id == Request.id)\
      .filter(
          Request.project_id == project.id,
-         Request.department == department  # ✅ Cambiado de area a department
+         Request.department == department,
+         ~Material.category.ilike('%tela%'),  # ✅ Excluir materiales de categoría Telas
+         Material.is_fabric_roll == False
      )\
      .group_by(Material.id, Material.code, Material.name, Material.unit, Material.current_stock)\
      .all()
 
     materials_data = []
     for item in items:
-        pending_quantity = item.total_requested - (item.total_delivered or 0)
+        total_requested = item.total_requested or 0
+        total_delivered = item.total_delivered or 0
+        pending_quantity = total_requested - total_delivered  # pendiente de la requisición
+
+        # Calcular cuánto se ha abastecido desde almacén (salidas) vs. cuánto se ha entregado a la req.
+        # "abastecida_pendiente" = lo que ya salió del almacén para este material/proyecto/depto
+        # menos lo registrado como entregado en la requisición.
+        # Esto representa stock que ya salió del almacén pero no se ha marcado como entregado.
+        salidas_almacen = db.session.query(
+            func.sum(StockMovement.quantity)
+        ).filter(
+            StockMovement.material_id == item.id,
+            StockMovement.fp_code == fp_code,
+            StockMovement.area == department,
+            StockMovement.movement_type == 'salida'
+        ).scalar() or 0
+
+        abastecida_pendiente = max(0, salidas_almacen - total_delivered)
+
         if pending_quantity > 0:
             materials_data.append({
                 'id': item.id,
@@ -4562,7 +4611,10 @@ def get_requisitioned_materials():
                 'name': item.name,
                 'unit': item.unit,
                 'stock': item.current_stock,
-                'pending': pending_quantity
+                'pending': pending_quantity,
+                'total_requested': total_requested,
+                'total_delivered': total_delivered,
+                'abastecida_pendiente': abastecida_pendiente
             })
 
     return jsonify({'success': True, 'materials': materials_data})
@@ -4820,13 +4872,50 @@ def register_exit_multiple():
                     errors.append(f"Material ID {material_id} no encontrado")
                     continue
 
-                # Validar stock suficiente
-                if quantity > material.current_stock:
+                # Calcular abastecida_pendiente: salidas previas del almac\u00e9n para este material/proyecto/depto
+                # menos lo ya registrado como entregado en la requisici\u00f3n.
+                salidas_previas = db.session.query(
+                    func.sum(StockMovement.quantity)
+                ).filter(
+                    StockMovement.material_id == material.id,
+                    StockMovement.fp_code == fp_code,
+                    StockMovement.area == department,
+                    StockMovement.movement_type == 'salida'
+                ).scalar() or 0
+
+                req_item_check = db.session.query(RequestItem)\
+                    .join(Request)\
+                    .filter(
+                        Request.project_id == project.id,
+                        Request.department == department,
+                        RequestItem.material_id == material.id
+                    )\
+                    .first()
+
+                qty_delivered_so_far = (req_item_check.quantity_delivered or 0) if req_item_check else 0
+                abastecida_pendiente = max(0, salidas_previas - qty_delivered_so_far)
+
+                # Validar que la cantidad cabe en stock + abastecida_pendiente
+                max_allowed = material.current_stock + abastecida_pendiente
+                if quantity > max_allowed + 0.001:
                     errors.append(
-                        f"{material.code}: Stock insuficiente. "
+                        f"{material.code}: Cantidad excede el m\u00e1ximo permitido. "
+                        f"Stock: {material.current_stock} + Abastecido Pendiente: {abastecida_pendiente:.2f} = {max_allowed:.2f} {material.unit}"
+                    )
+                    continue
+
+                # Determinar cu\u00e1nto se descuenta del stock real y cu\u00e1nto viene del abastecida_pendiente
+                qty_from_abastecida = min(abastecida_pendiente, quantity)
+                qty_from_stock = quantity - qty_from_abastecida
+
+                # Validar que lo que se necesita descontar del stock est\u00e9 disponible
+                if qty_from_stock > material.current_stock + 0.001:
+                    errors.append(
+                        f"{material.code}: Stock insuficiente para la cantidad solicitada. "
                         f"Disponible: {material.current_stock} {material.unit}"
                     )
                     continue
+
 
                 # Generar IDM único
                 last_id = StockMovement.query.count()
@@ -4850,11 +4939,13 @@ def register_exit_multiple():
 
                 db.session.add(movement)
 
-                # Actualizar stock
-                material.current_stock -= quantity
+                # Actualizar stock: solo descontar la parte que no viene del abastecida_pendiente
+                # (la parte del abastecida_pendiente ya fue descontada en una salida anterior)
+                if qty_from_stock > 0:
+                    material.current_stock -= qty_from_stock
                 material.last_movement = datetime.utcnow()
 
-                # Actualizar quantity_delivered en RequestItem
+                # Actualizar quantity_delivered en RequestItem (siempre con la cantidad total entregada)
                 req_item = db.session.query(RequestItem)\
                     .join(Request)\
                     .filter(
