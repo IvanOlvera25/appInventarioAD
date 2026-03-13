@@ -1,0 +1,618 @@
+{% extends "base.html" %}
+
+{% block page_title %}Editar Material{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <nav aria-label="breadcrumb" class="mb-4">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="{{ url_for('dashboard') }}">Dashboard</a></li>
+                    <li class="breadcrumb-item"><a href="{{ url_for('materials') }}">Materiales</a></li>
+                    <li class="breadcrumb-item active">Editar Material</li>
+                </ol>
+            </nav>
+        </div>
+    </div>
+
+    <div class="row justify-content-center">
+        <div class="col-md-10 col-lg-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="fas fa-edit me-2"></i>Editar Material: {{ material.name }}
+                    </h5>
+                    <div class="text-muted">
+                        <span class="badge bg-primary fs-6">{{ material.code }}</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <form id="editMaterialForm" method="POST">
+                        <!-- Información básica -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h6 class="text-primary border-bottom pb-2">
+                                    <i class="fas fa-info-circle me-2"></i>Información Básica
+                                </h6>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-12 mb-3">
+                                <label for="name" class="form-label">Nombre <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" id="name" name="name"
+                                    value="{{ material.name }}" required autocomplete="off">
+                                <!-- Sugerencias de duplicados -->
+                                <div id="duplicateSuggestions" class="list-group mt-1"
+                                    style="display:none; position:absolute; z-index:1000; width:calc(100% - 30px);">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="category" class="form-label">Categoría <span
+                                        class="text-danger">*</span></label>
+                                <select class="form-select" id="category" name="category" required
+                                    onchange="onCategoryChange()">
+                                    <option value="">Seleccionar categoría...</option>
+                                    {% for cat in remote_categories %}
+                                    <option value="{{ cat.name }}"
+                                        data-is-fabric="{{ cat.is_fabric|default(false)|lower }}" {% if
+                                        cat.name==material.category %}selected{% endif %}>{{ cat.name }}</option>
+                                    {% endfor %}
+                                    <!-- Categorías locales si no hay remotas -->
+                                    {% if not remote_categories %}
+                                    {% for cat in local_categories %}
+                                    <option value="{{ cat }}" {% if cat==material.category %}selected{% endif %}>{{ cat
+                                        }}</option>
+                                    {% endfor %}
+                                    {% endif %}
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="unit" class="form-label">Unidad <span class="text-danger">*</span></label>
+                                <select class="form-select" id="unit" name="unit" required
+                                    onchange="updateUnitSuffixes()">
+                                    <option value="">Seleccionar unidad...</option>
+                                    {% for unit in remote_units %}
+                                    <option value="{{ unit.symbol }}" {% if unit.symbol==material.unit %}selected{%
+                                        endif %}>{{ unit.singular }} ({{ unit.symbol }})</option>
+                                    {% endfor %}
+                                    <!-- Unidades locales si no hay remotas -->
+                                    {% if not remote_units %}
+                                    <option value="kg" {% if material.unit=='kg' %}selected{% endif %}>Kilogramos (kg)
+                                    </option>
+                                    <option value="m" {% if material.unit=='m' or material.unit=='metros' %}selected{%
+                                        endif %}>Metros (m)</option>
+                                    <option value="L" {% if material.unit=='L' or material.unit=='litros' %}selected{%
+                                        endif %}>Litros (L)</option>
+                                    <option value="pza" {% if material.unit=='pza' or material.unit=='piezas'
+                                        %}selected{% endif %}>Pieza (pza)</option>
+                                    <option value="m²" {% if material.unit=='m²' or material.unit=='metros²'
+                                        %}selected{% endif %}>Metros cuadrados (m²)</option>
+                                    {% endif %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Ancho de Tela (condicional) -->
+                        <div class="row" id="fabricWidthRow" style="display:none;">
+                            <div class="col-md-6 mb-3">
+                                <label for="fabric_width" class="form-label">Ancho de Tela (cm)</label>
+                                <input type="number" class="form-control" id="fabric_width" name="fabric_width"
+                                    value="{{ material.fabric_width or '' }}" step="0.1" min="0" placeholder="Ej: 150">
+                            </div>
+                        </div>
+
+                        <!-- Descripción (movida al final de Información Básica) -->
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Descripción</label>
+                            <textarea class="form-control" id="description" name="description" rows="2"
+                                placeholder="Descripción detallada del material...">{{ material.description or '' }}</textarea>
+                        </div>
+
+                        <!-- Inventario y costos -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h6 class="text-primary border-bottom pb-2">
+                                    <i class="fas fa-warehouse me-2"></i>Inventario y Costos
+                                </h6>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label for="current_stock" class="form-label">Stock Actual</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="current_stock" name="current_stock"
+                                        value="{{ material.current_stock }}" step="0.01" min="0" readonly>
+                                    <span class="input-group-text" id="suffix_current">{{ material.unit }}</span>
+                                </div>
+                                <div class="form-text">El stock actual se modifica solo mediante movimientos</div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label for="min_stock" class="form-label">Stock Mínimo</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="min_stock" name="min_stock"
+                                        value="{{ material.min_stock }}" step="0.01" min="0">
+                                    <span class="input-group-text" id="suffix_min">{{ material.unit }}</span>
+                                </div>
+                                <div class="form-text text-muted">0 o vacío = ignorar límite</div>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label for="max_stock" class="form-label">Stock Máximo</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="max_stock" name="max_stock"
+                                        value="{{ material.max_stock }}" step="0.01" min="0">
+                                    <span class="input-group-text" id="suffix_max">{{ material.unit }}</span>
+                                </div>
+                                <div class="form-text text-muted">0 o vacío = ignorar límite</div>
+                            </div>
+                        </div>
+
+                        {% if current_user.role == 'admin' %}
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="unit_cost" class="form-label">Costo Unitario</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" class="form-control" id="unit_cost" name="unit_cost"
+                                        value="{{ material.unit_cost or '' }}" step="0.01" min="0">
+                                </div>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Valor Total Stock</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">$</span>
+                                    <input type="text" class="form-control" id="total_value" readonly>
+                                </div>
+                                <div class="form-text">Calculado automáticamente</div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- Características -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h6 class="text-primary border-bottom pb-2">
+                                    <i class="fas fa-cogs me-2"></i>Opciones Especiales
+                                </h6>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <!-- Opciones de Reciclaje (Mutuamente Exclusivas) -->
+                                        <label class="form-label text-muted small">Opciones de Reciclaje (seleccione
+                                            solo una):</label>
+
+                                        <div class="form-check form-switch mb-3" data-bs-toggle="tooltip"
+                                            data-bs-placement="right"
+                                            title="Material que puede ser reciclado después del uso">
+                                            <input class="form-check-input recycle-option" type="checkbox"
+                                                id="can_recycle" name="can_recycle" {% if material.can_recycle
+                                                %}checked{% endif %} onchange="handleRecycleOption(this)">
+                                            <label class="form-check-label" for="can_recycle">
+                                                <i class="fas fa-recycle text-success me-2"></i>Se puede reciclar
+                                            </label>
+                                        </div>
+
+                                        <div class="form-check form-switch mb-3" data-bs-toggle="tooltip"
+                                            data-bs-placement="right"
+                                            title="Material que puede ser devuelto y reutilizado en otros proyectos">
+                                            <input class="form-check-input recycle-option" type="checkbox"
+                                                id="can_reuse" name="can_reuse" {% if material.can_reuse %}checked{%
+                                                endif %} onchange="handleRecycleOption(this)">
+                                            <label class="form-check-label" for="can_reuse">
+                                                <i class="fas fa-redo text-primary me-2"></i>Se puede reutilizar
+                                            </label>
+                                        </div>
+
+                                        <div class="form-check form-switch mb-3" data-bs-toggle="tooltip"
+                                            data-bs-placement="right"
+                                            title="Material que ya ha sido reciclado de otro material">
+                                            <input class="form-check-input recycle-option" type="checkbox"
+                                                id="is_recycled" name="is_recycled" {% if material.is_recycled
+                                                %}checked{% endif %} onchange="handleRecycleOption(this)">
+                                            <label class="form-check-label" for="is_recycled">
+                                                <i class="fas fa-leaf text-success me-2"></i>Es reciclado
+                                            </label>
+                                        </div>
+
+                                        <!-- Selector de material origen -->
+                                        <div id="recycledFromContainer" style="display:none;" class="mb-3">
+                                            <label class="form-label small">Material de Origen:</label>
+                                            <select class="form-select form-select-sm" name="recycled_from_id"
+                                                id="recycled_from_id">
+                                                <option value="">Seleccionar...</option>
+                                                {% for mat in recyclable_materials %}
+                                                <option value="{{ mat.id }}" {% if material.recycled_from_id==mat.id
+                                                    %}selected{% endif %}>
+                                                    {{ mat.code }} - {{ mat.name }}
+                                                </option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+
+                                        <hr>
+
+                                        <div class="form-check form-switch" data-bs-toggle="tooltip"
+                                            data-bs-placement="right"
+                                            title="Material de consumo con capacidad de utilizarse sin necesidad de una requisición y que en cuyo caso no afecte el costo del proyecto en el que se utilice. (Se reportará el costo aparte en los indirectos)">
+                                            <input class="form-check-input" type="checkbox" id="is_consumible"
+                                                name="is_consumible" {% if material.is_consumible %}checked{% endif %}>
+                                            <label class="form-check-label" for="is_consumible">
+                                                <i class="fas fa-battery-half text-warning me-2"></i>Es consumible
+                                            </label>
+                                            <div class="form-text small">Material de consumo sin requisición (reportado
+                                                en indirectos)</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <!-- Estado actual del material -->
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-chart-line me-2"></i>Estado Actual</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="mb-3">
+                                            <div class="d-flex justify-content-between">
+                                                <span>Estado del Stock:</span>
+                                                <span id="stockStatus" class="badge
+                                                    {% if material.min_stock > 0 and material.current_stock <= material.min_stock %}bg-danger
+                                                    {% elif material.max_stock > 0 and material.current_stock >= material.max_stock %}bg-warning
+                                                    {% else %}bg-success{% endif %}">
+                                                    {% if material.min_stock > 0 and material.current_stock <=
+                                                        material.min_stock %}Bajo {% elif material.max_stock> 0 and
+                                                        material.current_stock >= material.max_stock %}Alto
+                                                        {% else %}Normal{% endif %}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <div class="d-flex justify-content-between">
+                                                <span>Último Movimiento:</span>
+                                                <span>
+                                                    {% if material.last_movement %}
+                                                    {{ material.last_movement.strftime('%d/%m/%Y') }}
+                                                    {% else %}
+                                                    <span class="text-muted">Sin movimientos</span>
+                                                    {% endif %}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div class="mb-3">
+                                            <div class="d-flex justify-content-between">
+                                                <span>Fecha Creación:</span>
+                                                <span>{{ material.created_at.strftime('%d/%m/%Y') if material.created_at
+                                                    else 'N/A' }}</span>
+                                            </div>
+                                        </div>
+                                        <hr>
+                                        <div class="d-grid gap-2">
+                                            <button type="button" class="btn btn-sm btn-outline-info"
+                                                onclick="viewMovements()">
+                                                <i class="fas fa-history me-1"></i>Ver Movimientos
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-outline-success"
+                                                onclick="addStock()">
+                                                <i class="fas fa-plus me-1"></i>Agregar Stock
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Alertas -->
+                        <div id="alerts" class="mb-4"></div>
+
+                        <!-- Acciones -->
+                        <div class="row">
+                            <div class="col-12">
+                                <hr class="mb-4">
+                                <div class="d-flex justify-content-between">
+                                    <a href="{{ url_for('materials') }}" class="btn btn-secondary">
+                                        <i class="fas fa-arrow-left me-1"></i>Cancelar
+                                    </a>
+                                    <div>
+                                        {% if current_user.role == 'admin' %}
+                                        <button type="button" class="btn btn-outline-danger me-2" id="deleteBtn"
+                                            onclick="confirmDelete()" {% if material.current_stock> 0 %}disabled
+                                            title="No se puede eliminar: tiene stock"{% endif %}>
+                                            <i class="fas fa-trash me-1"></i>Eliminar Material
+                                        </button>
+                                        {% endif %}
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="fas fa-save me-1"></i>Guardar Cambios
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de confirmación para eliminar -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">Confirmar Eliminación</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>¡Atención!</strong> Esta acción no se puede deshacer.
+                </div>
+                <p>¿Está seguro que desea eliminar el material <strong>{{ material.name }}</strong>?</p>
+                <div id="deleteWarnings"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <form method="POST" style="display: inline-block;">
+                    <input type="hidden" name="action" value="delete">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="fas fa-trash me-1"></i>Eliminar Definitivamente
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Inicialización
+    document.addEventListener('DOMContentLoaded', function () {
+        // Inicializar tooltips
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.forEach(function (tooltipTriggerEl) {
+            new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+
+        updateTotalValue();
+        updateUnitSuffixes();
+        onCategoryChange();
+
+        // Mostrar selector de material origen si es reciclado
+        if (document.getElementById('is_recycled').checked) {
+            document.getElementById('recycledFromContainer').style.display = 'block';
+        }
+    });
+
+    // ---- Cálculos básicos ----
+    function updateTotalValue() {
+        const totalValueEl = document.getElementById('total_value');
+        if (!totalValueEl) return; // Solo para admins
+
+        const currentStock = parseFloat(document.getElementById('current_stock').value) || 0;
+        const unitCost = parseFloat(document.getElementById('unit_cost').value) || 0;
+        const totalValue = (currentStock * unitCost).toFixed(2);
+        totalValueEl.value = totalValue;
+    }
+
+    // ---- Sincronizar sufijos de unidad ----
+    function updateUnitSuffixes() {
+        const unitSel = document.getElementById('unit');
+        if (!unitSel) return;
+
+        let sym = unitSel.value || '{{ material.unit }}';
+
+        // Extraer símbolo de paréntesis si existe
+        const opt = unitSel.options[unitSel.selectedIndex];
+        if (opt) {
+            const label = (opt.textContent || '').trim();
+            const m = label.match(/\(([^)]+)\)/);
+            if (m && m[1]) sym = m[1].trim();
+        }
+
+        ['suffix_current', 'suffix_min', 'suffix_max'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = sym;
+        });
+    }
+
+    // ---- Cambiar opciones según categoría ----
+    function onCategoryChange() {
+        const select = document.getElementById('category');
+        const option = select.options[select.selectedIndex];
+        const isFabric = option.dataset.isFabric === 'true' ||
+            option.value.toLowerCase().includes('tela') ||
+            option.value.toLowerCase().includes('fabric');
+        const fabricRow = document.getElementById('fabricWidthRow');
+        if (fabricRow) {
+            fabricRow.style.display = isFabric ? 'block' : 'none';
+        }
+    }
+
+    // ---- Opciones de reciclaje mutuamente exclusivas ----
+    function handleRecycleOption(checkbox) {
+        if (checkbox.checked) {
+            document.querySelectorAll('.recycle-option').forEach(cb => {
+                if (cb !== checkbox) {
+                    cb.checked = false;
+                }
+            });
+        }
+
+        // Mostrar/ocultar selector de material origen
+        const isRecycled = document.getElementById('is_recycled').checked;
+        const container = document.getElementById('recycledFromContainer');
+        container.style.display = isRecycled ? 'block' : 'none';
+    }
+
+    // ---- Buscar duplicados al escribir nombre ----
+    let debounceTimer;
+    document.getElementById('name').addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        const name = this.value.trim();
+        const suggestionsDiv = document.getElementById('duplicateSuggestions');
+
+        if (name.length < 2 || name === '{{ material.name }}') {
+            suggestionsDiv.style.display = 'none';
+            return;
+        }
+
+        debounceTimer = setTimeout(() => {
+            fetch(`/api/materials/check-duplicate?name=${encodeURIComponent(name)}&exclude={{ material.id }}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.materials && data.materials.length > 0) {
+                        suggestionsDiv.innerHTML = '<div class="list-group-item list-group-item-warning"><small><i class="fas fa-exclamation-triangle me-1"></i>Materiales similares existentes:</small></div>';
+                        data.materials.forEach(m => {
+                            suggestionsDiv.innerHTML += `
+                        <a href="/materials/${m.id}/edit" class="list-group-item list-group-item-action" target="_blank">
+                            <strong>${m.code}</strong> - ${m.name}
+                            <small class="text-muted">(${m.category})</small>
+                        </a>
+                    `;
+                        });
+                        suggestionsDiv.style.display = 'block';
+                    } else {
+                        suggestionsDiv.style.display = 'none';
+                    }
+                })
+                .catch(err => {
+                    console.error('Error buscando duplicados:', err);
+                    suggestionsDiv.style.display = 'none';
+                });
+        }, 300);
+    });
+
+    // Ocultar sugerencias al hacer clic fuera
+    document.addEventListener('click', function (e) {
+        if (!e.target.closest('#name') && !e.target.closest('#duplicateSuggestions')) {
+            document.getElementById('duplicateSuggestions').style.display = 'none';
+        }
+    });
+
+    // ---- Utilidades ----
+    function showAlert(message, type = 'info') {
+        const alertsDiv = document.getElementById('alerts');
+        alertsDiv.innerHTML = `
+        <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+            <i class="fas fa-${type === 'warning' ? 'exclamation-triangle' : type === 'danger' ? 'times-circle' : 'info-circle'} me-2"></i>
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+    }
+    function clearAlerts() { document.getElementById('alerts').innerHTML = ''; }
+
+    function viewMovements() {
+        // Use material name for search (not ID)
+        window.location.href = '/stock-movements?material={{ material.name | urlencode }}';
+    }
+
+    function addStock() {
+        window.location.href = '/materials/{{ material.id }}/add-stock';
+    }
+
+    function confirmDelete() {
+        const currentStock = parseFloat(document.getElementById('current_stock').value);
+        if (currentStock > 0) {
+            alert('No se puede eliminar un material con stock. El stock actual debe ser 0.');
+            return;
+        }
+        const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+        modal.show();
+    }
+
+    // ---- Listeners ----
+    {% if current_user.role == 'admin' %}
+    document.getElementById('unit_cost')?.addEventListener('input', updateTotalValue);
+    {% endif %}
+
+    // ---- Envío del formulario ----
+    document.getElementById('editMaterialForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+
+        if (!this.checkValidity()) {
+            this.reportValidity();
+            return;
+        }
+
+        const formData = new FormData(this);
+
+        fetch(window.location.pathname, {
+            method: 'POST',
+            body: formData
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('Material actualizado exitosamente', 'success');
+                    setTimeout(() => {
+                        window.location.href = data.redirect_url || '{{ url_for("materials") }}';
+                    }, 1500);
+                } else {
+                    showAlert('Error: ' + data.message, 'danger');
+                }
+            })
+            .catch(err => {
+                console.error('Error:', err);
+                showAlert('Error al actualizar el material', 'danger');
+            });
+    });
+</script>
+
+<style>
+    .form-check-input:focus {
+        border-color: var(--bs-primary);
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    }
+
+    .card {
+        transition: all 0.3s ease;
+    }
+
+    .card:hover {
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    .form-control:focus,
+    .form-select:focus {
+        border-color: var(--bs-primary);
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    }
+
+    .badge {
+        transition: all 0.3s ease;
+    }
+
+    .btn-outline-danger:hover {
+        background-color: #dc3545;
+        border-color: #dc3545;
+        color: #fff;
+    }
+
+    .border-bottom {
+        border-bottom: 2px solid #dee2e6 !important;
+    }
+
+    @media (max-width: 768px) {
+        .d-flex.justify-content-between {
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .d-flex.justify-content-between>div {
+            display: flex;
+            gap: 0.5rem;
+        }
+    }
+</style>
+{% endblock %}

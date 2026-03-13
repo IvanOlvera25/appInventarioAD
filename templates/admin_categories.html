@@ -1,0 +1,312 @@
+<!-- templates/admin_categories.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Administrar Categorías{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-tags me-2"></i>Administrar Categorías de Materiales</h5>
+                <div class="btn-group">
+                    <button class="btn btn-info btn-sm" onclick="syncCategories()" id="syncBtn">
+                        <i class="fas fa-sync me-1"></i>Sincronizar desde BD Remota
+                    </button>
+                    <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addCategoryModal">
+                        <i class="fas fa-plus me-1"></i>Nueva Categoría
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- Alertas -->
+                <div id="alertContainer"></div>
+
+                <!-- Estadísticas -->
+                <div class="row mb-4">
+                    <div class="col-md-3">
+                        <div class="card bg-light text-center">
+                            <div class="card-body py-2">
+                                <h4 class="mb-0">{{ categories|length }}</h4>
+                                <small class="text-muted">Total Categorías</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-info text-white text-center">
+                            <div class="card-body py-2">
+                                <h4 class="mb-0">{{ categories|selectattr('is_fabric')|list|length }}</h4>
+                                <small>Categorías de Telas</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-success text-white text-center">
+                            <div class="card-body py-2">
+                                <h4 class="mb-0">{{ categories|selectattr('is_active')|list|length }}</h4>
+                                <small>Activas</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card bg-secondary text-white text-center">
+                            <div class="card-body py-2">
+                                <h4 class="mb-0">{{ categories|selectattr('remote_id')|list|length }}</h4>
+                                <small>Sincronizadas</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tabla de categorías -->
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>Nombre</th>
+                                <th>Descripción</th>
+                                <th class="text-center">Es Tela</th>
+                                <th class="text-center">Activa</th>
+                                <th class="text-center">Sincronizada</th>
+                                <th>Última Sync</th>
+                                <th class="text-center">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for cat in categories %}
+                            <tr>
+                                <td><code>{{ cat.id }}</code></td>
+                                <td><strong>{{ cat.name }}</strong></td>
+                                <td>{{ cat.description or '-' }}</td>
+                                <td class="text-center">
+                                    {% if cat.is_fabric %}
+                                    <i class="fas fa-check-circle text-info" title="Es categoría de telas"></i>
+                                    {% else %}
+                                    <i class="fas fa-times-circle text-muted"></i>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if cat.is_active %}
+                                    <span class="badge bg-success">Activa</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Inactiva</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if cat.remote_id %}
+                                    <span class="badge bg-info" title="ID Remoto: {{ cat.remote_id }}">
+                                        <i class="fas fa-cloud me-1"></i>{{ cat.remote_id }}
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-warning">Local</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if cat.synced_at %}
+                                    <small class="text-muted">{{ cat.synced_at.strftime('%d/%m/%Y %H:%M') }}</small>
+                                    {% else %}
+                                    <small class="text-muted">-</small>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-warning"
+                                            onclick="editCategory({{ cat.id }}, '{{ cat.name }}', '{{ cat.description or '' }}', {{ cat.is_fabric|lower }}, {{ cat.is_active|lower }})"
+                                            title="Editar">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-outline-{{ 'danger' if cat.is_active else 'success' }}"
+                                            onclick="toggleCategory({{ cat.id }})"
+                                            title="{{ 'Desactivar' if cat.is_active else 'Activar' }}">
+                                            <i class="fas fa-{{ 'ban' if cat.is_active else 'check' }}"></i>
+                                        </button>
+                                        {% if not cat.remote_id %}
+                                        <button class="btn btn-outline-danger" onclick="deleteCategory({{ cat.id }})"
+                                            title="Eliminar">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="8" class="text-center text-muted py-4">
+                                    <i class="fas fa-tags fa-3x mb-3 d-block"></i>
+                                    No hay categorías. Sincroniza desde BD remota o crea una nueva.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Agregar Categoría -->
+<div class="modal fade" id="addCategoryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="addCategoryForm" method="POST" action="{{ url_for('admin_add_category') }}">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-plus-circle me-2"></i>Nueva Categoría</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Nombre <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Descripción</label>
+                        <textarea class="form-control" name="description" rows="2"></textarea>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" name="is_fabric" id="addIsFabric">
+                        <label class="form-check-label" for="addIsFabric">
+                            <i class="fas fa-scroll me-1"></i>Es categoría de telas
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-save me-1"></i>Guardar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Editar Categoría -->
+<div class="modal fade" id="editCategoryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="editCategoryForm" method="POST">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-edit me-2"></i>Editar Categoría</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" name="category_id" id="editCategoryId">
+                    <div class="mb-3">
+                        <label class="form-label">Nombre <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" name="name" id="editName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Descripción</label>
+                        <textarea class="form-control" name="description" id="editDescription" rows="2"></textarea>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" name="is_fabric" id="editIsFabric">
+                        <label class="form-check-label" for="editIsFabric">
+                            <i class="fas fa-scroll me-1"></i>Es categoría de telas
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="is_active" id="editIsActive">
+                        <label class="form-check-label" for="editIsActive">
+                            Categoría activa
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-warning">
+                        <i class="fas fa-save me-1"></i>Actualizar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function showAlert(message, type = 'success') {
+        const container = document.getElementById('alertContainer');
+        container.innerHTML = `
+        <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+            <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-triangle'} me-2"></i>
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+    }
+
+    async function syncCategories() {
+        const btn = document.getElementById('syncBtn');
+        const originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Sincronizando...';
+
+        try {
+            const res = await fetch('/api/sync/categories', { method: 'POST' });
+            const data = await res.json();
+
+            if (data.success) {
+                showAlert(data.message, 'success');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showAlert(data.message || 'Error en sincronización', 'danger');
+            }
+        } catch (err) {
+            showAlert('Error de conexión: ' + err.message, 'danger');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+
+    function editCategory(id, name, description, isFabric, isActive) {
+        document.getElementById('editCategoryId').value = id;
+        document.getElementById('editName').value = name;
+        document.getElementById('editDescription').value = description;
+        document.getElementById('editIsFabric').checked = isFabric;
+        document.getElementById('editIsActive').checked = isActive;
+        document.getElementById('editCategoryForm').action = `/admin/categories/${id}/edit`;
+
+        new bootstrap.Modal(document.getElementById('editCategoryModal')).show();
+    }
+
+    async function toggleCategory(id) {
+        if (!confirm('¿Cambiar estado de esta categoría?')) return;
+
+        try {
+            const res = await fetch(`/admin/categories/${id}/toggle`, { method: 'POST' });
+            const data = await res.json();
+
+            if (data.success) {
+                location.reload();
+            } else {
+                showAlert(data.message || 'Error', 'danger');
+            }
+        } catch (err) {
+            showAlert('Error: ' + err.message, 'danger');
+        }
+    }
+
+    async function deleteCategory(id) {
+        if (!confirm('¿Eliminar esta categoría? Esta acción no se puede deshacer.')) return;
+
+        try {
+            const res = await fetch(`/admin/categories/${id}/delete`, { method: 'POST' });
+            const data = await res.json();
+
+            if (data.success) {
+                showAlert('Categoría eliminada', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showAlert(data.message || 'Error', 'danger');
+            }
+        } catch (err) {
+            showAlert('Error: ' + err.message, 'danger');
+        }
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,327 @@
+<!-- templates/add_material.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Agregar Nuevo Material{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-10">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-plus-circle me-2"></i>Agregar Nuevo Material</h5>
+                <span class="badge bg-info" id="autoCodeBadge">Código auto-generado al guardar</span>
+            </div>
+            <div class="card-body">
+                <form method="POST" id="materialForm">
+                    <!-- Fila 1: Solo Nombre (Código se genera automáticamente) -->
+                    <div class="row">
+                        <div class="col-md-12 mb-3">
+                            <label class="form-label">Nombre del Material <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" name="name" id="materialName" required
+                                autocomplete="off" placeholder="Escriba el nombre del material...">
+                            <!-- Sugerencias de duplicados -->
+                            <div id="duplicateSuggestions" class="list-group mt-1"
+                                style="display:none; position:absolute; z-index:1000; width:calc(100% - 30px);"></div>
+                        </div>
+                    </div>
+
+                    <!-- Fila 2: Unidad y Categoría -->
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Unidad de Medida <span class="text-danger">*</span></label>
+                            <select class="form-select" name="unit" id="unitSelect" required>
+                                <option value="">Seleccionar...</option>
+                                {% for unit in remote_units %}
+                                <option value="{{ unit.name or unit.unidad or unit }}">
+                                    {{ unit.name or unit.unidad or unit }}
+                                    {% if unit.abbreviation %} ({{ unit.abbreviation }}){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Categoría <span class="text-danger">*</span></label>
+                            <select class="form-select" name="category" id="categorySelect" required
+                                onchange="onCategoryChange()">
+                                <option value="" data-is-fabric="false">Seleccionar...</option>
+                                {% for cat in remote_categories %}
+                                <option value="{{ cat.name or cat.categoria or cat }}"
+                                    data-is-fabric="{{ cat.is_fabric|default(false)|lower }}">
+                                    {{ cat.name or cat.categoria or cat }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Fila 3: Stock -->
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Stock Actual</label>
+                            <input type="number" class="form-control" name="current_stock" id="currentStock" step="0.01"
+                                min="0" value="0">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Stock Mínimo</label>
+                            <input type="number" class="form-control" name="min_stock" step="0.01" min="0"
+                                placeholder="0">
+                            <div class="form-text text-muted">Dejar en 0 o vacío para ignorar límite</div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Stock Máximo</label>
+                            <input type="number" class="form-control" name="max_stock" step="0.01" min="0"
+                                placeholder="0">
+                            <div class="form-text text-muted">Dejar en 0 o vacío para ignorar límite</div>
+                        </div>
+                    </div>
+
+                    <!-- Fila 4: Costo Unitario -->
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label">Costo Unitario</label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input type="number" class="form-control" name="unit_cost" step="0.01" min="0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Opciones de Tela (condicional) -->
+                    <div class="card bg-light mb-3" id="fabricOptions" style="display:none;">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-ruler me-2"></i>Opciones de Tela</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <label class="form-label">Ancho de Tela (cm)</label>
+                                    <input type="number" class="form-control" name="fabric_width" step="0.1" min="0"
+                                        placeholder="Ej: 150">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Opciones Especiales -->
+                    <div class="card bg-light mb-3">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="fas fa-cogs me-2"></i>Opciones Especiales</h6>
+                        </div>
+                        <div class="card-body">
+                            <!-- Opciones de Reciclaje (Mutuamente Exclusivas) -->
+                            <div class="row mb-3">
+                                <div class="col-12">
+                                    <label class="form-label text-muted small">Opciones de Reciclaje (seleccione solo
+                                        una):</label>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check" data-bs-toggle="tooltip" data-bs-placement="top"
+                                        title="Material que puede ser reciclado después del uso">
+                                        <input class="form-check-input recycle-option" type="checkbox"
+                                            name="can_recycle" id="can_recycle" onchange="handleRecycleOption(this)">
+                                        <label class="form-check-label" for="can_recycle">
+                                            <i class="fas fa-recycle text-success me-1"></i>Se Puede Reciclar
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check" data-bs-toggle="tooltip" data-bs-placement="top"
+                                        title="Material que puede ser devuelto y reutilizado en otros proyectos">
+                                        <input class="form-check-input recycle-option" type="checkbox" name="can_reuse"
+                                            id="can_reuse" onchange="handleRecycleOption(this)">
+                                        <label class="form-check-label" for="can_reuse">
+                                            <i class="fas fa-redo text-primary me-1"></i>Se Puede Reutilizar
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="form-check" data-bs-toggle="tooltip" data-bs-placement="top"
+                                        title="Material que ya ha sido reciclado de otro material">
+                                        <input class="form-check-input recycle-option" type="checkbox"
+                                            name="is_recycled" id="is_recycled" onchange="handleRecycleOption(this)">
+                                        <label class="form-check-label" for="is_recycled">
+                                            <i class="fas fa-leaf text-success me-1"></i>Es Reciclado
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Selector de material origen (para reciclados) -->
+                            <div class="row mb-3" id="recycledFromContainer" style="display:none;">
+                                <div class="col-md-12">
+                                    <label class="form-label">Material de Origen <span class="text-warning">(requerido
+                                            para materiales reciclados)</span></label>
+                                    <select class="form-select" name="recycled_from_id" id="recycled_from_id">
+                                        <option value="">Seleccionar material origen...</option>
+                                        {% for mat in recyclable_materials %}
+                                        <option value="{{ mat.id }}">{{ mat.code }} - {{ mat.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <div class="form-text">Solo se muestran materiales marcados como "Se Puede Reciclar"
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr>
+
+                            <!-- Es Consumible -->
+                            <div class="row">
+                                <div class="col-12">
+                                    <div class="form-check" data-bs-toggle="tooltip" data-bs-placement="top"
+                                        title="Material de consumo con capacidad de utilizarse sin necesidad de una requisición y que en cuyo caso no afecte el costo del proyecto en el que se utilice. (Se reportará el costo aparte en los indirectos)">
+                                        <input class="form-check-input" type="checkbox" name="is_consumible"
+                                            id="is_consumible">
+                                        <label class="form-check-label" for="is_consumible">
+                                            <i class="fas fa-fire text-warning me-1"></i>Es Consumible
+                                        </label>
+                                        <div class="form-text">
+                                            Material de consumo que puede utilizarse sin requisición y no afecta el
+                                            costo del proyecto (se reporta en indirectos)
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Descripción (movida al final antes de botones) -->
+                    <div class="mb-3">
+                        <label class="form-label">Descripción</label>
+                        <textarea class="form-control" name="description" rows="2"
+                            placeholder="Descripción opcional del material..."></textarea>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('materials') }}" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left me-1"></i>Volver
+                        </a>
+                        <button type="submit" class="btn btn-success" id="submitBtn">
+                            <i class="fas fa-save me-1"></i>Guardar Material
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Inicialización
+    document.addEventListener('DOMContentLoaded', function () {
+        // Inicializar tooltips de Bootstrap
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.forEach(function (tooltipTriggerEl) {
+            new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+
+        // Prevenir submit con Enter
+        document.getElementById('materialForm').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
+                e.preventDefault();
+                return false;
+            }
+        });
+    });
+
+    // Buscar duplicados al escribir nombre
+    let debounceTimer;
+    document.getElementById('materialName').addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        const name = this.value.trim();
+        const suggestionsDiv = document.getElementById('duplicateSuggestions');
+
+        if (name.length < 2) {
+            suggestionsDiv.style.display = 'none';
+            return;
+        }
+
+        debounceTimer = setTimeout(() => {
+            fetch(`/api/materials/check-duplicate?name=${encodeURIComponent(name)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.materials && data.materials.length > 0) {
+                        suggestionsDiv.innerHTML = '<div class="list-group-item list-group-item-warning"><small><i class="fas fa-exclamation-triangle me-1"></i>Materiales similares existentes:</small></div>';
+                        data.materials.forEach(m => {
+                            suggestionsDiv.innerHTML += `
+                            <a href="/materials/${m.id}" class="list-group-item list-group-item-action" target="_blank">
+                                <strong>${m.code}</strong> - ${m.name}
+                                <small class="text-muted">(${m.category})</small>
+                            </a>
+                        `;
+                        });
+                        suggestionsDiv.style.display = 'block';
+                    } else {
+                        suggestionsDiv.style.display = 'none';
+                    }
+                })
+                .catch(err => {
+                    console.error('Error buscando duplicados:', err);
+                    suggestionsDiv.style.display = 'none';
+                });
+        }, 300);
+    });
+
+    // Ocultar sugerencias al hacer clic fuera
+    document.addEventListener('click', function (e) {
+        if (!e.target.closest('#materialName') && !e.target.closest('#duplicateSuggestions')) {
+            document.getElementById('duplicateSuggestions').style.display = 'none';
+        }
+    });
+
+    // Cambiar opciones según categoría (mostrar opciones de tela)
+    function onCategoryChange() {
+        const select = document.getElementById('categorySelect');
+        const option = select.options[select.selectedIndex];
+        const isFabric = option.dataset.isFabric === 'true' ||
+            option.value.toLowerCase().includes('tela') ||
+            option.value.toLowerCase().includes('fabric');
+        const fabricOptions = document.getElementById('fabricOptions');
+
+        fabricOptions.style.display = isFabric ? 'block' : 'none';
+    }
+
+    // Manejar opciones de reciclaje mutuamente exclusivas
+    function handleRecycleOption(checkbox) {
+        if (checkbox.checked) {
+            // Desmarcar las otras opciones
+            document.querySelectorAll('.recycle-option').forEach(cb => {
+                if (cb !== checkbox) {
+                    cb.checked = false;
+                }
+            });
+        }
+
+        // Mostrar/ocultar selector de material origen si es "Es Reciclado"
+        const isRecycled = document.getElementById('is_recycled').checked;
+        const container = document.getElementById('recycledFromContainer');
+        container.style.display = isRecycled ? 'block' : 'none';
+    }
+
+    // Validación del formulario
+    document.getElementById('materialForm').addEventListener('submit', function (e) {
+        const name = document.querySelector('input[name="name"]').value.trim();
+        const unit = document.querySelector('select[name="unit"]').value;
+        const category = document.querySelector('select[name="category"]').value;
+
+        if (!name || !unit || !category) {
+            e.preventDefault();
+            alert('Por favor complete los campos obligatorios (nombre, unidad, categoría)');
+            return;
+        }
+
+        // Si es reciclado, verificar que tenga material origen
+        const isRecycled = document.getElementById('is_recycled').checked;
+        const recycledFrom = document.getElementById('recycled_from_id').value;
+
+        if (isRecycled && !recycledFrom) {
+            e.preventDefault();
+            alert('Debe seleccionar el material de origen para materiales reciclados');
+            return;
+        }
+    });
+</script>
+{% endblock %}

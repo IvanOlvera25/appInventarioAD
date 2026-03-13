@@ -1,0 +1,718 @@
+<!-- templates/materials.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Gestión de Materiales y Consumibles{% endblock %}
+
+{% block content %}
+
+<!-- Tabs -->
+<div class="row mb-4">
+  <div class="col-12">
+    <ul class="nav nav-tabs nav-fill" id="materialTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link {% if material_type != 'consumibles' %}active{% endif %}" id="materials-tab"
+          data-bs-toggle="tab" data-bs-target="#materials-panel" type="button" role="tab">
+          <i class="fas fa-boxes me-2"></i>Materiales de Producción
+          <span class="badge bg-primary ms-2">{{ materials.total if materials else 0 }}</span>
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link {% if material_type == 'consumibles' %}active{% endif %}" id="consumibles-tab"
+          data-bs-toggle="tab" data-bs-target="#consumibles-panel" type="button" role="tab">
+          <i class="fas fa-battery-half me-2"></i>Consumibles
+          <span class="badge bg-warning ms-2" id="consumiblesCount">{{ consumibles_count|default(0) }}</span>
+        </button>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<div class="tab-content" id="materialTabsContent">
+
+  <!-- Panel: Materiales -->
+  <div class="tab-pane fade {% if material_type != 'consumibles' %}show active{% endif %}" id="materials-panel"
+    role="tabpanel">
+    <div class="row mb-4">
+      <div class="{{ 'col-md-12' if current_user.role == 'requisitador' else 'col-md-9' }}">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center py-2">
+            <h5 class="mb-0"><i class="fas fa-boxes me-2"></i>Catálogo de Materiales</h5>
+            {% if current_user.role != 'requisitador' %}
+            <div class="btn-group">
+              <a href="{{ url_for('add_material') }}" class="btn btn-success btn-sm">
+                <i class="fas fa-plus me-1"></i>Agregar Material
+              </a>
+              <button class="btn btn-info btn-sm" onclick="switchToConsumibles()">
+                <i class="fas fa-battery-half me-1"></i>Ver Consumibles
+              </button>
+            </div>
+            {% else %}
+            <button class="btn btn-info btn-sm" onclick="switchToConsumibles()">
+              <i class="fas fa-battery-half me-1"></i>Ver Consumibles
+            </button>
+            {% endif %}
+          </div>
+          <div class="card-body p-3">
+
+            <!-- Filtros Compactos -->
+            <form method="GET" class="row g-2 mb-3" id="materialsFilter">
+              <input type="hidden" name="type" value="materials">
+
+              <!-- Búsqueda -->
+              <div class="col-md-3">
+                <input type="text" class="form-control form-control-sm" name="search" placeholder="Buscar por nombre..."
+                  value="{{ search }}">
+              </div>
+
+              <!-- Categoría -->
+              <div class="col-md-2">
+                <select class="form-select form-select-sm" name="category">
+                  <option value="">Todas categorías</option>
+                  {% for cat in categories %}
+                  <option value="{{ cat }}" {% if cat==category %}selected{% endif %}>{{ cat }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <!-- Filtros de Tipo -->
+              <div class="col-md-auto">
+                <div class="form-check form-switch d-inline-flex align-items-center me-2">
+                  <input class="form-check-input me-1" type="checkbox" id="consumibleSwitch" name="consumibles"
+                    value="true" {% if consumibles_filter=='true' %}checked{% endif %} onchange="this.form.submit()">
+                  <label class="form-check-label small" for="consumibleSwitch">
+                    <i class="fas fa-battery-half text-warning me-1"></i>Consumibles
+                  </label>
+                </div>
+              </div>
+
+              <div class="col-md-auto">
+                <div class="form-check form-switch d-inline-flex align-items-center me-2">
+                  <input class="form-check-input me-1" type="checkbox" id="reciclableSwitch" name="reciclables"
+                    value="true" {% if reciclables_filter=='true' %}checked{% endif %} onchange="this.form.submit()">
+                  <label class="form-check-label small" for="reciclableSwitch">
+                    <i class="fas fa-recycle text-success me-1"></i>Reciclables
+                  </label>
+                </div>
+              </div>
+
+              <div class="col-md-auto">
+                <div class="form-check form-switch d-inline-flex align-items-center me-2">
+                  <input class="form-check-input me-1" type="checkbox" id="reutilizableSwitch" name="reutilizables"
+                    value="true" {% if reutilizables_filter=='true' %}checked{% endif %} onchange="this.form.submit()">
+                  <label class="form-check-label small" for="reutilizableSwitch">
+                    <i class="fas fa-redo text-primary me-1"></i>Reutilizables
+                  </label>
+                </div>
+              </div>
+
+              <div class="col-md-auto">
+                <div class="form-check form-switch d-inline-flex align-items-center me-2">
+                  <input class="form-check-input me-1" type="checkbox" id="recicladoSwitch" name="reciclados"
+                    value="true" {% if reciclados_filter=='true' %}checked{% endif %} onchange="this.form.submit()">
+                  <label class="form-check-label small" for="recicladoSwitch">
+                    <i class="fas fa-leaf text-success me-1"></i>Reciclados
+                  </label>
+                </div>
+              </div>
+
+              <div class="col-md-auto">
+                <div class="form-check form-switch d-inline-flex align-items-center">
+                  <input class="form-check-input me-1" type="checkbox" id="errorStockSwitch" name="error_stock"
+                    value="true" {% if error_stock_filter=='true' %}checked{% endif %} onchange="this.form.submit()">
+                  <label class="form-check-label small" for="errorStockSwitch">
+                    <i class="fas fa-exclamation-triangle text-warning me-1"></i>Con Error
+                  </label>
+                </div>
+              </div>
+
+              <!-- Botón Buscar -->
+              <div class="col-md-auto">
+                <button type="submit" class="btn btn-primary btn-sm">
+                  <i class="fas fa-search"></i>
+                </button>
+              </div>
+            </form>
+
+            <!-- Tabla Compacta -->
+            <div class="table-responsive">
+              <table class="table table-hover table-sm align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th class="py-2">Código</th>
+                    <th class="py-2">Nombre</th>
+                    <th class="py-2">Categoría</th>
+                    <th class="py-2">Tipo</th>
+                    <th class="py-2 text-center">Stock</th>
+                    <th class="py-2 text-center">Estado</th>
+                    {% if current_user.role == 'admin' %}
+                    <th class="py-2 text-end">Costo Unit.</th>
+                    {% endif %}
+                    <th class="py-2 text-center">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for material in materials.items %}
+                  <tr class="small">
+                    <!-- Código -->
+                    <td class="py-1">
+                      <strong class="text-primary">{{ material.code }}</strong>
+                    </td>
+
+                    <!-- Nombre -->
+                    <td class="py-1">
+                      <div>
+                        {{ material.name }}
+                        {% if material.is_fabric_roll %}
+                        <i class="fas fa-scroll text-info ms-1" title="Tela"></i>
+                        {% endif %}
+                        {% if material.can_recycle %}
+                        <i class="fas fa-recycle text-success ms-1" title="Reciclable"></i>
+                        {% endif %}
+                        {% if material.is_recycled %}
+                        <i class="fas fa-leaf text-success ms-1" title="Reciclado"></i>
+                        {% endif %}
+                      </div>
+                      {% if material.description %}
+                      <small class="text-muted d-block">{{ material.description[:40] }}{% if material.description|length
+                        > 40 %}...{% endif %}</small>
+                      {% endif %}
+                    </td>
+
+                    <!-- Categoría -->
+                    <td class="py-1">
+                      <span class="badge bg-secondary">{{ material.category }}</span>
+                    </td>
+
+                    <!-- Tipo (Material/Consumible) -->
+                    <td class="py-1">
+                      {% if material.is_consumible %}
+                      <span class="badge bg-warning text-dark">Consumible</span>
+                      {% else %}
+                      <span class="badge bg-info">Material</span>
+                      {% endif %}
+                    </td>
+
+                    <!-- Stock -->
+                    <td class="py-1 text-center">
+                      <span
+                        class="fw-bold {% if material.min_stock > 0 and material.current_stock <= material.min_stock %}text-danger{% elif material.max_stock > 0 and material.current_stock >= material.max_stock %}text-warning{% else %}text-success{% endif %}">
+                        {{ material.current_stock }}
+                      </span>
+                      <span class="text-muted">{{ material.unit }}</span>
+                    </td>
+
+                    <!-- Estado -->
+                    <td class="py-1 text-center">
+                      {% if material.min_stock > 0 and material.current_stock <= material.min_stock %} <span
+                        class="badge bg-danger"><i class="fas fa-arrow-down me-1"></i>Bajo</span>
+                        {% elif material.max_stock > 0 and material.current_stock >= material.max_stock %}
+                        <span class="badge bg-warning"><i class="fas fa-arrow-up me-1"></i>Alto</span>
+                        {% else %}
+                        <span class="badge bg-success"><i class="fas fa-check me-1"></i>OK</span>
+                        {% endif %}
+                    </td>
+
+                    <!-- Costo Unitario (solo Admin) -->
+                    {% if current_user.role == 'admin' %}
+                    <td class="py-1 text-end">
+                      {% if material.unit_cost %}
+                      <span class="text-success">${{ "%.2f"|format(material.unit_cost) }}</span>
+                      {% else %}
+                      <span class="text-muted">—</span>
+                      {% endif %}
+                    </td>
+                    {% endif %}
+
+                    <!-- Acciones -->
+                    <td class="py-1 text-center">
+                      <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary btn-sm py-0 px-1" title="Ver detalles"
+                          onclick="viewMaterial({{ material.id }})" data-bs-toggle="modal"
+                          data-bs-target="#materialDetailModal">
+                          <i class="fas fa-eye"></i>
+                        </button>
+                        {% if current_user.role != 'requisitador' %}
+                        <a class="btn btn-outline-warning btn-sm py-0 px-1" title="Editar"
+                          href="{{ url_for('edit_material', material_id=material.id) }}">
+                          <i class="fas fa-edit"></i>
+                        </a>
+                        {% endif %}
+                        <button class="btn btn-outline-info btn-sm py-0 px-1" title="Ver movimientos"
+                          onclick="viewMovements('{{ material.name }}')">
+                          <i class="fas fa-history"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            {% if not materials.items %}
+            <div class="text-center text-muted py-5">
+              <i class="fas fa-boxes fa-3x mb-3"></i>
+              <h5>No se encontraron materiales</h5>
+              <p>{% if search or category or consumibles_filter or reciclables_filter or reciclados_filter or
+                error_stock_filter %}Intenta cambiar los filtros de búsqueda{% else %}Comienza agregando tu primer
+                material{% endif %}</p>
+              {% if not search and not category %}
+              <a href="{{ url_for('add_material') }}" class="btn btn-primary">
+                <i class="fas fa-plus me-1"></i>Agregar Primer Material
+              </a>
+              {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Paginación -->
+            {% if materials and materials.pages and materials.pages > 1 %}
+            <nav aria-label="Paginación" class="mt-3">
+              <ul class="pagination pagination-sm justify-content-center mb-0">
+                {% if materials.page > 1 %}
+                <li class="page-item">
+                  <a class="page-link"
+                    href="{{ url_for('materials', page=materials.page-1, search=search, category=category, type='materials') }}">
+                    <i class="fas fa-chevron-left"></i>
+                  </a>
+                </li>
+                {% endif %}
+
+                {% for page_num in (materials.iter_pages() if materials.iter_pages else range(1, materials.pages+1)) %}
+                {% if page_num %}
+                {% if page_num != materials.page %}
+                <li class="page-item">
+                  <a class="page-link"
+                    href="{{ url_for('materials', page=page_num, search=search, category=category, type='materials') }}">{{
+                    page_num }}</a>
+                </li>
+                {% else %}
+                <li class="page-item active"><span class="page-link">{{ page_num }}</span></li>
+                {% endif %}
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">...</span></li>
+                {% endif %}
+                {% endfor %}
+
+                {% if materials.page < materials.pages %} <li class="page-item">
+                  <a class="page-link"
+                    href="{{ url_for('materials', page=materials.page+1, search=search, category=category, type='materials') }}">
+                    <i class="fas fa-chevron-right"></i>
+                  </a>
+                  </li>
+                  {% endif %}
+              </ul>
+            </nav>
+            {% endif %}
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Lateral: Resumen y acciones -->
+      <div class="col-md-3">
+
+        {% if current_user.role != 'requisitador' %}
+        <!-- Acciones -->
+        <div class="card mb-3">
+          <div class="card-header py-2">
+            <h6 class="mb-0 small"><i class="fas fa-bolt me-2"></i>Acciones</h6>
+          </div>
+          <div class="card-body p-2 d-grid gap-2">
+            <button class="btn btn-success btn-sm" onclick="location.href='{{ url_for('add_material') }}'">
+              <i class="fas fa-plus me-1"></i>Nuevo Material
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="location.href='{{ url_for('fabric_rolls') }}'">
+              <i class="fas fa-scroll me-1"></i>Ver Catálogo de Rollos
+            </button>
+            <button class="btn btn-info btn-sm" onclick="exportTableCSV('tabla-materiales','materiales.csv')">
+              <i class="fas fa-download me-1"></i>Exportar
+            </button>
+            <button class="btn btn-warning btn-sm"
+              onclick="window.location.href='{{ url_for('materials', error_stock='true', type='materials') }}'">
+              <i class="fas fa-exclamation-triangle me-1"></i>Ver Errores
+            </button>
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- Resumen -->
+        <div class="card mb-3">
+          <div class="card-header py-2">
+            <h6 class="mb-0 small"><i class="fas fa-chart-pie me-2"></i>Resumen</h6>
+          </div>
+          <div class="card-body p-2">
+            {% set low_stock_count = 0 %}
+            {% set high_stock_count = 0 %}
+            {% set recycle_count = 0 %}
+            {% set reuse_count = 0 %}
+            {% set recycled_count = 0 %}
+            {% set consumible_count = 0 %}
+            {% set roll_count = 0 %}
+            {% set total_value = 0 %}
+            {% for m in materials.items %}
+            {% if m.min_stock > 0 and m.current_stock <= m.min_stock %}{% set low_stock_count=low_stock_count + 1 %}{%
+              endif %} {% if m.max_stock> 0 and m.current_stock >= m.max_stock %}{% set high_stock_count =
+              high_stock_count + 1 %}{% endif %}
+              {% if m.can_recycle %}{% set recycle_count = recycle_count + 1 %}{% endif %}
+              {% if m.can_reuse %}{% set reuse_count = reuse_count + 1 %}{% endif %}
+              {% if m.is_recycled %}{% set recycled_count = recycled_count + 1 %}{% endif %}
+              {% if m.is_consumible %}{% set consumible_count = consumible_count + 1 %}{% endif %}
+              {% if m.is_fabric_roll %}{% set roll_count = roll_count + 1 %}{% endif %}
+              {% set total_value = total_value + (m.current_stock * (m.unit_cost or 0)) %}
+              {% endfor %}
+
+              <div class="row text-center small mb-2">
+                <div class="col-6">
+                  <div class="border-end pe-2">
+                    <h5 class="text-primary mb-0">{{ materials.items|length if materials else 0 }}</h5>
+                    <small class="text-muted">Total</small>
+                  </div>
+                </div>
+                <div class="col-6">
+                  <div class="ps-2">
+                    <h5 class="text-danger mb-0">{{ low_stock_count }}</h5>
+                    <small class="text-muted">Stock Bajo</small>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="my-2">
+
+              <div class="small">
+                <div class="d-flex justify-content-between mb-1">
+                  <span><i class="fas fa-arrow-up text-warning me-1"></i>Stock Alto:</span>
+                  <strong class="text-warning">{{ high_stock_count }}</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                  <span><i class="fas fa-recycle text-success me-1"></i>Reciclables:</span>
+                  <strong class="text-success">{{ recycle_count }}</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                  <span><i class="fas fa-leaf text-success me-1"></i>Reciclados:</span>
+                  <strong class="text-success">{{ recycled_count }}</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                  <span><i class="fas fa-redo text-primary me-1"></i>Reutilizables:</span>
+                  <strong class="text-primary">{{ reuse_count }}</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                  <span><i class="fas fa-battery-half text-warning me-1"></i>Consumibles:</span>
+                  <strong class="text-warning">{{ consumible_count }}</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                  <span><i class="fas fa-scroll text-info me-1"></i>Telas:</span>
+                  <strong class="text-info">{{ roll_count }}</strong>
+                </div>
+              </div>
+
+              {% if current_user.role == 'admin' %}
+              <hr class="my-2">
+              <div class="d-flex justify-content-between small">
+                <span><i class="fas fa-dollar-sign text-success me-1"></i>Valor Total:</span>
+                <strong class="text-success">${{ "%.2f"|format(total_value) }}</strong>
+              </div>
+              {% endif %}
+          </div>
+        </div>
+
+
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel: Consumibles -->
+  <div class="tab-pane fade {% if material_type == 'consumibles' %}show active{% endif %}" id="consumibles-panel"
+    role="tabpanel">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="fas fa-battery-half me-2"></i>Materiales Consumibles</h5>
+        <button class="btn btn-secondary btn-sm" onclick="switchToMaterials()">
+          <i class="fas fa-boxes me-1"></i>Ver Materiales
+        </button>
+      </div>
+      <div class="card-body">
+        <p class="text-muted">Los consumibles son materiales que pueden utilizarse sin requisición y no afectan el costo
+          del proyecto.</p>
+
+        <!-- Tabla de consumibles -->
+        <div class="table-responsive">
+          <table class="table table-hover table-sm">
+            <thead class="table-light">
+              <tr>
+                <th>Código</th>
+                <th>Nombre</th>
+                <th>Categoría</th>
+                <th class="text-center">Stock</th>
+                <th class="text-center">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for material in materials.items if material.is_consumible %}
+              <tr>
+                <td><strong class="text-primary">{{ material.code }}</strong></td>
+                <td>{{ material.name }}</td>
+                <td><span class="badge bg-secondary">{{ material.category }}</span></td>
+                <td class="text-center">{{ material.current_stock }} {{ material.unit }}</td>
+                <td class="text-center">
+                  <div class="btn-group btn-group-sm">
+                    <a class="btn btn-outline-warning btn-sm py-0 px-1"
+                      href="{{ url_for('edit_material', material_id=material.id) }}">
+                      <i class="fas fa-edit"></i>
+                    </a>
+                    <button class="btn btn-outline-info btn-sm py-0 px-1"
+                      onclick="viewMovements('{{ material.name }}')">
+                      <i class="fas fa-history"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5" class="text-center text-muted py-4">
+                  <i class="fas fa-battery-empty fa-2x mb-2"></i>
+                  <p>No hay consumibles registrados</p>
+                  <a href="{{ url_for('add_material') }}" class="btn btn-primary btn-sm">
+                    <i class="fas fa-plus me-1"></i>Agregar Consumible
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div> <!-- /tab-content -->
+
+<!-- Modal: Detalle del Material -->
+<div class="modal fade" id="materialDetailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="materialDetailModalLabel">Detalle del material</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body" id="materialDetailContent">
+        <!-- Contenido se carga por JS -->
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // ----- Navegación entre tabs -----
+  function switchToConsumibles() {
+    const params = new URLSearchParams(window.location.search);
+    params.set('type', 'consumibles');
+    window.location.search = params.toString();
+  }
+  function switchToMaterials() {
+    const params = new URLSearchParams(window.location.search);
+    params.set('type', 'materials');
+    window.location.search = params.toString();
+  }
+
+  // ----- Acciones básicas -----
+  function editMaterial(id) {
+    window.location.href = `/materials/${id}/edit`;
+  }
+  function viewMovements(materialName) {
+    // Use material name for search (not ID)
+    window.location.href = `/stock-movements?material=${encodeURIComponent(materialName)}`;
+  }
+
+  // ----- Detalles -----
+  async function viewMaterial(materialId) {
+    const titleEl = document.getElementById('materialDetailModalLabel');
+    const bodyEl = document.getElementById('materialDetailContent');
+
+    titleEl.innerHTML = '<i class="fas fa-box me-2"></i>Cargando...';
+    bodyEl.innerHTML = `
+    <div class="text-center py-5">
+      <div class="spinner-border text-primary" role="status"></div>
+      <div class="mt-2 text-muted">Cargando detalles del material...</div>
+    </div>
+  `;
+
+    try {
+      const res = await fetch(`/api/materials/${materialId}/details`, {
+        headers: { 'X-Requested-With': 'fetch' }
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || 'No se pudo cargar');
+
+      const m = data.material;
+
+      const money = (n) => `$${Number(n ?? 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const dt = (iso) => {
+        if (!iso) return '<span class="text-muted">No disponible</span>';
+        try {
+          const d = new Date(iso);
+          return d.toLocaleDateString('es-MX', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        } catch (e) {
+          return '<span class="text-muted">Fecha inválida</span>';
+        }
+      };
+
+      titleEl.innerHTML = `<i class="fas fa-box me-2"></i>${m.code} — ${m.name}`;
+
+      const stockPercent = m.max_stock > 0 ? Math.round((m.current_stock / m.max_stock) * 100) : 0;
+
+      bodyEl.innerHTML = `
+      <!-- Badges superiores -->
+      <div class="d-flex flex-wrap gap-2 mb-4">
+        <span class="badge bg-${m.stock_status.class} fs-6">
+          <i class="fas fa-chart-line me-1"></i>${m.stock_status.label}
+        </span>
+        ${m.is_fabric_roll ? '<span class="badge bg-info fs-6"><i class="fas fa-scroll me-1"></i>Tela</span>' : ''}
+        ${m.can_recycle ? '<span class="badge bg-success fs-6"><i class="fas fa-recycle me-1"></i>Reciclable</span>' : ''}
+        ${m.is_recycled ? '<span class="badge bg-success fs-6"><i class="fas fa-leaf me-1"></i>Reciclado</span>' : ''}
+        ${m.can_reuse ? '<span class="badge bg-primary fs-6"><i class="fas fa-redo me-1"></i>Reutilizable</span>' : ''}
+        ${m.is_consumible ? '<span class="badge bg-warning fs-6"><i class="fas fa-battery-half me-1"></i>Consumible</span>' : ''}
+      </div>
+
+      <!-- Grid principal -->
+      <div class="row g-4">
+
+        <!-- Columna Izquierda: Información básica -->
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-header bg-light">
+              <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>Información Básica</h6>
+            </div>
+            <div class="card-body">
+              <table class="table table-sm table-borderless mb-0">
+                <tbody>
+                  <tr>
+                    <td class="text-muted" style="width: 40%;"><strong>Categoría:</strong></td>
+                    <td><span class="badge bg-secondary">${m.category || 'Sin categoría'}</span></td>
+                  </tr>
+                  <tr>
+                    <td class="text-muted"><strong>Unidad:</strong></td>
+                    <td><span class="badge bg-info">${m.unit || '—'}</span></td>
+                  </tr>
+                  <tr>
+                    <td class="text-muted"><strong>Tipo:</strong></td>
+                    <td>${m.is_consumible ? '<span class="badge bg-warning">Consumible</span>' : '<span class="badge bg-info">Material</span>'}</td>
+                  </tr>
+                  <tr>
+                    <td class="text-muted"><strong>Descripción:</strong></td>
+                    <td>${m.description || '<span class="text-muted">Sin descripción</span>'}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Columna Derecha: Stock -->
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-header bg-light">
+              <h6 class="mb-0"><i class="fas fa-warehouse me-2"></i>Inventario</h6>
+            </div>
+            <div class="card-body">
+              <div class="text-center mb-3">
+                <h2 class="display-5 text-${m.stock_status.class} mb-0">${m.current_stock}</h2>
+                <small class="text-muted">${m.unit}</small>
+              </div>
+
+              ${m.max_stock > 0 ? `
+              <div class="progress mb-3" style="height: 25px;">
+                <div class="progress-bar bg-${m.stock_status.class}"
+                     role="progressbar"
+                     style="width: ${Math.min(stockPercent, 100)}%"
+                     aria-valuenow="${stockPercent}"
+                     aria-valuemin="0"
+                     aria-valuemax="100">
+                  ${stockPercent}%
+                </div>
+              </div>` : ''}
+
+              <table class="table table-sm table-borderless mb-0">
+                <tbody>
+                  ${m.min_stock > 0 ? `
+                  <tr>
+                    <td class="text-muted"><i class="fas fa-arrow-down text-danger me-2"></i>Stock Mínimo:</td>
+                    <td class="text-end"><strong>${m.min_stock} ${m.unit}</strong></td>
+                  </tr>` : ''}
+                  ${m.max_stock > 0 ? `
+                  <tr>
+                    <td class="text-muted"><i class="fas fa-arrow-up text-success me-2"></i>Stock Máximo:</td>
+                    <td class="text-end"><strong>${m.max_stock} ${m.unit}</strong></td>
+                  </tr>` : ''}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Botones de acción -->
+        <div class="col-12">
+          <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-warning btn-sm" onclick="window.location.href='/materials/${m.id}/edit'" data-bs-dismiss="modal">
+              <i class="fas fa-edit me-1"></i>Editar Material
+            </button>
+            <a class="btn btn-info btn-sm" href="/stock-movements?material=${encodeURIComponent(m.name)}" target="_blank">
+              <i class="fas fa-history me-1"></i>Ver Historial de Movimientos
+            </a>
+            <button class="btn btn-success btn-sm" onclick="window.location.href='/materials/${m.id}/add-stock'" data-bs-dismiss="modal">
+              <i class="fas fa-plus me-1"></i>Agregar Stock
+            </button>
+            ${m.is_fabric_roll ? `
+            <button class="btn btn-primary btn-sm" onclick="window.location.href='/fabric-rolls?material_id=${m.id}'" data-bs-dismiss="modal">
+              <i class="fas fa-scroll me-1"></i>Ver Rollos
+            </button>` : ''}
+          </div>
+        </div>
+
+      </div>
+    `;
+    } catch (err) {
+      console.error('Error loading material details:', err);
+      titleEl.innerHTML = '<i class="fas fa-exclamation-triangle me-2"></i>Error';
+      bodyEl.innerHTML = `
+      <div class="alert alert-danger">
+        <h5 class="alert-heading">
+          <i class="fas fa-exclamation-triangle me-2"></i>Error al cargar detalles
+        </h5>
+        <p class="mb-0">${err.message}</p>
+      </div>
+      <div class="text-center">
+        <button class="btn btn-primary" onclick="viewMaterial(${materialId})">
+          <i class="fas fa-redo me-1"></i>Reintentar
+        </button>
+      </div>
+    `;
+    }
+  }
+
+  // ----- Utilidades -----
+  function exportTableCSV(tableId, filename) {
+    const table = document.querySelector('.tab-pane.show.active table');
+    if (!table) return;
+    const rows = [...table.querySelectorAll('tr')].map(tr => [...tr.cells].map(td => `"${(td.innerText || '').replace(/"/g, '""')}"`).join(','));
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename || 'export.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+</script>
+{% endblock %}

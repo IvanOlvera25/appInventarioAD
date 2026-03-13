@@ -1,0 +1,683 @@
+<!-- templates/edit_request.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Editar Requisición: {{ requisition.request_number }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <!-- Encabezado con estado -->
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-0">
+                        <i class="fas fa-edit me-2"></i>Editar Requisición: {{ requisition.request_number }}
+                        {% set status_colors = {
+                        'pendiente': 'warning',
+                        'abastecido': 'info',
+                        'pendiente_compra': 'primary',
+                        'en_entrega': 'success',
+                        'completada': 'success',
+                        'cancelada': 'danger',
+                        'pendiente_retorno': 'secondary'
+                        } %}
+                        {% set status_labels = {
+                        'pendiente': 'Pendiente',
+                        'abastecido': 'Abastecido',
+                        'pendiente_compra': 'Pendiente de Compra',
+                        'en_entrega': 'En Entrega',
+                        'completada': 'Completada',
+                        'cancelada': 'Cancelada',
+                        'pendiente_retorno': 'Pendiente de Retorno'
+                        } %}
+                        <span class="badge bg-{{ status_colors.get(requisition.status, 'secondary') }} ms-2">
+                            {{ status_labels.get(requisition.status, requisition.status|title) }}
+                        </span>
+                    </h5>
+                </div>
+                {% if current_user.role == 'requisitador' and requisition.status not in ['en_entrega', 'completada',
+                'cancelada'] and not requisition.cancellation_requested %}
+                <button class="btn btn-outline-danger btn-sm" onclick="requestCancellation()">
+                    <i class="fas fa-times-circle me-1"></i>Solicitar Cancelación
+                </button>
+                {% endif %}
+            </div>
+
+            <div class="card-body">
+                <!-- Alerta de cancelación solicitada -->
+                {% if requisition.cancellation_requested and requisition.status != 'cancelada' %}
+                <div class="alert alert-danger mb-4">
+                    <h6 class="alert-heading"><i class="fas fa-exclamation-triangle me-2"></i>Solicitud de Cancelación
+                        Pendiente</h6>
+                    <p class="mb-2">
+                        <strong>{{ requisition.cancellation_requester.full_name if requisition.cancellation_requester
+                            else 'Usuario' }}</strong>
+                        ha solicitado la cancelación de esta requisición.
+                        {% if requisition.cancellation_requested_at %}
+                        <br><small class="text-muted">{{ requisition.cancellation_requested_at.strftime('%d/%m/%Y
+                            %H:%M') }}</small>
+                        {% endif %}
+                    </p>
+                    <p class="mb-3 small">
+                        Favor de notificar a todo el personal de almacén y, en caso de haber solicitado una compra,
+                        notificar al personal de compras. Al concluir, haga clic en el siguiente botón para confirmar la
+                        cancelación.
+                    </p>
+                    {% if current_user.role != 'requisitador' %}
+                    <button class="btn btn-danger" onclick="confirmCancellation()">
+                        <i class="fas fa-ban me-1"></i>Confirmar Cancelación de Requisición
+                    </button>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <!-- Información del proyecto -->
+                <div class="alert alert-info mb-4">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <strong>Proyecto:</strong><br>
+                            {{ requisition.project.name }}<br>
+                            <small class="text-muted">{{ requisition.project.fp_code }}</small>
+                        </div>
+                        <div class="col-md-2">
+                            <strong>Departamento:</strong><br>
+                            {{ requisition.department or 'N/A' }}
+                        </div>
+                        <div class="col-md-2">
+                            <strong>Incidencia:</strong><br>
+                            {% if requisition.is_incident %}
+                            <span class="badge bg-warning">Sí - {{ requisition.incident_id or 'Sin ID' }}</span>
+                            {% else %}
+                            <span class="badge bg-secondary">No</span>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-2">
+                            <strong>Fecha Límite:</strong><br>
+                            {{ requisition.acquisition_deadline.strftime('%d/%m/%Y') if requisition.acquisition_deadline
+                            else 'N/A' }}
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Creada por:</strong><br>
+                            {{ requisition.user.full_name if requisition.user else 'N/A' }}<br>
+                            <small class="text-muted">{{ requisition.created_at.strftime('%d/%m/%Y %H:%M') }}</small>
+
+                            {% if current_user.role == 'admin' or (current_user.id == requisition.user_id and
+                            requisition.status == 'pendiente') %}
+                            <div class="mt-2 text-end">
+                                <button class="btn btn-sm btn-outline-primary" onclick="openEditDatesModal()">
+                                    <i class="fas fa-calendar-alt me-1"></i>Editar Fechas
+                                </button>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Notas adicionales -->
+                <div class="card mb-4">
+                    <div class="card-header py-2">
+                        <h6 class="mb-0"><i class="fas fa-sticky-note me-2"></i>Notas Adicionales</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-10">
+                                <textarea class="form-control" id="requestNotes" rows="2"
+                                    placeholder="Notas de la requisición...">{{ requisition.notes or '' }}</textarea>
+                            </div>
+                            <div class="col-md-2 d-flex align-items-end">
+                                <button class="btn btn-primary w-100" onclick="saveRequestNotes()">
+                                    <i class="fas fa-save me-1"></i>Guardar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Aviso: No se pueden agregar materiales -->
+                <div class="alert alert-secondary mb-4">
+                    <i class="fas fa-info-circle me-2"></i>
+                    Para agregar materiales adicionales, por favor cree una nueva requisición.
+                </div>
+
+                <!-- Lista de materiales -->
+                <div class="card">
+                    <div class="card-header py-2">
+                        <h6 class="mb-0"><i class="fas fa-list me-2"></i>Materiales Solicitados</h6>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Material</th>
+                                        <th>Cantidad</th>
+                                        <th>Categoría</th>
+                                        <th>Estado</th>
+                                        <th>Fecha Retorno</th>
+                                        <th>Notas del Item</th>
+                                        <th class="text-center">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for item in requisition.items %}
+                                    {% set item_status = item.item_status or 'pendiente' %}
+                                    {% set item_status_colors = {
+                                    'pendiente': 'warning',
+                                    'abastecido': 'success',
+                                    'pendiente_compra': 'primary',
+                                    'pendiente_retorno': 'secondary',
+                                    'cancelado': 'danger'
+                                    } %}
+                                    {% set item_status_labels = {
+                                    'pendiente': 'Pendiente',
+                                    'abastecido': 'Abastecido',
+                                    'pendiente_compra': 'Pend. Compra',
+                                    'pendiente_retorno': 'Pend. Retorno',
+                                    'cancelado': 'Cancelado'
+                                    } %}
+                                    <tr
+                                        class="{% if item_status == 'cancelado' %}table-secondary text-muted{% endif %}">
+                                        <!-- Material -->
+                                        <td>
+                                            <strong>{{ item.material.name if item.material else item.new_material_name
+                                                }}</strong><br>
+                                            <small class="text-muted">{{ item.material.code if item.material else
+                                                item.new_material_code }}</small>
+                                        </td>
+                                        <!-- Cantidad + Unidad -->
+                                        <td>
+                                            {{ item.quantity_requested }} {{ item.material.unit if item.material else
+                                            item.new_material_unit }}
+                                        </td>
+                                        <!-- Categoría -->
+                                        <td>
+                                            <span class="badge bg-secondary">
+                                                {{ item.material.category if item.material else
+                                                item.new_material_category or 'N/A' }}
+                                            </span>
+                                        </td>
+                                        <!-- Estado -->
+                                        <td>
+                                            <span
+                                                class="badge bg-{{ item_status_colors.get(item_status, 'secondary') }}">
+                                                {{ item_status_labels.get(item_status, item_status|title) }}
+                                            </span>
+                                        </td>
+                                        <!-- Fecha Retorno -->
+                                        <td>
+                                            {% if item.will_return and item.return_expected_date %}
+                                            <small>{{ item.return_expected_date.strftime('%d/%m/%Y') }}</small>
+                                            {% if item.actual_return_date %}
+                                            <br><small class="text-success">✓ {{
+                                                item.actual_return_date.strftime('%d/%m/%Y') }}</small>
+                                            {% endif %}
+                                            {% else %}
+                                            <small class="text-muted">—</small>
+                                            {% endif %}
+                                        </td>
+                                        <!-- Notas del Item -->
+                                        <td>
+                                            <small>{{ (item.item_notes or '')[:30] }}{% if item.item_notes and
+                                                item.item_notes|length > 30 %}...{% endif %}</small>
+                                        </td>
+                                        <!-- Acciones -->
+                                        <td class="text-center">
+                                            <div class="btn-group btn-group-sm">
+                                                <!-- Modificar Nota - siempre disponible -->
+                                                <button class="btn btn-outline-secondary"
+                                                    onclick="openNotesModal({{ item.id }})" title="Modificar Nota">
+                                                    <i class="fas fa-comment"></i>
+                                                </button>
+
+                                                {% if item_status == 'pendiente' %}
+                                                <!-- Modificar Cantidad -->
+                                                <button class="btn btn-outline-info"
+                                                    onclick="openQuantityModal({{ item.id }}, {{ item.quantity_requested }})"
+                                                    title="Modificar Cantidad">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+
+                                                <!-- Analizar Stock (solo almacenistas/admin) -->
+                                                {% if current_user.role in ['admin', 'almacenista'] %}
+                                                <button class="btn btn-outline-primary"
+                                                    onclick="openAnalyzeModal({{ item.id }})" title="Analizar vs Stock">
+                                                    <i class="fas fa-search"></i>
+                                                </button>
+                                                {% endif %}
+
+                                                <!-- Cancelar Material -->
+                                                <button class="btn btn-outline-danger"
+                                                    onclick="cancelItem({{ item.id }})" title="Cancelar Material">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                                {% endif %}
+
+                                                {% if item_status == 'pendiente_compra' and current_user.role in
+                                                ['admin', 'almacenista'] %}
+                                                <!-- Cambiar a Abastecido -->
+                                                <button class="btn btn-outline-success"
+                                                    onclick="markSupplied({{ item.id }})" title="Cambiar a Abastecido">
+                                                    <i class="fas fa-check"></i>
+                                                </button>
+                                                {% endif %}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% else %}
+                                    <tr>
+                                        <td colspan="7" class="text-center text-muted py-4">
+                                            <i class="fas fa-inbox fa-3x mb-3 d-block"></i>
+                                            No hay materiales en esta requisición
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Acciones -->
+                <div class="d-flex justify-content-between mt-4">
+                    <a href="{{ url_for('requests') }}" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left me-1"></i>Volver
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Modificar Nota -->
+<div class="modal fade" id="notesModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-comment me-2"></i>Modificar Nota del Material</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="notesItemId">
+                <div class="mb-3">
+                    <label class="form-label">Notas</label>
+                    <textarea class="form-control" id="itemNotesText" rows="4"
+                        placeholder="Escriba las notas..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveItemNotes()">
+                    <i class="fas fa-save me-1"></i>Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Modificar Cantidad -->
+<div class="modal fade" id="quantityModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-edit me-2"></i>Modificar Cantidad</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="quantityItemId">
+                <div class="alert alert-info">
+                    <strong>Cantidad original:</strong> <span id="originalQuantity">0</span>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Nueva Cantidad (solo se puede reducir)</label>
+                    <input type="number" class="form-control" id="newQuantity" step="0.01" min="0.01">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveItemQuantity()">
+                    <i class="fas fa-save me-1"></i>Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Analizar vs Stock -->
+<div class="modal fade" id="analyzeModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-search me-2"></i>Analizar contra Stock</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="analyzeItemId">
+                <div class="row text-center mb-3">
+                    <div class="col-4">
+                        <div class="border rounded p-2">
+                            <div class="text-muted small">En Stock</div>
+                            <div class="h4 mb-0" id="analyzeStock">0</div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="border rounded p-2">
+                            <div class="text-muted small">Solicitado</div>
+                            <div class="h4 mb-0" id="analyzeRequested">0</div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="border rounded p-2 bg-light">
+                            <div class="text-muted small">A Abastecer</div>
+                            <div class="h4 mb-0 text-success" id="analyzeSupply">0</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Cantidad a Comprar</label>
+                    <input type="number" class="form-control" id="analyzePurchase" step="0.01" min="0" value="0"
+                        oninput="updateSupplyCalculation()">
+                    <div class="form-text">Si hay stock suficiente, deje en 0. Si requiere compra, ingrese la cantidad.
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveAnalysis()">
+                    <i class="fas fa-check me-1"></i>Confirmar Análisis
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Editar Fechas -->
+<div class="modal fade" id="editDatesModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-calendar-alt me-2"></i>Editar Fechas</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editDatesForm">
+                    <input type="hidden" id="editDatesDepartment" value="{{ requisition.department }}">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Fecha Límite Adquisición <span
+                                    class="text-danger d-none req-date">*</span></label>
+                            <input type="date" class="form-control date-field" id="edit_acquisition_deadline"
+                                value="{{ requisition.acquisition_deadline.strftime('%Y-%m-%d') if requisition.acquisition_deadline else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Fecha Inicio Producción <span
+                                    class="text-danger d-none req-date">*</span></label>
+                            <input type="date" class="form-control date-field" id="edit_production_start_date"
+                                value="{{ requisition.production_start_date.strftime('%Y-%m-%d') if requisition.production_start_date else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Fecha Inicio Montaje <span
+                                    class="text-danger d-none req-date">*</span></label>
+                            <input type="date" class="form-control date-field" id="edit_assembly_start_date"
+                                value="{{ requisition.assembly_start_date.strftime('%Y-%m-%d') if requisition.assembly_start_date else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Fecha Término Montaje <span
+                                    class="text-danger d-none req-date">*</span></label>
+                            <input type="date" class="form-control date-field" id="edit_assembly_end_date"
+                                value="{{ requisition.assembly_end_date.strftime('%Y-%m-%d') if requisition.assembly_end_date else '' }}">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveDates()">
+                    <i class="fas fa-save me-1"></i>Guardar Fechas
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const requestId = {{ requisition.id }};
+
+    // ===== NOTAS DE REQUISICIÓN =====
+    async function saveRequestNotes() {
+        const notes = document.getElementById('requestNotes').value;
+        try {
+            const res = await fetch(`/api/request/${requestId}/update-notes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `notes=${encodeURIComponent(notes)}`
+            });
+            const data = await res.json();
+            alert(data.message);
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    // ===== CANCELACIÓN =====
+    async function requestCancellation() {
+        if (!confirm('¿Está seguro de solicitar la cancelación de esta requisición?')) return;
+        try {
+            const res = await fetch(`/api/request/${requestId}/request-cancellation`, { method: 'POST' });
+            const data = await res.json();
+            alert(data.message);
+            if (data.success) location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    async function confirmCancellation() {
+        if (!confirm('¿Confirmar la CANCELACIÓN de esta requisición? Esta acción no se puede deshacer.')) return;
+        try {
+            const res = await fetch(`/api/request/${requestId}/confirm-cancellation`, { method: 'POST' });
+            const data = await res.json();
+            alert(data.message);
+            if (data.success) location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    // ===== NOTAS DE ITEM =====
+    async function openNotesModal(itemId) {
+        document.getElementById('notesItemId').value = itemId;
+        try {
+            const res = await fetch(`/api/request-item/${itemId}/details`);
+            const data = await res.json();
+            if (data.success) {
+                document.getElementById('itemNotesText').value = data.item.item_notes || '';
+            }
+        } catch (err) {
+            console.error(err);
+        }
+        new bootstrap.Modal(document.getElementById('notesModal')).show();
+    }
+
+    async function saveItemNotes() {
+        const itemId = document.getElementById('notesItemId').value;
+        const notes = document.getElementById('itemNotesText').value;
+        try {
+            const res = await fetch(`/api/request-item/${itemId}/update-notes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `notes=${encodeURIComponent(notes)}`
+            });
+            const data = await res.json();
+            alert(data.message);
+            if (data.success) location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    // ===== CANTIDAD =====
+    function openQuantityModal(itemId, originalQty) {
+        document.getElementById('quantityItemId').value = itemId;
+        document.getElementById('originalQuantity').textContent = originalQty;
+        document.getElementById('newQuantity').value = originalQty;
+        document.getElementById('newQuantity').max = originalQty;
+        new bootstrap.Modal(document.getElementById('quantityModal')).show();
+    }
+
+    async function saveItemQuantity() {
+        const itemId = document.getElementById('quantityItemId').value;
+        const quantity = document.getElementById('newQuantity').value;
+        try {
+            const res = await fetch(`/api/request-item/${itemId}/update-quantity`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `quantity=${quantity}`
+            });
+            const data = await res.json();
+            alert(data.message);
+            if (data.success) location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    // ===== ANÁLISIS DE STOCK =====
+    let analyzeData = {};
+
+    async function openAnalyzeModal(itemId) {
+        document.getElementById('analyzeItemId').value = itemId;
+        try {
+            const res = await fetch(`/api/request-item/${itemId}/details`);
+            const data = await res.json();
+            if (data.success) {
+                analyzeData = data.item;
+                document.getElementById('analyzeStock').textContent = data.item.current_stock;
+                document.getElementById('analyzeRequested').textContent = data.item.quantity_requested;
+                document.getElementById('analyzePurchase').value = 0;
+                updateSupplyCalculation();
+            }
+        } catch (err) {
+            console.error(err);
+        }
+        new bootstrap.Modal(document.getElementById('analyzeModal')).show();
+    }
+
+    function updateSupplyCalculation() {
+        const requested = parseFloat(analyzeData.quantity_requested) || 0;
+        const purchase = parseFloat(document.getElementById('analyzePurchase').value) || 0;
+        const supply = requested - purchase;
+        document.getElementById('analyzeSupply').textContent = supply.toFixed(2);
+    }
+
+    async function saveAnalysis() {
+        const itemId = document.getElementById('analyzeItemId').value;
+        const purchase = document.getElementById('analyzePurchase').value;
+        try {
+            const res = await fetch(`/api/request-item/${itemId}/analyze-stock`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `quantity_to_purchase=${purchase}`
+            });
+            const data = await res.json();
+            alert(data.message);
+            if (data.success) location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    // ===== CANCELAR ITEM =====
+    async function cancelItem(itemId) {
+        if (!confirm('¿Cancelar este material?')) return;
+        try {
+            const res = await fetch(`/api/request-item/${itemId}/cancel`, { method: 'POST' });
+            const data = await res.json();
+            alert(data.message);
+            if (data.success) location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    // ===== MARCAR ABASTECIDO =====
+    async function markSupplied(itemId) {
+        if (!confirm('¿Marcar este material como abastecido?')) return;
+        try {
+            const res = await fetch(`/api/request-item/${itemId}/mark-supplied`, { method: 'POST' });
+            const data = await res.json();
+            alert(data.message);
+            if (data.success) location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    // ===== EDITAR FECHAS =====
+    function openEditDatesModal() {
+        // Inicializar validación
+        updateDateValidation();
+        new bootstrap.Modal(document.getElementById('editDatesModal')).show();
+    }
+
+    function updateDateValidation() {
+        const dept = document.getElementById('editDatesDepartment').value;
+        const dateFields = document.querySelectorAll('#editDatesModal .date-field');
+        const reqIndicators = document.querySelectorAll('#editDatesModal .req-date');
+
+        // Misma lógica que en new_request
+        const isProductionOrMounting = ['Producción', 'Montaje', 'Metal', 'Costura', 'Impresión'].includes(dept);
+
+        dateFields.forEach(field => {
+            field.required = isProductionOrMounting;
+            if (isProductionOrMounting) {
+                field.classList.add('border-primary');
+            } else {
+                field.classList.remove('border-primary');
+            }
+        });
+
+        reqIndicators.forEach(ind => {
+            if (isProductionOrMounting) ind.classList.remove('d-none');
+            else ind.classList.add('d-none');
+        });
+
+        return isProductionOrMounting;
+    }
+
+    async function saveDates() {
+        const isMandatory = updateDateValidation();
+
+        const acquisition = document.getElementById('edit_acquisition_deadline').value;
+        const production = document.getElementById('edit_production_start_date').value;
+        const assemblyStart = document.getElementById('edit_assembly_start_date').value;
+        const assemblyEnd = document.getElementById('edit_assembly_end_date').value;
+
+        if (isMandatory) {
+            if (!acquisition || !production || !assemblyStart || !assemblyEnd) {
+                alert('Para este departamento, todas las fechas son obligatorias.');
+                return;
+            }
+        }
+
+        const formData = new FormData();
+        formData.append('acquisition_deadline', acquisition);
+        formData.append('production_start_date', production);
+        formData.append('assembly_start_date', assemblyStart);
+        formData.append('assembly_end_date', assemblyEnd);
+
+        try {
+            const res = await fetch(`/api/request/${requestId}/update-dates`, {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            alert(data.message);
+            if (data.success) location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+</script>
+{% endblock %}

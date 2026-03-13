@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<style>
+  .page-title { color:#0f172a; }
+  .card-soft { border-radius: 16px; border: 1px solid rgba(0,0,0,.06); }
+  .table thead th { white-space: nowrap; }
+  .badge-role { font-weight: 600; letter-spacing:.02em; }
+  .badge-role.req { background: rgba(0,191,166,.12); color:#00BFA6; }
+  .badge-role.alm { background: rgba(78,140,255,.12); color:#4e8cff; }
+  .badge-role.adm { background: rgba(255,107,107,.12); color:#ff6b6b; }
+  .small-muted { color:#64748b; }
+  .sticky-actions { position: sticky; right: 0; background: #fff; }
+</style>
+
+<div class="container py-4">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="page-title mb-0">Administración: Usuarios & Códigos</h2>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+        <i class="fas fa-arrow-left me-1"></i> Volver
+      </a>
+      <button class="btn btn-primary" id="btnReseed">
+        <i class="fas fa-key me-2"></i> Verificar/Insertar Códigos Fijos
+      </button>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <!-- Usuarios -->
+    <div class="col-12">
+      <div class="card card-soft">
+        <div class="card-header bg-white">
+          <h5 class="mb-0"><i class="fas fa-users me-2"></i>Usuarios</h5>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>ID</th>
+                  <th>Usuario</th>
+                  <th>Email</th>
+                  <th>Rol</th>
+                  <th>Es Líder</th>
+                  <th class="text-end sticky-actions">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for u in users %}
+                <tr>
+                  <td>{{ u.id }}</td>
+                  <td>{{ u.username }}</td>
+                  <td>{{ u.email }}</td>
+                  <td>
+                    <span class="badge badge-role {{ 'adm' if u.role=='admin' else ('alm' if u.role=='almacenista' else 'req') }}">
+                      {{ u.role or '—' }}
+                    </span>
+                  </td>
+                  <td>
+                    {% if u.is_leader %}
+                      <span class="badge bg-success">Sí</span>
+                    {% else %}
+                      <span class="badge bg-secondary">No</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end sticky-actions">
+                    <div class="btn-group">
+                      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+                        Rol
+                      </button>
+                      <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item" href="#" onclick="setRole({{u.id}}, 'requisitador')">Requisitador</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="setRole({{u.id}}, 'almacenista')">Almacenista</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="setRole({{u.id}}, 'admin')">Admin</a></li>
+                      </ul>
+                      <button class="btn btn-sm btn-outline-info" title="Líder" onclick="toggleLeader({{u.id}})">
+                        <i class="fas fa-user-tie"></i>
+                      </button>
+                      <button class="btn btn-sm btn-outline-warning" title="Reset Password" onclick="resetPassword({{u.id}})">
+                        <i class="fas fa-key"></i>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center small-muted py-4">No hay usuarios</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Códigos -->
+    <div class="col-12">
+      <div class="card card-soft">
+        <div class="card-header bg-white d-flex align-items-center justify-content-between">
+          <h5 class="mb-0"><i class="fas fa-qrcode me-2"></i>Códigos de verificación (fijos y existentes)</h5>
+          <span class="small-muted">Los códigos fijos son siempre válidos y reutilizables</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            {% for code, role in fixed_codes %}
+            <div class="col-12 col-md-4">
+              <div class="p-3 border rounded-3 h-100">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                  <strong>{{ code }}</strong>
+                  <span class="badge badge-role {{ 'adm' if role=='admin' else ('alm' if role=='almacenista' else 'req') }}">{{ role }}</span>
+                </div>
+                <div class="small-muted">Código fijo (permanente)</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+
+          <hr class="my-4">
+
+          <div class="table-responsive">
+            <table class="table align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>ID</th>
+                  <th>Código</th>
+                  <th>Rol</th>
+                  <th>Activo</th>
+                  <th>Usado por</th>
+                  <th>Expira</th>
+                  <th>Notas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for c in codes %}
+                <tr>
+                  <td>{{ c.id }}</td>
+                  <td><code>{{ c.code }}</code></td>
+                  <td>{{ c.role }}</td>
+                  <td>
+                    {% if c.is_active %}<span class="badge bg-success">Sí</span>
+                    {% else %}<span class="badge bg-secondary">No</span>{% endif %}
+                  </td>
+                  <td>{{ c.used_by or '—' }}</td>
+                  <td>{{ c.expires_at.strftime('%Y-%m-%d %H:%M') if c.expires_at else '—' }}</td>
+                  <td>{{ c.notes or '—' }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="text-center small-muted py-4">No hay registros en la tabla de códigos</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toasts -->
+<div class="position-fixed top-0 end-0 p-3" style="z-index: 1080">
+  <div id="liveToast" class="toast align-items-center text-white bg-dark border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="toastMsg">Hecho</div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<script>
+function showToast(msg) {
+  document.getElementById('toastMsg').textContent = msg;
+  const t = new bootstrap.Toast(document.getElementById('liveToast'));
+  t.show();
+}
+
+document.getElementById('btnReseed').addEventListener('click', async () => {
+  const res = await fetch('{{ url_for("admin_codes_reseed") }}', { method:'POST' });
+  const data = await res.json();
+  showToast(data.message || (data.success ? 'Ok' : 'Error'));
+  if (data.success) setTimeout(() => location.reload(), 600);
+});
+
+async function setRole(userId, role){
+  const fd = new FormData();
+  fd.append('role', role);
+  const res = await fetch(`/admin/users/${userId}/set-role`, { method:'POST', body: fd });
+  const data = await res.json();
+  showToast(data.message || (data.success ? 'Rol actualizado' : 'Error'));
+  if (data.success) setTimeout(() => location.reload(), 500);
+}
+
+async function toggleLeader(userId){
+  const res = await fetch(`/admin/users/${userId}/toggle-leader`, { method:'POST' });
+  const data = await res.json();
+  showToast(data.message || (data.success ? 'Actualizado' : 'Error'));
+  if (data.success) setTimeout(() => location.reload(), 500);
+}
+
+async function resetPassword(userId){
+  if(!confirm('¿Generar contraseña temporal para este usuario?')) return;
+  const res = await fetch(`/admin/users/${userId}/reset-password`, { method:'POST' });
+  const data = await res.json();
+  if (data.success) {
+    showToast(`Temporal: ${data.temp_password}`);
+  } else {
+    showToast(data.message || 'Error');
+  }
+}
+</script>
+
+{% endblock %}

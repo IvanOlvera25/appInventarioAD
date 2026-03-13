@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+
+{% block login_content %}
+<style>
+  .auth-bg {
+    min-height: 100vh;
+    background: radial-gradient(1200px 600px at -10% -10%, rgba(255,255,255,.15), transparent),
+                radial-gradient(1000px 500px at 110% 10%, rgba(255,255,255,.08), transparent),
+                linear-gradient(135deg, #0f172a, #1e293b 30%, #0b132b 100%);
+  }
+  .auth-hero { color: #e5e7eb; }
+  .role-card {
+    border-radius: 20px;
+    transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+    backdrop-filter: blur(6px);
+    cursor: pointer;
+  }
+  .role-card:hover { transform: translateY(-4px); box-shadow: 0 20px 50px rgba(0,0,0,.25); border-color: rgba(255,255,255,0.18); }
+  .role-badge { font-size: .8rem; letter-spacing: .04em; border-radius: 999px; padding: .35rem .7rem; }
+  .role-icon { width: 72px; height: 72px; border-radius: 18px; display: grid; place-items: center; margin-bottom: 1rem; }
+  .req { --c1: #00BFA6; --c1a: rgba(0,191,166,.15); }
+  .alm { --c1: #4e8cff; --c1a: rgba(78,140,255,.15); }
+  .adm { --c1: #ff6b6b; --c1a: rgba(255,107,107,.15); }
+  .role-icon.req   { background: var(--c1a); color: var(--c1); }
+  .role-icon.alm   { background: var(--c1a); color: var(--c1); }
+  .role-icon.adm   { background: var(--c1a); color: var(--c1); }
+  .role-accent.req { color: var(--c1); }
+  .role-accent.alm { color: var(--c1); }
+  .role-accent.adm { color: var(--c1); }
+  .modal-content { border-radius: 18px; border: 1px solid rgba(0,0,0,.06); box-shadow: 0 30px 80px rgba(0,0,0,.25); }
+  .form-control, .form-select { border-radius: 12px !important; }
+  .btn-soft { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); color: #e5e7eb; }
+  .btn-soft:hover { background: rgba(255,255,255,.12); }
+  .small-muted { color: #94a3b8; }
+</style>
+
+<div class="auth-bg d-flex align-items-center">
+  <div class="container py-5">
+
+    <!-- Encabezado -->
+    <div class="row justify-content-center text-center auth-hero mb-5">
+      <div class="col-lg-8">
+        <h1 class="fw-bold mb-2">Bienvenido a <span class="text-white">appInventario</span></h1>
+        <p class="lead small-muted mb-0">Selecciona tu perfil para iniciar sesión</p>
+      </div>
+    </div>
+
+    <!-- Selección de rol -->
+    <div class="row g-4 justify-content-center">
+      <!-- Requisitador -->
+      <div class="col-12 col-md-6 col-lg-4">
+        <div class="role-card p-4 h-100" data-role="requisitador" data-prefix="REQ"
+             data-color="#00BFA6" data-title="Requisitador" onclick="openLoginModal(this)">
+          <div class="role-icon req shadow-sm"><i class="fas fa-clipboard-list fa-2x"></i></div>
+          <h4 class="text-white mb-1">Requisitador</h4>
+          <div class="role-badge req mb-3" style="background: rgba(0,191,166,.12); color: #00BFA6;">Operación diaria</div>
+          <p class="small-muted mb-0">Solicita materiales, consulta inventario <em>sin costos</em> y da seguimiento a tus requisiciones.</p>
+        </div>
+      </div>
+
+      <!-- Almacenista -->
+      <div class="col-12 col-md-6 col-lg-4">
+        <div class="role-card p-4 h-100" data-role="almacenista" data-prefix="ALM"
+             data-color="#4e8cff" data-title="Almacenista" onclick="openLoginModal(this)">
+          <div class="role-icon alm shadow-sm"><i class="fas fa-boxes-stacked fa-2x"></i></div>
+          <h4 class="text-white mb-1">Almacenista</h4>
+          <div class="role-badge alm mb-3" style="background: rgba(78,140,255,.12); color: #4e8cff;">Control de almacén</div>
+          <p class="small-muted mb-0">Registra entradas y salidas, visualiza movimientos y gráficas de uso (sin costos).</p>
+        </div>
+      </div>
+
+      <!-- Administrador -->
+      <div class="col-12 col-md-6 col-lg-4">
+        <div class="role-card p-4 h-100" data-role="admin" data-prefix="ADM"
+             data-color="#ff6b6b" data-title="Administrador" onclick="openLoginModal(this)">
+          <div class="role-icon adm shadow-sm"><i class="fas fa-shield-halved fa-2x"></i></div>
+          <h4 class="text-white mb-1">Administrador</h4>
+          <div class="role-badge adm mb-3" style="background: rgba(255,107,107,.12); color: #ff6b6b;">Acceso total</div>
+          <p class="small-muted mb-0">Gestiona materiales, costos y modifica registros con permisos avanzados.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- CTA a registro -->
+    <div class="text-center mt-5">
+      <a href="{{ url_for('register') }}" class="btn btn-soft btn-lg px-4">
+        <i class="fas fa-user-plus me-2"></i>¿Necesitas una cuenta? Regístrate
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Login -->
+<div class="modal fade" id="loginModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-md">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <div class="d-flex align-items-center gap-3">
+          <div id="modalRoleIcon" class="role-icon req"><i class="fas fa-user"></i></div>
+          <div>
+            <h5 class="modal-title mb-0 text-capitalize" id="modalRoleTitle">Iniciar sesión</h5>
+            <small class="text-muted">Perfil: <span id="modalRoleName">Requisitador</span></small>
+          </div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body pt-3">
+        <form method="POST" action="{{ url_for('login') }}" autocomplete="off">
+          <input type="hidden" name="selected_role" id="selectedRole">
+          <div class="mb-3">
+            <label class="form-label">Usuario</label>
+            <input type="text" name="username" class="form-control" required autocomplete="username">
+          </div>
+          <div class="mb-4">
+            <label class="form-label d-flex justify-content-between">
+              <span>Contraseña</span>
+              <a href="#" class="small text-decoration-none">¿Olvidaste tu contraseña?</a>
+            </label>
+            <div class="input-group">
+              <input type="password" name="password" class="form-control" id="loginPassword" required autocomplete="current-password">
+              <button type="button" class="btn btn-outline-secondary" onclick="togglePw('loginPassword')"><i class="far fa-eye"></i></button>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary w-100 py-2">
+            <i class="fas fa-right-to-bracket me-2"></i>Entrar
+          </button>
+        </form>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <small class="text-muted">¿Aún no tienes cuenta? <a href="{{ url_for('register') }}">Crea una aquí</a>.</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function togglePw(id){
+    const el = document.getElementById(id);
+    el.type = el.type === 'password' ? 'text' : 'password';
+  }
+
+  function openLoginModal(card){
+    const role = card.dataset.role;
+    const color = card.dataset.color;
+    const title = card.dataset.title;
+
+    const iconBox = document.getElementById('modalRoleIcon');
+    const titleEl = document.getElementById('modalRoleTitle');
+    const nameEl  = document.getElementById('modalRoleName');
+
+    // color de fondo translúcido, soporta #RRGGBB
+    iconBox.style.color = color;
+    iconBox.style.background = 'rgba(' + (
+      color.startsWith('#')
+        ? parseInt(color.slice(1,3),16)+','+parseInt(color.slice(3,5),16)+','+parseInt(color.slice(5,7),16)
+        : color
+    ) + ',.15)';
+
+    titleEl.textContent = 'Iniciar sesión';
+    nameEl.textContent = title;
+    document.getElementById('selectedRole').value = role;
+
+    const m = new bootstrap.Modal(document.getElementById('loginModal'));
+    m.show();
+  }
+</script>
+
+{# TOASTS #}
+{% with messages = get_flashed_messages(with_categories=true) %}
+<div class="position-fixed top-0 end-0 p-3" style="z-index:1080;">
+  {% for category, message in messages %}
+    {% set bs = 'primary' %}
+    {% if category == 'success' %}{% set bs = 'success' %}
+    {% elif category == 'danger' %}{% set bs = 'danger' %}
+    {% elif category == 'warning' %}{% set bs = 'warning' %}
+    {% elif category == 'info' %}{% set bs = 'info' %}
+    {% endif %}
+    <div class="toast align-items-center text-bg-{{ bs }} border-0 mb-2" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="5000">
+      <div class="d-flex">
+        <div class="toast-body">{{ message }}</div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Cerrar"></button>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.toast').forEach(t => (new bootstrap.Toast(t)).show());
+  });
+</script>
+{% endwith %}
+{% endblock %}

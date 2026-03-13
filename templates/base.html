@@ -1,0 +1,420 @@
+<!-- templates/base.html -->
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}AD SOLUTIONS - Sistema de Gestión de Almacén{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #ff6b35;
+            --primary-dark: #e55a2b;
+            --primary-light: #ff8554;
+            --secondary-color: #ff9558;
+            --accent-color: #ffc93c;
+            --success-color: #27ae60;
+            --warning-color: #f39c12;
+            --danger-color: #e74c3c;
+            --dark-bg: #2c2c2c;
+            --light-bg: #f8f9fa;
+            --sidebar-width: 280px;
+            --sidebar-collapsed: 70px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--light-bg);
+            overflow-x: hidden;
+        }
+
+        /* Sidebar Structure */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            width: var(--sidebar-collapsed);
+            background: linear-gradient(180deg, #2c3e50 0%, #34495e 100%);
+            color: white;
+            z-index: 1000;
+            transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 4px 0 20px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        .sidebar.expanded {
+            width: var(--sidebar-width);
+        }
+
+        /* Logo Area */
+        .sidebar .logo {
+            height: 70px;
+            min-height: 70px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 0;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .sidebar .logo-icon {
+            width: var(--sidebar-collapsed);
+            min-width: var(--sidebar-collapsed);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.5rem;
+            color: var(--primary-color);
+        }
+
+        .sidebar .logo-text {
+            opacity: 0;
+            transform: translateX(-10px);
+            transition: all 0.3s ease;
+            font-weight: bold;
+            font-size: 1.2rem;
+            margin-left: 0.5rem;
+        }
+
+        .sidebar.expanded .logo-text {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        /* Navigation */
+        .sidebar .nav-group {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-top: 1rem;
+        }
+
+        .sidebar::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        .sidebar .nav-link {
+            display: flex;
+            align-items: center;
+            color: rgba(255, 255, 255, 0.8);
+            height: 50px;
+            text-decoration: none;
+            transition: all 0.2s;
+            position: relative;
+            white-space: nowrap;
+            margin-bottom: 4px;
+        }
+
+        .sidebar .nav-link:hover {
+            color: white;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar .nav-link.active {
+            color: var(--primary-color);
+            background: rgba(255, 255, 255, 0.15);
+            border-right: 4px solid var(--primary-color);
+        }
+
+        .sidebar .nav-link i {
+            width: var(--sidebar-collapsed);
+            min-width: var(--sidebar-collapsed);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.2rem;
+            transition: transform 0.2s;
+        }
+
+        .sidebar .nav-link:hover i {
+            transform: scale(1.1);
+        }
+
+        .sidebar .nav-link span {
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            font-size: 0.95rem;
+        }
+
+        .sidebar.expanded .nav-link span {
+            opacity: 1;
+        }
+
+        /* Section Titles */
+        .sidebar .section-header {
+            padding: 1rem 0 0.5rem 1.7rem;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.4);
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity 0.3s;
+            display: none;
+            /* Hide when collapsed */
+        }
+
+        .sidebar.expanded .section-header {
+            display: block;
+            opacity: 1;
+        }
+
+        /* Footer / Logout */
+        .sidebar-footer {
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 0.5rem 0;
+        }
+
+        /* Main Content */
+        .main-content {
+            margin-left: var(--sidebar-collapsed);
+            min-height: 100vh;
+            transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background-color: #f4f6f9;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .main-content.shrunk {
+            margin-left: var(--sidebar-width);
+        }
+
+        /* Top Navbar */
+        .top-navbar {
+            height: 70px;
+            background: white;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            align-items: center;
+            padding: 0 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 900;
+        }
+
+        .toggle-btn {
+            background: transparent;
+            border: 1px solid #dee2e6;
+            color: #555;
+            width: 35px;
+            height: 35px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .toggle-btn:hover {
+            background: #f8f9fa;
+            color: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+
+        /* Content Area */
+        .content-area {
+            padding: 2rem;
+            flex: 1;
+        }
+
+        /* Flash Alerts */
+        .alert {
+            border: none;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            border-radius: 8px;
+        }
+
+        /* User Menu */
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+    </style>
+</head>
+
+<body>
+    {% if current_user.is_authenticated %}
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+        <!-- Logo -->
+        <div class="logo">
+            <div class="logo-icon">
+                <i class="fas fa-cube"></i>
+            </div>
+            <span class="logo-text">AD SOLUTIONS</span>
+        </div>
+
+        <!-- Navigation -->
+        <div class="nav-group">
+            <a class="nav-link" href="{{ url_for('dashboard') }}" title="Dashboard">
+                <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
+            </a>
+            <a class="nav-link" href="{{ url_for('materials') }}" title="Materiales">
+                <i class="fas fa-boxes"></i><span>Materiales</span>
+            </a>
+            <a class="nav-link" href="{{ url_for('requests') }}" title="Requisiciones">
+                <i class="fas fa-file-invoice"></i><span>Requisiciones</span>
+            </a>
+            <a class="nav-link" href="{{ url_for('fabric_rolls') }}" title="Rollos de Tela">
+                <i class="fas fa-scroll"></i><span>Rollos de Tela</span>
+            </a>
+            <a class="nav-link" href="{{ url_for('stock_movements') }}" title="Movimientos">
+                <i class="fas fa-exchange-alt"></i><span>Movimientos</span>
+            </a>
+
+            {% if current_user.role != 'requisitador' %}
+            <a class="nav-link" href="{{ url_for('reports') }}" title="Reportes">
+                <i class="fas fa-chart-line"></i><span>Reportes</span>
+            </a>
+            {% endif %}
+
+            {% if current_user.is_leader %}
+            <a class="nav-link" href="{{ url_for('leader_dashboard') }}" title="Panel Líder">
+                <i class="fas fa-users-cog"></i><span>Panel Líder</span>
+            </a>
+            {% endif %}
+
+            {% if current_user.role == 'admin' %}
+            <div class="section-header">Administración</div>
+            <a class="nav-link {{ 'active' if request.path.startswith('/admin/users-and-codes') else '' }}"
+                href="{{ url_for('admin_users_and_codes') }}" title="Usuarios & Códigos">
+                <i class="fas fa-user-shield"></i><span>Usuarios & Códigos</span>
+            </a>
+            {% endif %}
+        </div>
+
+        <!-- Footer -->
+        <div class="sidebar-footer">
+            <a class="nav-link" href="{{ url_for('logout') }}" title="Cerrar Sesión">
+                <i class="fas fa-sign-out-alt text-danger"></i><span>Cerrar Sesión</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content" id="mainContent">
+        <!-- Navbar -->
+        <div class="top-navbar">
+            <div class="d-flex align-items-center">
+                <button class="toggle-btn me-3" id="toggleSidebar">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <h5 class="mb-0 text-secondary">{% block page_title %}Dashboard{% endblock %}</h5>
+            </div>
+
+            <div class="ms-auto user-menu">
+                <div class="text-end d-none d-md-block">
+                    <div class="fw-bold small mb-0">{{ current_user.username }}</div>
+                    <div class="text-muted small" style="font-size: 0.75rem;">{{ current_user.role|title }}</div>
+                </div>
+                <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center fw-bold shadow-sm"
+                    style="width: 38px; height: 38px;">
+                    {{ current_user.username[0].upper() }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div class="content-area">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            {% for category, message in messages %}
+            <div class="alert alert-{{ category or 'info' }} flash alert-dismissible fade show" role="alert"
+                data-timeout="5000">
+                <div class="d-flex align-items-center">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <div>{{ message }}</div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+            {% endif %}
+            {% endwith %}
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+    {% else %}
+    <!-- Login/Register -->
+    {% block login_content %}{% endblock %}
+    {% endif %}
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Auto-dismiss alerts
+        document.addEventListener('DOMContentLoaded', function () {
+            var flashes = document.querySelectorAll('.alert.flash');
+            flashes.forEach(function (alertEl) {
+                var timeout = parseInt(alertEl.getAttribute('data-timeout') || '5000', 10);
+                if (timeout > 0) {
+                    setTimeout(function () {
+                        var bsAlert = new bootstrap.Alert(alertEl);
+                        bsAlert.close();
+                    }, timeout);
+                }
+            });
+
+            // Sidebar Logic
+            var sidebar = document.getElementById('sidebar');
+            var mainContent = document.getElementById('mainContent');
+            var toggleBtn = document.getElementById('toggleSidebar');
+
+            // Check stored preference, default to collapsed (minimizado)
+            var isExpanded = localStorage.getItem('sidebar_expanded') === 'true';
+
+            function updateSidebar() {
+                if (isExpanded) {
+                    sidebar.classList.add('expanded');
+                    mainContent.classList.remove('shrunk'); // Wait, shrunk means margin-left=280px?
+                    // Previous logic: main-content margin-left=70px. expanded sidebar=280px.
+                    // So if sidebar expanded, main-content margin needs to increase.
+                    // css: .main-content.shrunk { margin-left: var(--sidebar-width); }
+                    mainContent.classList.add('shrunk');
+                } else {
+                    sidebar.classList.remove('expanded');
+                    mainContent.classList.remove('shrunk');
+                }
+            }
+
+            if (sidebar && mainContent && toggleBtn) {
+                // Apply initial state
+                updateSidebar();
+
+                toggleBtn.addEventListener('click', function () {
+                    isExpanded = !isExpanded;
+                    localStorage.setItem('sidebar_expanded', isExpanded);
+                    updateSidebar();
+                });
+            }
+
+            // Active Link Highlighting
+            var currentPath = window.location.pathname;
+            var navLinks = document.querySelectorAll('.sidebar .nav-link');
+            navLinks.forEach(function (link) {
+                if (link.getAttribute('href') === currentPath) {
+                    link.classList.add('active');
+                }
+            });
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+
+</html>

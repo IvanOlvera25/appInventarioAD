@@ -1,0 +1,1203 @@
+<!-- templates/requests.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Gestión de Requisiciones{% endblock %}
+
+{% block content %}
+<!-- Definir variables globales para usar en todo el template -->
+{% set status_colors = {
+'pendiente': 'warning',
+'abastecido': 'info',
+'pendiente_compra': 'secondary',
+'en_entrega': 'primary',
+'completada': 'success',
+'cancelada': 'danger'
+} %}
+{% set status_icons = {
+'pendiente': 'clock',
+'abastecido': 'box',
+'pendiente_compra': 'shopping-cart',
+'en_entrega': 'truck',
+'completada': 'check-circle',
+'cancelada': 'times-circle'
+} %}
+
+<div class="row">
+    <div class="col-12">
+        <!-- Pestañas de navegación -->
+        <ul class="nav nav-tabs mb-4" id="requestsTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="list-tab" data-bs-toggle="tab" data-bs-target="#list-pane"
+                    type="button" role="tab">
+                    <i class="fas fa-list me-1"></i>Lista de Requisiciones
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="projects-tab" data-bs-toggle="tab" data-bs-target="#projects-pane"
+                    type="button" role="tab">
+                    <i class="fas fa-hammer me-1"></i>Proyectos Activos
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="all-projects-tab" data-bs-toggle="tab" data-bs-target="#all-projects-pane"
+                    type="button" role="tab">
+                    <i class="fas fa-folder me-1"></i>Todos los Proyectos
+                </button>
+            </li>
+        </ul>
+
+        <!-- Contenido de las pestañas -->
+        <div class="tab-content" id="requestsTabContent">
+            <!-- Tab 1: Lista de Requisiciones -->
+            <div class="tab-pane fade show active" id="list-pane" role="tabpanel">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-file-alt me-2"></i>Requisiciones de Materiales</h5>
+                        <a href="{{ url_for('new_request') }}" class="btn btn-primary">
+                            <i class="fas fa-plus me-1"></i>Nueva Requisición
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <!-- Filtros -->
+                        <!-- Filtros Avanzados -->
+                        <form method="GET" class="row g-3 mb-4">
+                            <div class="col-md-2">
+                                <label class="form-label small mb-1">Estado</label>
+                                <select class="form-select form-select-sm" name="status">
+                                    <option value="">Todos</option>
+                                    <option value="pendiente" {% if status_filter=='pendiente' %}selected{% endif %}>
+                                        Pendiente</option>
+                                    <option value="abastecido" {% if status_filter=='abastecido' %}selected{% endif %}>
+                                        Abastecido</option>
+                                    <option value="pendiente_compra" {% if status_filter=='pendiente_compra'
+                                        %}selected{% endif %}>Pend. Compra</option>
+                                    <option value="en_entrega" {% if status_filter=='en_entrega' %}selected{% endif %}>
+                                        En Entrega</option>
+                                    <option value="completada" {% if status_filter=='completada' %}selected{% endif %}>
+                                        Completada</option>
+                                    <option value="cancelada" {% if status_filter=='cancelada' %}selected{% endif %}>
+                                        Cancelada</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small mb-1">Departamento</label>
+                                <select class="form-select form-select-sm" name="department">
+                                    <option value="">Todos</option>
+                                    <option value="Metal" {% if department_filter=='Metal' %}selected{% endif %}>Metal
+                                    </option>
+                                    <option value="Costura" {% if department_filter=='Costura' %}selected{% endif %}>
+                                        Costura</option>
+                                    <option value="Montaje" {% if department_filter=='Montaje' %}selected{% endif %}>
+                                        Montaje</option>
+                                    <option value="Impresión" {% if department_filter=='Impresión' %}selected{% endif
+                                        %}>Impresión</option>
+                                    <option value="Stagging" {% if department_filter=='Stagging' %}selected{% endif %}>
+                                        Stagging</option>
+                                    <option value="Administración" {% if department_filter=='Administración'
+                                        %}selected{% endif %}>Admin</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small mb-1">Cliente</label>
+                                <select class="form-select form-select-sm" name="client">
+                                    <option value="">Todos</option>
+                                    {% for client in unique_clients %}
+                                    <option value="{{ client }}" {% if client_filter==client %}selected{% endif %}>{{
+                                        client }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small mb-1">Incidencia</label>
+                                <select class="form-select form-select-sm" name="incident_filter">
+                                    <option value="">Todas</option>
+                                    <option value="incident" {% if incident_filter=='incident' %}selected{% endif %}>
+                                        Solo Incidencias</option>
+                                    <option value="normal" {% if incident_filter=='normal' %}selected{% endif %}>Sin
+                                        Incidencias</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small mb-1">Ordenar por</label>
+                                <select class="form-select form-select-sm" name="sort">
+                                    <option value="created_at_desc" {% if sort_by=='created_at_desc' %}selected{% endif
+                                        %}>Fecha (Reciente)</option>
+                                    <option value="created_at_asc" {% if sort_by=='created_at_asc' %}selected{% endif
+                                        %}>Fecha (Antigua)</option>
+                                    <option value="deadline_asc" {% if sort_by=='deadline_asc' %}selected{% endif %}>
+                                        Límite (Próximo)</option>
+                                    <option value="deadline_desc" {% if sort_by=='deadline_desc' %}selected{% endif %}>
+                                        Límite (Lejano)</option>
+                                    <option value="status" {% if sort_by=='status' %}selected{% endif %}>Estado</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small mb-1">Búsqueda</label>
+                                <input type="text" class="form-control form-control-sm" name="search"
+                                    placeholder="No. Req, Proyecto..." value="{{ request.args.get('search', '') }}">
+                            </div>
+                            <div class="col-12 text-end mt-2">
+                                <button type="submit" class="btn btn-primary btn-sm">
+                                    <i class="fas fa-filter me-1"></i>Filtrar
+                                </button>
+                                <a href="{{ url_for('requests') }}" class="btn btn-outline-secondary btn-sm">
+                                    <i class="fas fa-times me-1"></i>Limpiar
+                                </a>
+                                <button type="button" class="btn btn-success btn-sm ms-2" onclick="exportSelected()">
+                                    <i class="fas fa-file-excel me-1"></i>Exportar Selección
+                                </button>
+                            </div>
+                        </form>
+
+                        <!-- Estadísticas rápidas -->
+                        <!-- Estadísticas rápidas (Ocultables) -->
+                        <div class="d-flex justify-content-end mb-2">
+                            <button class="btn btn-sm btn-link text-decoration-none" type="button"
+                                data-bs-toggle="collapse" data-bs-target="#totalsStats" aria-expanded="false"
+                                aria-controls="totalsStats">
+                                <i class="fas fa-chart-bar me-1"></i>Ver/Ocultar Totales
+                            </button>
+                        </div>
+                        <div class="row mb-4 collapse" id="totalsStats">
+                            <div class="col-md-2">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center p-2">
+                                        <h5 class="text-primary">{{ requests.total }}</h5>
+                                        <small class="text-muted">Total</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center p-2">
+                                        {% set pending_count = namespace(value=0) %}
+                                        {% for req in requests.items %}
+                                        {% if req.status == 'pendiente' %}
+                                        {% set pending_count.value = pending_count.value + 1 %}
+                                        {% endif %}
+                                        {% endfor %}
+                                        <h5 class="text-warning">{{ pending_count.value }}</h5>
+                                        <small class="text-muted">Pendientes</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center p-2">
+                                        {% set incident_count = namespace(value=0) %}
+                                        {% for req in requests.items %}
+                                        {% if req.is_incident %}
+                                        {% set incident_count.value = incident_count.value + 1 %}
+                                        {% endif %}
+                                        {% endfor %}
+                                        <h5 class="text-danger">{{ incident_count.value }}</h5>
+                                        <small class="text-muted">Incidencias</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center p-2">
+                                        {% set completed_count = namespace(value=0) %}
+                                        {% for req in requests.items %}
+                                        {% if req.status == 'completada' %}
+                                        {% set completed_count.value = completed_count.value + 1 %}
+                                        {% endif %}
+                                        {% endfor %}
+                                        <h5 class="text-success">{{ completed_count.value }}</h5>
+                                        <small class="text-muted">Completadas</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center p-2">
+                                        {% set return_pending = namespace(value=0) %}
+                                        {% for req in requests.items %}
+                                        {% for item in req.items %}
+                                        {% if item.will_return and item.quantity_delivered > 0 %}
+                                        {% set return_pending.value = return_pending.value + 1 %}
+                                        {% endif %}
+                                        {% endfor %}
+                                        {% endfor %}
+                                        <h5 class="text-info">{{ return_pending.value }}</h5>
+                                        <small class="text-muted">Retornos Pend.</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center p-2">
+                                        {% if requests.total > 0 %}
+                                        {% set efficiency = (completed_count.value / requests.total * 100) %}
+                                        <h5 class="text-info">{{ "%.0f"|format(efficiency) }}%</h5>
+                                        {% else %}
+                                        <h5 class="text-info">0%</h5>
+                                        {% endif %}
+                                        <small class="text-muted">Eficiencia</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tabla de requisiciones -->
+                        {% if requests.items %}
+                        <div class="table-responsive">
+                            <table class="table table-hover table-sm">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 30px;"><input type="checkbox" id="selectAll"
+                                                onclick="toggleSelectAll()"></th>
+                                        <th>No. Requisición</th>
+                                        <th>Solicitante</th>
+                                        <th>Proyecto / Cliente</th>
+                                        <th>Depto.</th>
+                                        <th>Estado</th>
+                                        <th>Incidencia</th>
+                                        <th>Materiales</th>
+                                        <th>Fechas</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for req in requests.items %}
+                                    <tr>
+                                        <td>
+                                            <input type="checkbox" class="req-checkbox" value="{{ req.id }}">
+                                        </td>
+                                        <td>
+                                            <strong>{{ req.request_number }}</strong>
+                                            {% if req.notes %}
+                                            <br><small class="text-muted">{{ req.notes[:20] }}...</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <strong>{{ req.user.username }}</strong>
+                                        </td>
+                                        <td>
+                                            <strong>{{ req.project.name }}</strong><br>
+                                            <small class="text-muted">{{ req.project.fp_code }}</small>
+                                            {% if req.project.client %}
+                                            <br><small class="text-info"><i class="fas fa-building me-1"></i>{{
+                                                req.project.client }}</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-info">{{ req.department }}</span>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-{{ status_colors.get(req.status, 'secondary') }}">
+                                                {{ req.status|replace('_', ' ')|title }}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            {% if req.is_incident %}
+                                            <span class="badge bg-danger">SÍ</span>
+                                            {% if req.incident_id %}<br><small>{{ req.incident_id }}</small>{% endif %}
+                                            {% else %}
+                                            <span class="badge bg-light text-muted">No</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {{ req.items|length }} items
+                                        </td>
+                                        <td>
+                                            <small class="d-block"><strong>Solicitud:</strong> {{
+                                                req.created_at.strftime('%d/%m/%Y') }}</small>
+                                            {% if req.acquisition_deadline %}
+                                            <small class="d-block text-danger"><strong>Límite:</strong> {{
+                                                req.acquisition_deadline.strftime('%d/%m/%Y') }}</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <button class="btn btn-outline-primary" title="Ver detalles"
+                                                    onclick="viewRequest({{ req.id }})" data-bs-toggle="modal"
+                                                    data-bs-target="#requestDetailModal">
+                                                    <i class="fas fa-eye"></i>
+                                                </button>
+                                                {% if req.user_id == current_user.id or current_user.role == 'admin' %}
+                                                <a href="{{ url_for('edit_request', id=req.id) }}"
+                                                    class="btn btn-outline-warning" title="Editar">
+                                                    <i class="fas fa-edit"></i>
+                                                </a>
+                                                {% endif %}
+                                                <!-- Action buttons removed as requested -->
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="text-center text-muted py-5">
+                            <i class="fas fa-file-alt fa-3x mb-3"></i>
+                            <h5>No se encontraron requisiciones</h5>
+                            {% if status_filter or request.args.get('search') or request.args.get('department') %}
+                            <p>Intenta cambiar los filtros de búsqueda</p>
+                            <button class="btn btn-outline-primary" onclick="clearFilters()">
+                                <i class="fas fa-times me-1"></i>Limpiar Filtros
+                            </button>
+                            {% else %}
+                            <p>Comienza creando tu primera requisición</p>
+                            <a href="{{ url_for('new_request') }}" class="btn btn-primary">
+                                <i class="fas fa-plus me-1"></i>Nueva Requisición
+                            </a>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <!-- Paginación -->
+                        {% if requests.pages > 1 %}
+                        <nav aria-label="Paginación" class="mt-4">
+                            <ul class="pagination justify-content-center">
+                                {% if requests.prev_num %}
+                                <li class="page-item">
+                                    <a class="page-link"
+                                        href="{{ url_for('requests', page=requests.prev_num, status=status_filter, search=request.args.get('search'), department=request.args.get('department')) }}">
+                                        <i class="fas fa-chevron-left"></i> Anterior
+                                    </a>
+                                </li>
+                                {% endif %}
+
+                                {% for page_num in requests.iter_pages() %}
+                                {% if page_num %}
+                                {% if page_num != requests.page %}
+                                <li class="page-item">
+                                    <a class="page-link"
+                                        href="{{ url_for('requests', page=page_num, status=status_filter, search=request.args.get('search'), department=request.args.get('department')) }}">{{
+                                        page_num }}</a>
+                                </li>
+                                {% else %}
+                                <li class="page-item active">
+                                    <span class="page-link">{{ page_num }}</span>
+                                </li>
+                                {% endif %}
+                                {% else %}
+                                <li class="page-item disabled">
+                                    <span class="page-link">...</span>
+                                </li>
+                                {% endif %}
+                                {% endfor %}
+
+                                {% if requests.next_num %}
+                                <li class="page-item">
+                                    <a class="page-link"
+                                        href="{{ url_for('requests', page=requests.next_num, status=status_filter, search=request.args.get('search'), department=request.args.get('department')) }}">
+                                        Siguiente <i class="fas fa-chevron-right"></i>
+                                    </a>
+                                </li>
+                                {% endif %}
+                            </ul>
+                        </nav>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-hammer me-2"></i>Proyectos Activos (Con Requisiciones Pendientes)
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div id="projectsAccordion" class="accordion">
+                        {% for project in active_projects %}
+                        {% set project_requests = project.requests|selectattr('status', 'ne',
+                        'completada')|selectattr('status', 'ne', 'cancelada')|list %}
+
+                        <div class="accordion-item">
+                            <h2 class="accordion-header" id="heading{{ project.id }}">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
+                                    data-bs-target="#collapse{{ project.id }}">
+                                    <div class="d-flex justify-content-between w-100 me-3">
+                                        <div>
+                                            <strong>{{ project.fp_code }}</strong> - {{ project.client or 'Sin Cliente'
+                                            }} - {{ project.name }}
+                                            <br><small class="text-muted">Entrega: {{
+                                                project.delivery_date.strftime('%d/%m/%Y') }}</small>
+                                        </div>
+                                        <div class="text-end">
+                                            <span class="badge bg-warning text-dark">{{ project_requests|length }}
+                                                pendientes</span>
+                                        </div>
+                                    </div>
+                                </button>
+                            </h2>
+                            <div id="collapse{{ project.id }}" class="accordion-collapse collapse"
+                                data-bs-parent="#projectsAccordion">
+                                <div class="accordion-body">
+                                    <!-- Resumen del proyecto -->
+                                    <div class="row mb-3">
+                                        <div class="col-md-8">
+                                            <h6 class="text-primary">Información del Proyecto</h6>
+                                            <table class="table table-sm table-borderless">
+                                                <tr>
+                                                    <td style="width: 150px;"><strong>FP:</strong></td>
+                                                    <td>{{ project.fp_code }}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><strong>Proyecto:</strong></td>
+                                                    <td>{{ project.name }}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><strong>Cliente:</strong></td>
+                                                    <td>{{ project.client or '-' }}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td><strong>Entrega:</strong></td>
+                                                    <td>{{ project.delivery_date.strftime('%d/%m/%Y') }}</td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <h6 class="text-primary">Estadísticas</h6>
+                                            {% set pending = project_requests|selectattr('status', 'equalto',
+                                            'pendiente')|list|length %}
+                                            {% set pending_buy = project_requests|selectattr('status', 'equalto',
+                                            'pendiente_compra')|list|length %}
+                                            {% set supplied = project_requests|selectattr('status', 'equalto',
+                                            'abastecido')|list|length %}
+
+                                            <div class="d-flex flex-column gap-1">
+                                                <span class="badge bg-warning text-dark d-flex justify-content-between">
+                                                    <span>Pendientes</span> <span>{{ pending }}</span>
+                                                </span>
+                                                <span class="badge bg-secondary d-flex justify-content-between">
+                                                    <span>Pend. Compra</span> <span>{{ pending_buy }}</span>
+                                                </span>
+                                                <span class="badge bg-info d-flex justify-content-between">
+                                                    <span>Abastecidas</span> <span>{{ supplied }}</span>
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Lista de requisiciones del proyecto -->
+                                    <h6>Requisiciones Activas</h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered table-hover">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>No. Requisición</th>
+                                                    <th>Depto / Área</th>
+                                                    <th>Estado</th>
+                                                    <th>Fecha Solicitud</th>
+                                                    <th>Límite Adquisición</th>
+                                                    <th>Acciones</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for req in project_requests %}
+                                                <tr class="{% if req.is_incident %}table-warning{% endif %}">
+                                                    <td>
+                                                        <strong>{{ req.request_number }}</strong>
+                                                        {% if req.is_incident %}
+                                                        <br><span class="badge bg-danger badge-sm">INCIDENCIA</span>
+                                                        {% endif %}
+                                                        <br><small class="text-muted">{{ req.user.username }}</small>
+                                                    </td>
+                                                    <td>
+                                                        {{ req.department }}
+                                                        {% if req.area %}<br><small class="text-muted">{{ req.area
+                                                            }}</small>{% endif %}
+                                                    </td>
+                                                    <td>
+                                                        <span
+                                                            class="badge bg-{{ status_colors.get(req.status, 'secondary') }}">
+                                                            {{ req.status|replace('_', ' ')|title }}
+                                                        </span>
+                                                    </td>
+                                                    <td>{{ req.created_at.strftime('%d/%m/%Y') }}</td>
+                                                    <td>
+                                                        {% if req.acquisition_deadline %}
+                                                        <span class="text-danger">{{
+                                                            req.acquisition_deadline.strftime('%d/%m/%Y') }}</span>
+                                                        {% else %} - {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        <button class="btn btn-sm btn-outline-primary"
+                                                            onclick="viewRequest({{ req.id }})" data-bs-toggle="modal"
+                                                            data-bs-target="#requestDetailModal">
+                                                            <i class="fas fa-eye"></i>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <!-- Consolidado de materiales del proyecto -->
+                                    <h6 class="mt-4">Consolidado de Materiales (Activos)</h6>
+                                    {% set project_materials = {} %}
+                                    {% for req in project_requests %}
+                                    {% for item in req.items %}
+                                    {% set mat_key = item.material.code if item.material else item.new_material_code %}
+                                    {% set mat_name = item.material.name if item.material else item.new_material_name %}
+                                    {% set mat_unit = item.material.unit if item.material else item.new_material_unit %}
+
+                                    {% if mat_key not in project_materials %}
+                                    {% set _ = project_materials.update({mat_key: {
+                                    'name': mat_name,
+                                    'unit': mat_unit,
+                                    'total_requested': 0,
+                                    'total_delivered': 0,
+                                    'will_return': False
+                                    }}) %}
+                                    {% endif %}
+
+                                    {% set _ = project_materials[mat_key].update({
+                                    'total_requested': project_materials[mat_key]['total_requested'] +
+                                    item.quantity_requested,
+                                    'total_delivered': project_materials[mat_key]['total_delivered'] +
+                                    item.quantity_delivered
+                                    }) %}
+
+                                    {% if item.will_return %}
+                                    {% set _ = project_materials[mat_key].update({'will_return': True}) %}
+                                    {% endif %}
+
+                                    {% endfor %}
+                                    {% endfor %}
+
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-striped">
+                                            <thead class="table-dark">
+                                                <tr>
+                                                    <th>Material / Descripción</th>
+                                                    <th>Código</th>
+                                                    <th>Cant. Solicitada</th>
+                                                    <th>Cant. Entregada</th>
+                                                    <th>Pendiente</th>
+                                                    <th>Estado</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for code, data in project_materials.items() %}
+                                                <tr>
+                                                    <td>
+                                                        <strong>{{ data.name }}</strong>
+                                                    </td>
+                                                    <td><small class="text-muted">{{ code }}</small></td>
+                                                    <td>{{ data.total_requested }} {{ data.unit }}</td>
+                                                    <td>{{ data.total_delivered }} {{ data.unit }}</td>
+                                                    <td>
+                                                        {% set pending_qty = data.total_requested - data.total_delivered
+                                                        %}
+                                                        <strong>{{ pending_qty }} {{ data.unit }}</strong>
+                                                    </td>
+                                                    <td>
+                                                        {% if data.total_delivered == 0 %}
+                                                        <span class="badge bg-secondary">Sin entregar</span>
+                                                        {% elif data.total_delivered < data.total_requested %} <span
+                                                            class="badge bg-warning">Parcial</span>
+                                                            {% else %}
+                                                            <span class="badge bg-success">Completo</span>
+                                                            {% endif %}
+                                                    </td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <!-- Botones de acción del proyecto -->
+                                    <div class="mt-3">
+                                        <button class="btn btn-sm btn-outline-primary"
+                                            onclick="exportProjectReport('{{ project.fp_code }}')">
+                                            <i class="fas fa-download me-1"></i>Exportar Reporte
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-success"
+                                            onclick="generateProjectSummary('{{ project.id }}')">
+                                            <i class="fas fa-chart-bar me-1"></i>Generar Resumen
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="text-center py-5">
+                            <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
+                            <h5>No hay proyectos activos con pendientes</h5>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Todos los Proyectos -->
+        <div class="tab-pane fade" id="all-projects-pane" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="fas fa-folder me-2"></i>Todos los Proyectos</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>FP</th>
+                                    <th>Proyecto</th>
+                                    <th>Cliente</th>
+                                    <th>Entrega</th>
+                                    <th>Producción</th>
+                                    <th>Montaje</th>
+                                    <th>Requisiciones</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for project in all_projects %}
+                                <tr>
+                                    <td><strong>{{ project.fp_code }}</strong></td>
+                                    <td>{{ project.name }}</td>
+                                    <td>{{ project.client or '-' }}</td>
+                                    <td>{{ project.delivery_date.strftime('%d/%m/%Y') }}</td>
+                                    <td>{{ project.production_start.strftime('%d/%m/%Y') }}</td>
+                                    <td>{{ project.assembly_date.strftime('%d/%m/%Y') }}</td>
+                                    <td><span class="badge bg-info">{{ project.requests|length }}</span></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary"
+                                            onclick="exportProjectReport('{{ project.fp_code }}')">
+                                            <i class="fas fa-download"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+</div>
+
+<!-- Modal para detalles de requisición -->
+<div class="modal fade" id="requestDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Detalles de la Requisición</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="requestDetailContent">
+                <!-- Contenido cargado dinámicamente -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                <button type="button" class="btn btn-primary" onclick="editCurrentRequest()">
+                    <i class="fas fa-edit me-1"></i>Editar
+                </button>
+                <button type="button" class="btn btn-success" onclick="printRequest()">
+                    <i class="fas fa-print me-1"></i>Imprimir
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para aprobar/rechazar requisición -->
+<div class="modal fade" id="approvalModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="approvalModalTitle">Aprobar Requisición</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="approvalForm">
+                    <input type="hidden" id="approvalRequestId" name="request_id">
+                    <input type="hidden" id="approvalAction" name="action">
+
+                    <div class="mb-3" id="approvalReasonDiv" style="display: none;">
+                        <label class="form-label">Motivo del Rechazo</label>
+                        <textarea class="form-control" id="approvalReason" name="reason" rows="3"
+                            placeholder="Explique por qué se rechaza esta requisición..."></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Comentarios Adicionales</label>
+                        <textarea class="form-control" name="comments" rows="2"
+                            placeholder="Comentarios opcionales..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="approvalSubmitBtn" onclick="submitApproval()">
+                    Confirmar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let currentRequestId = null;
+
+    function toggleSelectAll() {
+        const selectAll = document.getElementById('selectAll');
+        const checkboxes = document.querySelectorAll('.req-checkbox');
+        checkboxes.forEach(cb => cb.checked = selectAll.checked);
+    }
+
+    function exportSelected() {
+        const checkboxes = document.querySelectorAll('.req-checkbox:checked');
+        if (checkboxes.length === 0) {
+            alert('Por favor seleccione al menos una requisición para exportar.');
+            return;
+        }
+
+        const ids = Array.from(checkboxes).map(cb => cb.value).join(',');
+        window.location.href = `/api/requests/export-selected?ids=${ids}`;
+    }
+
+    function viewRequest(requestId) {
+        currentRequestId = requestId;
+
+        // Hacer petición AJAX para obtener los detalles de la requisición
+        fetch(`/api/requests/${requestId}/details`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showRequestDetails(data.request);
+                } else {
+                    showExampleRequestDetails(requestId);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showExampleRequestDetails(requestId);
+            });
+    }
+
+    function showExampleRequestDetails(requestId) {
+        const content = `
+        <div class="row">
+            <div class="col-md-6">
+                <h6>Información General</h6>
+                <table class="table table-sm">
+                    <tr><td><strong>No. Requisición:</strong></td><td>REQ-20250614-0001</td></tr>
+                    <tr><td><strong>Solicitante:</strong></td><td>Juan Pérez (juan.perez@empresa.com)</td></tr>
+                    <tr><td><strong>Proyecto:</strong></td><td>FP-2025-001 - Proyecto Alpha</td></tr>
+                    <tr><td><strong>Departamento:</strong></td><td>Producción</td></tr>
+                    <tr><td><strong>Área:</strong></td><td>Línea A</td></tr>
+                    <tr><td><strong>Tipo:</strong></td><td>Venta</td></tr>
+                    <tr><td><strong>Estado:</strong></td><td><span class="badge bg-warning">Pendiente</span></td></tr>
+                    <tr><td><strong>Es Incidencia:</strong></td><td><span class="badge bg-danger">SÍ - INC-2025-001</span></td></tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <h6>Fechas Importantes</h6>
+                <table class="table table-sm">
+                    <tr><td><strong>Fecha Solicitud:</strong></td><td>14/07/2025 10:30</td></tr>
+                    <tr><td><strong>Fecha Entrega Proyecto:</strong></td><td>31/12/2025</td></tr>
+                    <tr><td><strong>Inicio Producción:</strong></td><td>01/07/2025</td></tr>
+                    <tr><td><strong>Fecha Montaje:</strong></td><td>15/11/2025</td></tr>
+                    <tr><td><strong>Inicio Montaje:</strong></td><td>10/11/2025</td></tr>
+                    <tr><td><strong>Término Montaje:</strong></td><td>20/11/2025</td></tr>
+                </table>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-12">
+                <h6>Materiales Solicitados</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Material</th>
+                                <th>Cantidad</th>
+                                <th>Unidad</th>
+                                <th>Tipo</th>
+                                <th>¿Regresa?</th>
+                                <th>Fecha Retorno</th>
+                                <th>Estado</th>
+                                <th>Observaciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>
+                                    <strong>MAT-001</strong><br>
+                                    <small>Acero Inoxidable 304</small>
+                                </td>
+                                <td>50</td>
+                                <td>kg</td>
+                                <td><span class="badge bg-primary">Nuevo</span></td>
+                                <td><i class="fas fa-times text-danger"></i></td>
+                                <td>-</td>
+                                <td><span class="badge bg-secondary">Sin entregar</span></td>
+                                <td>Material para estructura principal</td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <strong>MAT-002</strong><br>
+                                    <small>Tela Algodón 100%</small>
+                                </td>
+                                <td>25</td>
+                                <td>metros</td>
+                                <td><span class="badge bg-success">Reutilizado</span></td>
+                                <td><i class="fas fa-check text-success"></i></td>
+                                <td>25/11/2025</td>
+                                <td><span class="badge bg-secondary">Sin entregar</span></td>
+                                <td>Para forros temporales</td>
+                            </tr>
+                            <tr class="table-warning">
+                                <td>
+                                    <strong>MAT-NEW-001</strong><br>
+                                    <small>Cable Especial XYZ</small>
+                                    <span class="badge bg-warning text-dark ms-1">NUEVO MATERIAL</span>
+                                </td>
+                                <td>100</td>
+                                <td>metros</td>
+                                <td><span class="badge bg-primary">Nuevo</span></td>
+                                <td><i class="fas fa-times text-danger"></i></td>
+                                <td>-</td>
+                                <td><span class="badge bg-secondary">Sin entregar</span></td>
+                                <td>Material especial para este proyecto</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-12">
+                <h6>Notas de la Requisición</h6>
+                <div class="alert alert-light">
+                    <p class="mb-0">Requisición urgente por incidencia en línea de producción. Materiales necesarios para reparación y continuidad del proyecto. Especial atención al cable nuevo que debe ser cotizado.</p>
+                </div>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-12">
+                <h6>Historial de Estados</h6>
+                <div class="timeline">
+                    <div class="timeline-item">
+                        <div class="timeline-marker bg-primary"></div>
+                        <div class="timeline-content">
+                            <h6 class="mb-1">Requisición Creada</h6>
+                            <p class="mb-1 text-muted">Creada por Juan Pérez</p>
+                            <small class="text-muted">14/07/2025 10:30</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+        document.getElementById('requestDetailContent').innerHTML = content;
+    }
+
+    function showRequestDetails(req) {
+        // Formatear fechas
+        const formatDate = (dateStr) => {
+            if (!dateStr) return '-';
+            const d = new Date(dateStr);
+            return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        };
+        const formatDateTime = (dateStr) => {
+            if (!dateStr) return '-';
+            const d = new Date(dateStr);
+            return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
+                ' ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+        };
+
+        // Generar filas de materiales
+        let materialsRows = '';
+        if (req.items && req.items.length > 0) {
+            req.items.forEach(item => {
+                const isNew = item.is_new_material;
+                const deliveryStatus = item.quantity_delivered === 0 ?
+                    '<span class="badge bg-secondary">Sin entregar</span>' :
+                    item.quantity_delivered < item.quantity_requested ?
+                        '<span class="badge bg-warning">Parcial</span>' :
+                        '<span class="badge bg-success">Completo</span>';
+
+                materialsRows += `
+                <tr class="${isNew ? 'table-warning' : ''}">
+                    <td>
+                        <strong>${item.code || 'N/A'}</strong><br>
+                        <small>${item.name || 'Sin nombre'}</small>
+                        ${isNew ? '<span class="badge bg-warning text-dark ms-1" style="font-size: 0.65rem;">NUEVO</span>' : ''}
+                    </td>
+                    <td class="text-center">${item.quantity_requested} ${item.unit || 'uds'}</td>
+                    <td class="text-center">${item.quantity_delivered || 0}</td>
+                    <td><span class="badge ${item.item_type === 'nuevo' ? 'bg-primary' : 'bg-success'}">${item.item_type || 'Nuevo'}</span></td>
+                    <td class="text-center">${item.will_return ? '<i class="fas fa-check text-success"></i>' : '<i class="fas fa-times text-danger"></i>'}</td>
+                    <td>${item.return_expected_date ? formatDate(item.return_expected_date) : '-'}</td>
+                    <td>${deliveryStatus}</td>
+                    <td>${item.notes || '-'}</td>
+                </tr>
+            `;
+            });
+        } else {
+            materialsRows = '<tr><td colspan="8" class="text-center text-muted">No hay materiales en esta requisición</td></tr>';
+        }
+
+        const content = `
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card bg-light h-100 border-0">
+                    <div class="card-body">
+                        <h6 class="card-title text-primary mb-3"><i class="fas fa-info-circle me-2"></i>Información General</h6>
+                        <table class="table table-sm table-borderless mb-0">
+                            <tr><td class="fw-bold" style="width: 140px;">No. Requisición:</td><td>${req.request_number}</td></tr>
+                            <tr><td class="fw-bold">Solicitante:</td><td>${req.user.username}</td></tr>
+                            <tr><td class="fw-bold">Cliente:</td><td>${req.client || '<span class="text-muted fst-italic">No especificado</span>'}</td></tr>
+                            <tr><td class="fw-bold">Proyecto:</td><td>${req.project.fp_code} - ${req.project.name}</td></tr>
+                            <tr><td class="fw-bold">Depto / Área:</td><td>${req.department || '-'} / ${req.area || '-'}</td></tr>
+                            <tr><td class="fw-bold">Estado:</td><td><span class="badge bg-${getStatusColor(req.status)}">${capitalizeFirst(req.status)}</span></td></tr>
+                            ${req.is_incident ? `<tr><td class="fw-bold text-danger">Incidencia:</td><td><span class="badge bg-danger">SÍ ${req.incident_id ? '(' + req.incident_id + ')' : ''}</span></td></tr>` : ''}
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card bg-light h-100 border-0">
+                    <div class="card-body">
+                        <h6 class="card-title text-primary mb-3"><i class="fas fa-calendar-alt me-2"></i>Fechas Importantes</h6>
+                        <table class="table table-sm table-borderless mb-0">
+                            <tr><td class="fw-bold" style="width: 150px;">Fecha Solicitud:</td><td>${formatDateTime(req.created_at)}</td></tr>
+                            <tr><td class="fw-bold text-danger">Límite Adquisición:</td><td><strong>${req.acquisition_deadline ? formatDate(req.acquisition_deadline) : '-'}</strong></td></tr>
+                            <tr><td class="fw-bold">Inicio Producción:</td><td>${req.project.production_start ? formatDate(req.project.production_start) : '-'}</td></tr>
+                            <tr><td class="fw-bold">Montaje (Inicio/Fin):</td><td>
+                                ${req.assembly_start_date ? formatDate(req.assembly_start_date) : '-'} / 
+                                ${req.assembly_end_date ? formatDate(req.assembly_end_date) : '-'}
+                            </td></tr>
+                            <tr><td class="fw-bold">Entrega Proyecto:</td><td>${formatDate(req.project.delivery_date)}</td></tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                     <h6 class="mb-0"><i class="fas fa-boxes me-2"></i>Materiales Solicitados (${req.items ? req.items.length : 0})</h6>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover border">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Material / Código</th>
+                                <th class="text-center">Solicitado</th>
+                                <th class="text-center">Entregado</th>
+                                <th>Tipo</th>
+                                <th class="text-center">Retorno</th>
+                                <th>Fecha Retorno</th>
+                                <th>Estado</th>
+                                <th>Observaciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${materialsRows}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        ${req.notes ? `
+        <div class="row mt-3">
+            <div class="col-12">
+                <h6 class="text-muted small"><i class="fas fa-sticky-note me-2"></i>Notas</h6>
+                <div class="alert alert-light border small py-2 mb-0">
+                    ${req.notes}
+                </div>
+            </div>
+        </div>
+        ` : ''}
+    `;
+
+        document.getElementById('requestDetailContent').innerHTML = content;
+    }
+
+    function getStatusColor(status) {
+        const colors = {
+            'pendiente': 'warning',
+            'abastecido': 'info',
+            'pendiente_compra': 'secondary',
+            'en_entrega': 'primary',
+            'completada': 'success',
+            'cancelada': 'danger'
+        };
+        return colors[status] || 'secondary';
+    }
+
+    function capitalizeFirst(str) {
+        if (!str) return '';
+        return str.charAt(0).toUpperCase() + str.slice(1).replace('_', ' ');
+    }
+
+    function editCurrentRequest() {
+        if (currentRequestId) {
+            window.location.href = `/requests/${currentRequestId}/edit`;
+        }
+    }
+
+    function approveRequest(requestId) {
+        document.getElementById('approvalRequestId').value = requestId;
+        document.getElementById('approvalAction').value = 'approve';
+        document.getElementById('approvalModalTitle').textContent = 'Aprobar Requisición';
+        document.getElementById('approvalReasonDiv').style.display = 'none';
+        document.getElementById('approvalSubmitBtn').className = 'btn btn-success';
+        document.getElementById('approvalSubmitBtn').innerHTML = '<i class="fas fa-check me-1"></i>Aprobar';
+
+        const modal = new bootstrap.Modal(document.getElementById('approvalModal'));
+        modal.show();
+    }
+
+    function rejectRequest(requestId) {
+        document.getElementById('approvalRequestId').value = requestId;
+        document.getElementById('approvalAction').value = 'reject';
+        document.getElementById('approvalModalTitle').textContent = 'Rechazar Requisición';
+        document.getElementById('approvalReasonDiv').style.display = 'block';
+        document.getElementById('approvalReason').required = true;
+        document.getElementById('approvalSubmitBtn').className = 'btn btn-danger';
+        document.getElementById('approvalSubmitBtn').innerHTML = '<i class="fas fa-times me-1"></i>Rechazar';
+
+        const modal = new bootstrap.Modal(document.getElementById('approvalModal'));
+        modal.show();
+    }
+
+    function submitApproval() {
+        const form = document.getElementById('approvalForm');
+        const formData = new FormData(form);
+
+        const action = document.getElementById('approvalAction').value;
+        if (action === 'reject' && !document.getElementById('approvalReason').value) {
+            alert('El motivo del rechazo es requerido');
+            return;
+        }
+
+        fetch('/api/requests/approval', {
+            method: 'POST',
+            body: formData
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(action === 'approve' ? 'Requisición aprobada exitosamente' : 'Requisición rechazada');
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error al procesar la solicitud');
+            });
+    }
+
+    function clearFilters() {
+        window.location.href = '{{ url_for("requests") }}';
+    }
+
+    function printRequest() {
+        if (currentRequestId) {
+            window.open(`/requests/${currentRequestId}/print`, '_blank');
+        }
+    }
+
+    function exportRequests() {
+        const params = new URLSearchParams(window.location.search);
+        window.location.href = '/api/requests/export?' + params.toString();
+    }
+
+    function exportProjectReport(fpCode) {
+        window.location.href = `/api/projects/${fpCode}/export-report`;
+    }
+
+    function generateProjectSummary(projectId) {
+        fetch(`/api/projects/${projectId}/generate-summary`, {
+            method: 'POST'
+        })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Resumen del proyecto generado exitosamente');
+                    // Aquí podrías abrir el resumen en una nueva ventana o actualizar la vista
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error al generar resumen del proyecto');
+            });
+    }
+
+    // Estilos para timeline
+    const timelineStyles = `
+<style>
+.timeline {
+    position: relative;
+    padding-left: 1.5rem;
+}
+
+.timeline-item {
+    position: relative;
+    padding-bottom: 1.5rem;
+}
+
+.timeline-item:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    left: -1.1rem;
+    top: 1rem;
+    width: 2px;
+    height: calc(100% - 0.5rem);
+    background-color: #dee2e6;
+}
+
+.timeline-marker {
+    position: absolute;
+    left: -1.4rem;
+    top: 0.2rem;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    border: 2px solid white;
+}
+
+.timeline-content h6 {
+    font-size: 0.9rem;
+}
+
+.timeline-content p {
+    font-size: 0.8rem;
+}
+
+.badge-sm {
+    font-size: 0.65rem;
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+</style>
+`;
+
+    // Agregar estilos al head
+    document.head.insertAdjacentHTML('beforeend', timelineStyles);
+
+    // Auto-refresh cada 2 minutos para mantener datos actualizados
+    setInterval(function () {
+        const now = new Date();
+        const lastUpdate = document.querySelector('meta[name="last-update"]');
+        if (!lastUpdate || (now - new Date(lastUpdate.content)) > 120000) {
+            console.log('Actualizando datos...');
+            // Aquí podrías hacer una petición AJAX para actualizar solo los datos cambiados
+        }
+    }, 120000);
+</script>
+{% endblock %}

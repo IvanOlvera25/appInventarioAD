@@ -1,0 +1,801 @@
+<!-- templates/fabric_rolls.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Gestión de Rollos de Tela{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Panel principal de rollos -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-scroll me-2"></i>Rollos de Tela en Inventario</h5>
+                {% if current_user.role != 'requisitador' %}
+                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRollModal">
+                    <i class="fas fa-plus me-1"></i>Agregar Rollo
+                </button>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                <!-- Filtros -->
+                <form method="GET" class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control" name="search"
+                            placeholder="Buscar por número o material..." value="{{ request.args.get('search', '') }}">
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-select" name="status">
+                            <option value="">Todos los estados</option>
+                            <option value="disponible" {% if request.args.get('status')=='disponible' %}selected{% endif
+                                %}>Disponible</option>
+                            <option value="en_uso" {% if request.args.get('status')=='en_uso' %}selected{% endif %}>En
+                                Uso</option>
+                            <option value="agotado" {% if request.args.get('status')=='agotado' %}selected{% endif %}>
+                                Agotado</option>
+                            <option value="critico" {% if request.args.get('status')=='critico' %}selected{% endif %}>
+                                Crítico</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-outline-primary w-100" data-bs-toggle="tooltip"
+                            title="Buscar">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                    <div class="col-md-3">
+                        <button type="button" class="btn btn-outline-success w-100" onclick="exportRolls()"
+                            data-bs-toggle="tooltip" title="Exportar a Excel">
+                            <i class="fas fa-download me-1"></i>Exportar
+                        </button>
+                    </div>
+                </form>
+
+                <!-- Tabla de rollos -->
+                {% if rolls %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>No. Rollo</th>
+                                <th>Material</th>
+                                <th>Dimensiones</th>
+                                <th>Longitud</th>
+                                <th>% Disponible</th>
+                                <th>Estado</th>
+                                <th>Valor</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for roll in rolls %}
+                            <tr>
+                                <td>
+                                    <strong>{{ roll.roll_number }}</strong>
+                                    <br><small class="text-muted">ID: {{ roll.id }}</small>
+                                </td>
+                                <td>
+                                    <strong>{{ roll.material.code }}</strong><br>
+                                    <small class="text-muted">{{ roll.material.name }}</small>
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-column">
+                                        <span><strong>Total:</strong> {{ roll.total_length }} m</span>
+                                        {% if roll.width %}
+                                        <small class="text-muted">Ancho: {{ roll.width }} cm</small>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-column">
+                                        <span class="text-success"><strong>{{ roll.remaining_length }} m</strong></span>
+                                        <small class="text-muted">de {{ roll.total_length }} m</small>
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if roll.total_length > 0 %}
+                                    {% set percentage = (roll.remaining_length / roll.total_length * 100) %}
+                                    <div class="progress mb-1" style="height: 20px;">
+                                        <div class="progress-bar {% if percentage > 50 %}bg-success{% elif percentage > 20 %}bg-warning{% else %}bg-danger{% endif %}"
+                                            style="width: {{ percentage }}%">
+                                            {{ "%.1f"|format(percentage) }}%
+                                        </div>
+                                    </div>
+                                    <small class="text-muted">Usado: {{ "%.1f"|format(100-percentage) }}%</small>
+                                    {% else %}
+                                    <span class="text-muted">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if roll.status == 'disponible' %}
+                                    <span class="badge bg-success">
+                                        <i class="fas fa-check-circle me-1"></i>Disponible
+                                    </span>
+                                    {% elif roll.status == 'en_uso' %}
+                                    <span class="badge bg-warning text-dark">
+                                        <i class="fas fa-cog me-1"></i>En Uso
+                                    </span>
+                                    {% elif roll.status == 'critico' %}
+                                    <span class="badge bg-warning">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>Crítico
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">
+                                        <i class="fas fa-times-circle me-1"></i>Agotado
+                                    </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if roll.material.unit_cost %}
+                                    {% set total_value = roll.remaining_length * roll.material.unit_cost %}
+                                    <strong>${{ "%.2f"|format(total_value) }}</strong>
+                                    <br><small class="text-muted">${{ "%.2f"|format(roll.material.unit_cost)
+                                        }}/m</small>
+                                    {% else %}
+                                    <span class="text-muted">No definido</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        {% if current_user.role != 'requisitador' and roll.status != 'agotado' %}
+                                        <button class="btn btn-outline-primary" title="Cortar tela"
+                                            data-bs-toggle="tooltip"
+                                            onclick="cutFabric({{ roll.id }}, '{{ roll.roll_number }}', {{ roll.remaining_length }})"
+                                            data-bs-target="#cutFabricModal" data-bs-toggle="modal">
+                                            <i class="fas fa-cut"></i>
+                                        </button>
+                                        {% endif %}
+                                        <button class="btn btn-outline-info" title="Ver historial"
+                                            data-bs-toggle="tooltip" onclick="viewHistory({{ roll.id }})">
+                                            <i class="fas fa-history"></i>
+                                        </button>
+                                        {% if current_user.role != 'requisitador' %}
+                                        <button class="btn btn-outline-warning" title="Editar" data-bs-toggle="tooltip"
+                                            data-bs-target="#editRollModal" data-bs-toggle="modal"
+                                            onclick="editRoll(this)" data-roll-id="{{ roll.id }}"
+                                            data-roll-number="{{ roll.roll_number }}"
+                                            data-total="{{ roll.total_length }}"
+                                            data-remaining="{{ roll.remaining_length }}"
+                                            data-width="{{ roll.width or '' }}" data-status="{{ roll.status }}"
+                                            data-notes="{{ roll.notes or '' }}">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        {% endif %}
+                                        {% if current_user.role == 'admin' %}
+                                        <button class="btn btn-outline-danger" title="Eliminar" data-bs-toggle="tooltip"
+                                            onclick="deleteRoll({{ roll.id }})">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-5">
+                    <i class="fas fa-scroll fa-3x mb-3"></i>
+                    <h5>No hay rollos de tela registrados</h5>
+                    {% if request.args.get('search') or request.args.get('status') %}
+                    <p>Intenta cambiar los filtros de búsqueda</p>
+                    <button class="btn btn-outline-primary" onclick="clearFilters()">
+                        <i class="fas fa-times me-1"></i>Limpiar Filtros
+                    </button>
+                    {% else %}
+                    <p>Comienza agregando tu primer rollo de tela</p>
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRollModal">
+                        <i class="fas fa-plus me-1"></i>Agregar Primer Rollo
+                    </button>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Panel lateral con estadísticas -->
+    <div class="col-md-4">
+        <!-- Resumen de rollos -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-chart-bar me-2"></i>Resumen de Rollos</h6>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6 mb-3">
+                        <div class="border-end">
+                            <h4 class="text-primary">{{ rolls|length }}</h4>
+                            <small class="text-muted">Total Rollos</small>
+                        </div>
+                    </div>
+                    <div class="col-6 mb-3">
+                        {% set available_count = namespace(value=0) %}
+                        {% for roll in rolls %}
+                        {% if roll.status == 'disponible' %}
+                        {% set available_count.value = available_count.value + 1 %}
+                        {% endif %}
+                        {% endfor %}
+                        <h4 class="text-success">{{ available_count.value }}</h4>
+                        <small class="text-muted">Disponibles</small>
+                    </div>
+                </div>
+                <hr>
+
+                <!-- Estados de rollos -->
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between">
+                        <span><i class="fas fa-cog me-1 text-warning"></i>En Uso:</span>
+                        {% set in_use_count = namespace(value=0) %}
+                        {% for roll in rolls %}
+                        {% if roll.status == 'en_uso' %}
+                        {% set in_use_count.value = in_use_count.value + 1 %}
+                        {% endif %}
+                        {% endfor %}
+                        <strong class="text-warning">{{ in_use_count.value }}</strong>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between">
+                        <span><i class="fas fa-exclamation-triangle me-1 text-warning"></i>Críticos:</span>
+                        {% set critical_count = namespace(value=0) %}
+                        {% for roll in rolls %}
+                        {% if roll.status == 'critico' %}
+                        {% set critical_count.value = critical_count.value + 1 %}
+                        {% endif %}
+                        {% endfor %}
+                        <strong class="text-warning">{{ critical_count.value }}</strong>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between">
+                        <span><i class="fas fa-times-circle me-1 text-danger"></i>Agotados:</span>
+                        {% set depleted_count = namespace(value=0) %}
+                        {% for roll in rolls %}
+                        {% if roll.status == 'agotado' %}
+                        {% set depleted_count.value = depleted_count.value + 1 %}
+                        {% endif %}
+                        {% endfor %}
+                        <strong class="text-danger">{{ depleted_count.value }}</strong>
+                    </div>
+                </div>
+
+                <hr>
+
+                <!-- Valor total -->
+                <div class="d-flex justify-content-between">
+                    <span><i class="fas fa-dollar-sign me-1 text-success"></i>Valor Total:</span>
+                    {% set total_value = namespace(value=0) %}
+                    {% for roll in rolls %}
+                    {% if roll.material.unit_cost %}
+                    {% set total_value.value = total_value.value + (roll.remaining_length * roll.material.unit_cost) %}
+                    {% endif %}
+                    {% endfor %}
+                    <strong class="text-success">${{ "%.2f"|format(total_value.value) }}</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- Materiales de tela -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-tags me-2"></i>Materiales de Tela</h6>
+            </div>
+            <div class="card-body">
+                {% set fabric_materials = {} %}
+                {% for roll in rolls %}
+                {% if roll.material.code not in fabric_materials %}
+                {% set _ = fabric_materials.update({roll.material.code: {'name': roll.material.name, 'count': 0,
+                'total_length': 0}}) %}
+                {% endif %}
+                {% set _ = fabric_materials[roll.material.code].update({'count':
+                fabric_materials[roll.material.code]['count'] + 1}) %}
+                {% set _ = fabric_materials[roll.material.code].update({'total_length':
+                fabric_materials[roll.material.code]['total_length'] + roll.remaining_length}) %}
+                {% endfor %}
+
+                {% for code, data in fabric_materials.items() %}
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div>
+                        <strong>{{ code }}</strong><br>
+                        <small class="text-muted">{{ data.name }}</small>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-primary">{{ data.count }} rollos</span><br>
+                        <small class="text-muted">{{ "%.1f"|format(data.total_length) }}m</small>
+                    </div>
+                </div>
+                {% endfor %}
+
+                {% if not fabric_materials %}
+                <div class="text-center text-muted">
+                    <i class="fas fa-inbox fa-2x mb-2"></i>
+                    <p>No hay materiales registrados</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Acciones rápidas -->
+        {% if current_user.role != 'requisitador' %}
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-bolt me-2"></i>Acciones Rápidas</h6>
+            </div>
+            <div class="card-body d-grid gap-2">
+                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRollModal">
+                    <i class="fas fa-plus me-1"></i>Nuevo Rollo
+                </button>
+                <button class="btn btn-info" onclick="exportRolls()">
+                    <i class="fas fa-download me-1"></i>Exportar Inventario
+                </button>
+                <button class="btn btn-warning" onclick="showCriticalRolls()">
+                    <i class="fas fa-exclamation-triangle me-1"></i>Ver Críticos
+                </button>
+                <button class="btn btn-success" onclick="bulkCutModal()">
+                    <i class="fas fa-cut me-1"></i>Corte Masivo
+                </button>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Modal para agregar rollo -->
+<div class="modal fade" id="addRollModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Agregar Nuevo Rollo</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addRollForm">
+                    <div class="mb-3">
+                        <label class="form-label">Material de Tela <span class="text-danger">*</span></label>
+                        <select id="materialSelect" class="form-select" name="material_id" required>
+                            <option value="">Seleccionar material...</option>
+                            {% if materials %}
+                            {% for m in materials %}
+                            <option value="{{ m.id }}">{{ m.code }} - {{ m.name }}</option>
+                            {% endfor %}
+                            {% else %}
+                            <!-- Opciones de ejemplo si no se pasan materiales desde el backend -->
+                            <option value="1">TEL-001 - Algodón Blanco</option>
+                            <option value="2">TEL-002 - Poliéster Azul</option>
+                            <option value="3">TEL-003 - Lino Natural</option>
+                            {% endif %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Número de Rollo <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" name="roll_number" required
+                            placeholder="Ej: ROL-2025-001">
+                        <div class="form-text">Debe ser único en el sistema</div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Longitud Total (metros) <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" name="total_length" step="0.01" min="0.01"
+                                required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Ancho (cm)</label>
+                            <input type="number" class="form-control" name="width" id="widthInput" step="0.1" min="0.1"
+                                placeholder="150" readonly>
+                            <div class="form-text">Se llena automáticamente según el material</div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Observaciones</label>
+                        <textarea class="form-control" name="notes" rows="2"
+                            placeholder="Información adicional del rollo..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveRoll()">
+                    <i class="fas fa-save me-1"></i>Guardar Rollo
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para cortar tela -->
+<div class="modal fade" id="cutFabricModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Cortar Tela del Rollo</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="rollInfo" class="alert alert-info mb-3"></div>
+                <form id="cutFabricForm">
+                    <input type="hidden" id="cutRollId" name="roll_id">
+                    <div class="mb-3">
+                        <label class="form-label">Longitud a Cortar (metros) <span class="text-danger">*</span></label>
+                        <input type="number" class="form-control" id="cutLength" name="cut_length" step="0.01"
+                            min="0.01" required>
+                        <div class="form-text">Máximo disponible: <span id="maxLength"></span> metros</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Motivo del Corte <span class="text-danger">*</span></label>
+                        <select class="form-select" id="cutReason" name="reason" required>
+                            <option value="">Seleccionar...</option>
+                            <option value="requisicion">Requisición</option>
+                            <option value="muestra">Muestra</option>
+                            <option value="produccion">Producción</option>
+                            <option value="desperdicio">Desperdicio</option>
+                            <option value="defecto">Material Defectuoso</option>
+                            <option value="ajuste">Ajuste de Inventario</option>
+                        </select>
+                    </div>
+                    <div class="mb-3" id="requisitionDiv" style="display: none;">
+                        <label class="form-label">Número de Requisición</label>
+                        <input type="text" class="form-control" name="requisition_number" placeholder="REQ-2025-001">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Notas</label>
+                        <textarea class="form-control" id="cutNotes" name="notes" rows="2"
+                            placeholder="Información adicional del corte..."></textarea>
+                    </div>
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <strong>Atención:</strong> Esta acción reducirá permanentemente la longitud disponible del
+                        rollo.
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-warning" onclick="processCut()">
+                    <i class="fas fa-cut me-1"></i>Procesar Corte
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para editar rollo -->
+<div class="modal fade" id="editRollModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Editar Rollo</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editRollForm">
+                    <input type="hidden" id="editRollId" name="roll_id">
+                    <div class="mb-3">
+                        <label class="form-label">Número de Rollo</label>
+                        <input type="text" class="form-control" id="editRollNumber" name="roll_number" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Longitud Total (metros)</label>
+                            <input type="number" class="form-control" id="editTotalLength" name="total_length"
+                                step="0.01" min="0.01" required readonly>
+                            <div class="form-text">No se puede modificar si ya hay cortes</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Ancho (cm)</label>
+                            <input type="number" class="form-control" id="editWidth" name="width" step="0.1" min="0.1">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Estado</label>
+                        <select class="form-select" id="editStatus" name="status" required>
+                            <option value="disponible">Disponible</option>
+                            <option value="en_uso">En Uso</option>
+                            <option value="critico">Crítico</option>
+                            <option value="agotado">Agotado</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Observaciones</label>
+                        <textarea class="form-control" id="editNotes" name="notes" rows="2"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="updateRoll()">
+                    <i class="fas fa-save me-1"></i>Actualizar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function cutFabric(rollId, rollNumber, remainingLength) {
+        document.getElementById('cutRollId').value = rollId;
+        document.getElementById('maxLength').textContent = remainingLength;
+        document.getElementById('cutLength').max = remainingLength;
+
+        document.getElementById('rollInfo').innerHTML = `
+        <strong>Rollo seleccionado:</strong> ${rollNumber}<br>
+        <strong>Longitud disponible:</strong> ${remainingLength} metros
+    `;
+    }
+
+    function saveRoll() {
+        const form = document.getElementById('addRollForm');
+        const formData = new FormData(form);
+
+        if (form.checkValidity()) {
+            fetch('/api/fabric-rolls', {
+                method: 'POST',
+                body: formData
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Rollo agregado exitosamente');
+                        location.reload();
+                    } else {
+                        alert('Error: ' + (data.message || 'No se pudo agregar'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error al agregar rollo');
+                });
+        } else {
+            form.reportValidity();
+        }
+    }
+
+    function processCut() {
+        const form = document.getElementById('cutFabricForm');
+        const formData = new FormData(form);
+
+        const cutLength = parseFloat(document.getElementById('cutLength').value);
+        const maxLength = parseFloat(document.getElementById('maxLength').textContent);
+
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+
+        if (cutLength > maxLength) {
+            alert('La longitud de corte excede la disponible');
+            return;
+        }
+
+        if (confirm(`¿Confirma el corte de ${cutLength} metros?`)) {
+            fetch('/api/fabric-rolls/cut', {
+                method: 'POST',
+                body: formData
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Corte registrado exitosamente');
+                        location.reload();
+                    } else {
+                        alert('Error: ' + (data.message || 'No se pudo registrar el corte'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error al procesar corte');
+                });
+        }
+    }
+
+    /** Rellena el modal de edición usando los data-attributes del botón */
+    function editRoll(btn) {
+        const d = btn.dataset;
+        document.getElementById('editRollId').value = d.rollId;
+        document.getElementById('editRollNumber').value = d.rollNumber || '';
+        document.getElementById('editTotalLength').value = d.total || '';
+        document.getElementById('editWidth').value = d.width || '';
+        document.getElementById('editStatus').value = d.status || 'disponible';
+        document.getElementById('editNotes').value = d.notes || '';
+
+        // Si ya hubo cortes (remaining < total) bloquea edición de total_length
+        const hasCuts = parseFloat(d.remaining || '0') < parseFloat(d.total || '0');
+        document.getElementById('editTotalLength').readOnly = hasCuts;
+
+        // Abrir modal (por si el navegador no respeta el data-bs-target)
+        const modal = new bootstrap.Modal(document.getElementById('editRollModal'));
+        modal.show();
+    }
+
+    function updateRoll() {
+        const form = document.getElementById('editRollForm');
+        const formData = new FormData(form);
+
+        if (form.checkValidity()) {
+            fetch('/api/fabric-rolls/update', {
+                method: 'PUT',
+                body: formData
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Rollo actualizado exitosamente');
+                        location.reload();
+                    } else {
+                        alert('Error: ' + (data.message || 'No se pudo actualizar'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error al actualizar rollo');
+                });
+        } else {
+            form.reportValidity();
+        }
+    }
+
+    function deleteRoll(rollId) {
+        if (confirm('¿Está seguro de eliminar este rollo? Esta acción no se puede deshacer.')) {
+            fetch(`/api/fabric-rolls/${rollId}`, {
+                method: 'DELETE'
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Rollo eliminado exitosamente');
+                        location.reload();
+                    } else {
+                        alert('Error: ' + (data.message || 'No se pudo eliminar'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error al eliminar rollo');
+                });
+        }
+    }
+
+    function viewHistory(rollId) {
+        window.location.href = `/fabric-rolls/${rollId}/history`;
+    }
+
+    function exportRolls() {
+        window.location.href = '/api/fabric-rolls/export';
+    }
+
+    function clearFilters() {
+        window.location.href = '{{ url_for("fabric_rolls") }}';
+    }
+
+    function showCriticalRolls() {
+        const url = new URL(window.location);
+        url.searchParams.set('status', 'critico');
+        window.location.href = url.toString();
+    }
+
+    function bulkCutModal() {
+        alert('Funcionalidad de corte masivo en desarrollo');
+    }
+
+    // Mostrar/ocultar campo de requisición según el motivo
+    document.getElementById('cutReason').addEventListener('change', function () {
+        const requisitionDiv = document.getElementById('requisitionDiv');
+        if (this.value === 'requisicion') {
+            requisitionDiv.style.display = 'block';
+            requisitionDiv.querySelector('input').required = true;
+        } else {
+            requisitionDiv.style.display = 'none';
+            requisitionDiv.querySelector('input').required = false;
+        }
+    });
+
+    // Validar longitud de corte en tiempo real
+    document.getElementById('cutLength').addEventListener('input', function () {
+        const maxLength = parseFloat(document.getElementById('maxLength').textContent);
+        const cutLength = parseFloat(this.value);
+
+        if (cutLength > maxLength) {
+            this.setCustomValidity('La longitud excede la disponible');
+            this.classList.add('is-invalid');
+        } else {
+            this.setCustomValidity('');
+            this.classList.remove('is-invalid');
+        }
+    });
+
+    // Defaults (número sugerido y ancho) al seleccionar material
+    document.querySelector('[name="material_id"]').addEventListener('change', async function () {
+        const materialId = this.value;
+        const rollInput = document.querySelector('[name="roll_number"]');
+        const widthInput = document.getElementById('widthInput');
+
+        if (!materialId) {
+            rollInput.value = '';
+            widthInput.value = '';
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/fabric-rolls/defaults?material_id=${encodeURIComponent(materialId)}`);
+            const data = await res.json();
+            if (!data.success) throw new Error(data.message || 'No se pudieron obtener defaults');
+
+            if (!rollInput.value) {
+                rollInput.value = data.suggested_roll_number || rollInput.value;
+            }
+            widthInput.value = (data.default_width != null) ? data.default_width : '';
+            widthInput.readOnly = true;
+        } catch (err) {
+            console.error(err);
+            // Fallback: 150 cm
+            widthInput.value = 150;
+            widthInput.readOnly = true;
+        }
+    });
+
+    // Confirmar antes de acciones peligrosas (backup)
+    document.addEventListener('click', function (e) {
+        if (e.target.matches('.btn-danger') || e.target.closest('.btn-danger')) {
+            if (!confirm('¿Está seguro de realizar esta acción? No se puede deshacer.')) {
+                e.preventDefault();
+            }
+        }
+    });
+
+    // Actualizar datos cada 5 minutos (placeholder)
+    setInterval(function () {
+        console.log('Actualizando datos de rollos...');
+    }, 300000);
+
+    // Función para calcular el valor total de todos los rollos (no usada en UI)
+    function calculateTotalValue() {
+        let total = 0;
+        document.querySelectorAll('tr').forEach(row => {
+            const valueCell = row.querySelector('td:nth-child(7)');
+            if (valueCell) {
+                const valueText = valueCell.textContent;
+                const match = valueText.match(/\$(\d+\.?\d*)/);
+                if (match) {
+                    total += parseFloat(match[1]);
+                }
+            }
+        });
+        return total;
+    }
+
+    // Utilidades
+    function formatLength(meters) {
+        if (meters >= 1000) {
+            return (meters / 1000).toFixed(1) + ' km';
+        }
+        return meters.toFixed(1) + ' m';
+    }
+    function getProgressBarColor(percentage) {
+        if (percentage > 50) return 'bg-success';
+        if (percentage > 20) return 'bg-warning';
+        return 'bg-danger';
+    }
+
+    // Inicialización
+    document.addEventListener('DOMContentLoaded', function () {
+        // Tooltips
+        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(el => new bootstrap.Tooltip(el));
+
+        // Inicializar filtros según URL
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('status')) {
+            const s = document.querySelector('[name="status"]');
+            if (s) s.value = urlParams.get('status');
+        }
+        if (urlParams.get('search')) {
+            const q = document.querySelector('[name="search"]');
+            if (q) q.value = urlParams.get('search');
+        }
+    });
+</script>
+{% endblock %}

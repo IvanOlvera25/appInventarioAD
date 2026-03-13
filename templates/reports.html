@@ -1,0 +1,1220 @@
+<!-- templates/reports.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Reportes y Análisis{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Panel de control de reportes -->
+    <div class="col-md-3">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-filter me-2"></i>Filtros de Reporte</h6>
+            </div>
+            <div class="card-body">
+                <form id="reportFilters">
+                    <div class="mb-3">
+                        <label class="form-label">Período</label>
+                        <select class="form-select" id="periodFilter" name="period">
+                            <option value="today">Hoy</option>
+                            <option value="week">Esta Semana</option>
+                            <option value="month" selected>Este Mes</option>
+                            <option value="quarter">Este Trimestre</option>
+                            <option value="year">Este Año</option>
+                            <option value="custom">Personalizado</option>
+                        </select>
+                    </div>
+                    
+                    <div id="customDateRange" class="mb-3" style="display: none;">
+                        <label class="form-label">Fecha Desde</label>
+                        <input type="date" class="form-control mb-2" name="date_from">
+                        <label class="form-label">Fecha Hasta</label>
+                        <input type="date" class="form-control" name="date_to">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Departamento</label>
+                        <select class="form-select" name="department">
+                            <option value="">Todos</option>
+                            <option value="Producción">Producción</option>
+                            <option value="Mantenimiento">Mantenimiento</option>
+                            <option value="Calidad">Calidad</option>
+                            <option value="Ingeniería">Ingeniería</option>
+                            <option value="Logística">Logística</option>
+                            <option value="Administración">Administración</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Categoría Material</label>
+                        <select class="form-select" name="category">
+                            <option value="">Todas</option>
+                            <option value="Metales">Metales</option>
+                            <option value="Textiles">Textiles</option>
+                            <option value="Ferretería">Ferretería</option>
+                            <option value="Químicos">Químicos</option>
+                            <option value="Electrónicos">Electrónicos</option>
+                            <option value="Herramientas">Herramientas</option>
+                            <option value="Otros">Otros</option>
+                        </select>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="button" class="btn btn-primary" onclick="updateReports()">
+                            <i class="fas fa-refresh me-1"></i>Actualizar
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Acciones rápidas -->
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-download me-2"></i>Exportar Reportes</h6>
+            </div>
+            <div class="card-body d-grid gap-2">
+                <button class="btn btn-outline-success" onclick="exportReport('inventory')">
+                    <i class="fas fa-file-excel me-1"></i>Inventario Completo
+                </button>
+                <button class="btn btn-outline-primary" onclick="exportReport('movements')">
+                    <i class="fas fa-file-csv me-1"></i>Movimientos
+                </button>
+                <button class="btn btn-outline-warning" onclick="exportReport('requests')">
+                    <i class="fas fa-file-pdf me-1"></i>Requisiciones
+                </button>
+                <button class="btn btn-outline-info" onclick="exportReport('low_stock')">
+                    <i class="fas fa-file-alt me-1"></i>Stock Bajo
+                </button>
+                <button class="btn btn-outline-danger" onclick="exportReport('returns')">
+                    <i class="fas fa-file-word me-1"></i>Devoluciones
+                </button>
+                <button class="btn btn-outline-dark" onclick="exportReport('comprehensive')">
+                    <i class="fas fa-file-archive me-1"></i>Reporte Integral
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contenido principal de reportes -->
+    <div class="col-md-9">
+        <!-- Resumen ejecutivo -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>Resumen Ejecutivo</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-3 text-center">
+                                <h3 class="text-primary">$<span id="totalValue">125,450.00</span></h3>
+                                <p class="mb-0">Valor Total Inventario</p>
+                            </div>
+                            <div class="col-md-3 text-center">
+                                <h3 class="text-success"><span id="totalMaterials">1,247</span></h3>
+                                <p class="mb-0">Materiales Únicos</p>
+                            </div>
+                            <div class="col-md-3 text-center">
+                                <h3 class="text-warning"><span id="lowStockCount">23</span></h3>
+                                <p class="mb-0">Stock Bajo</p>
+                            </div>
+                            <div class="col-md-3 text-center">
+                                <h3 class="text-info"><span id="movementsCount">456</span></h3>
+                                <p class="mb-0">Movimientos (Mes)</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Materiales con stock bajo -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0"><i class="fas fa-exclamation-triangle me-2 text-warning"></i>Materiales con Stock Bajo</h6>
+                        <span class="badge bg-warning">{{ low_stock|length }}</span>
+                    </div>
+                    <div class="card-body">
+                        {% if low_stock %}
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Material</th>
+                                        <th>Stock</th>
+                                        <th>Mínimo</th>
+                                        <th>Estado</th>
+                                        <th>Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for material in low_stock %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ material.code }}</strong><br>
+                                            <small class="text-muted">{{ material.name[:30] }}{% if material.name|length > 30 %}...{% endif %}</small>
+                                        </td>
+                                        <td class="text-danger">
+                                            <strong>{{ material.current_stock }}</strong>
+                                            <br><small>{{ material.unit }}</small>
+                                        </td>
+                                        <td>{{ material.min_stock }} {{ material.unit }}</td>
+                                        <td>
+                                            {% set deficit = material.min_stock - material.current_stock %}
+                                            {% if deficit > (material.min_stock * 0.5) %}
+                                                <span class="badge bg-danger">Crítico</span>
+                                            {% else %}
+                                                <span class="badge bg-warning">Bajo</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-primary" 
+                                                    onclick="requestPurchase({{ material.id }})" 
+                                                    title="Solicitar compra">
+                                                <i class="fas fa-shopping-cart"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% if low_stock|length > 5 %}
+                        <div class="text-center mt-3">
+                            <button class="btn btn-sm btn-outline-primary" onclick="showAllLowStock()">
+                                Ver todos ({{ low_stock|length }})
+                            </button>
+                        </div>
+                        {% endif %}
+                        {% else %}
+                        <div class="text-center text-muted py-3">
+                            <i class="fas fa-check-circle fa-2x mb-2 text-success"></i>
+                            <p>Todos los materiales tienen stock adecuado</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Materiales sin movimiento -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0"><i class="fas fa-pause-circle me-2 text-danger"></i>Sin Movimiento (6 meses)</h6>
+                        <span class="badge bg-danger">{{ no_movement|length }}</span>
+                    </div>
+                    <div class="card-body">
+                        {% if no_movement %}
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Material</th>
+                                        <th>Stock</th>
+                                        <th>Último Mov.</th>
+                                        <th>Valor</th>
+                                        <th>Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for material in no_movement[:5] %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ material.code }}</strong><br>
+                                            <small class="text-muted">{{ material.name[:25] }}{% if material.name|length > 25 %}...{% endif %}</small>
+                                        </td>
+                                        <td>{{ material.current_stock }} {{ material.unit }}</td>
+                                        <td>
+                                            {% if material.last_movement %}
+                                                {{ material.last_movement.strftime('%d/%m/%Y') }}
+                                            {% else %}
+                                                <span class="text-muted">Nunca</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if material.unit_cost %}
+                                                ${{ "%.2f"|format(material.current_stock * material.unit_cost) }}
+                                            {% else %}
+                                                <span class="text-muted">N/D</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <button class="btn btn-outline-warning" 
+                                                        title="Revisar" 
+                                                        onclick="reviewMaterial({{ material.id }})">
+                                                    <i class="fas fa-eye"></i>
+                                                </button>
+                                                {% if current_user.role == 'admin' %}
+                                                <button class="btn btn-outline-danger" 
+                                                        title="Marcar obsoleto"
+                                                        onclick="markObsolete({{ material.id }})">
+                                                    <i class="fas fa-archive"></i>
+                                                </button>
+                                                {% endif %}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% if no_movement|length > 5 %}
+                        <div class="text-center mt-3">
+                            <button class="btn btn-sm btn-outline-primary" onclick="showAllNoMovement()">
+                                Ver todos ({{ no_movement|length }})
+                            </button>
+                        </div>
+                        {% endif %}
+                        {% else %}
+                        <div class="text-center text-muted py-3">
+                            <i class="fas fa-chart-line fa-2x mb-2 text-success"></i>
+                            <p>Todos los materiales han tenido movimiento reciente</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gráficos de análisis -->
+        <div class="row mb-4">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0"><i class="fas fa-chart-line me-2"></i>Análisis de Flujo de Materiales</h6>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-primary active" onclick="changeChart('flow')">Flujo</button>
+                            <button class="btn btn-outline-primary" onclick="changeChart('categories')">Categorías</button>
+                            <button class="btn btn-outline-primary" onclick="changeChart('trends')">Tendencias</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="mainChart" height="100"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="fas fa-chart-pie me-2"></i>Distribución por Categorías</h6>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="categoryChart" height="150"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Estadísticas de devoluciones -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="fas fa-undo me-2"></i>Estadísticas de Devoluciones</h6>
+                    </div>
+                    <div class="card-body">
+                        {% if returns_stats %}
+                        <div class="row">
+                            {% for condition, count in returns_stats %}
+                            <div class="col-6 mb-3">
+                                <div class="text-center">
+                                    <div class="h4 mb-1">{{ count }}</div>
+                                    <div class="text-muted">
+                                        {% if condition == 'bueno' %}
+                                            <i class="fas fa-check-circle text-success"></i> Buen Estado
+                                        {% elif condition == 'reutilizable' %}
+                                            <i class="fas fa-recycle text-warning"></i> Reutilizable
+                                        {% elif condition == 'reciclable' %}
+                                            <i class="fas fa-redo text-info"></i> Reciclable
+                                        {% elif condition == 'desecho' %}
+                                            <i class="fas fa-times-circle text-danger"></i> Desecho
+                                        {% else %}
+                                            <i class="fas fa-question-circle text-secondary"></i> {{ condition|title }}
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        
+                        <!-- Gráfico de barras de devoluciones -->
+                        <div class="mt-3">
+                            <canvas id="returnsChart" height="80"></canvas>
+                        </div>
+                        {% else %}
+                        <div class="text-center text-muted py-3">
+                            <i class="fas fa-inbox fa-2x mb-2"></i>
+                            <p>No hay estadísticas de devoluciones disponibles</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="fas fa-users me-2"></i>Actividad por Usuario</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Usuario</th>
+                                        <th>Movimientos</th>
+                                        <th>Requisiciones</th>
+                                        <th>Último Acceso</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="userActivityTable">
+                                    <!-- Se llenará dinámicamente -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Análisis predictivo y alertas -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="fas fa-brain me-2"></i>Análisis Predictivo e Insights</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="alert alert-info">
+                                    <h6><i class="fas fa-chart-line me-2"></i>Tendencia de Consumo</h6>
+                                    <p class="mb-1">El consumo de materiales metálicos ha aumentado <strong>15%</strong> este mes.</p>
+                                    <small class="text-muted">Recomendación: Aumentar stock mínimo en 20%</small>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="alert alert-warning">
+                                    <h6><i class="fas fa-exclamation-triangle me-2"></i>Riesgo de Agotamiento</h6>
+                                    <p class="mb-1"><strong>3 materiales</strong> se agotarán en los próximos 7 días.</p>
+                                    <small class="text-muted">Acción: Generar órdenes de compra urgentes</small>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="alert alert-success">
+                                    <h6><i class="fas fa-dollar-sign me-2"></i>Optimización de Costos</h6>
+                                    <p class="mb-1">Potencial ahorro de <strong>$2,340</strong> con mejores proveedores.</p>
+                                    <small class="text-muted">Revisar contratos de materiales textiles</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <h6>Proyección de Stock (30 días)</h6>
+                                <canvas id="projectionChart" height="60"></canvas>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Eficiencia de Devoluciones por Departamento</h6>
+                                <canvas id="efficiencyChart" height="60"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- KPIs y métricas clave -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0"><i class="fas fa-tachometer-alt me-2"></i>Indicadores Clave de Desempeño (KPIs)</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-2 text-center">
+                                <div class="bg-light p-3 rounded">
+                                    <h4 class="text-primary mb-1">94.5%</h4>
+                                    <small class="text-muted">Disponibilidad de Stock</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2 text-center">
+                                <div class="bg-light p-3 rounded">
+                                    <h4 class="text-success mb-1">2.3</h4>
+                                    <small class="text-muted">Rotación Promedio</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2 text-center">
+                                <div class="bg-light p-3 rounded">
+                                    <h4 class="text-warning mb-1">87%</h4>
+                                    <small class="text-muted">Precisión Inventario</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2 text-center">
+                                <div class="bg-light p-3 rounded">
+                                    <h4 class="text-info mb-1">4.2</h4>
+                                    <small class="text-muted">Días Prom. Entrega</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2 text-center">
+                                <div class="bg-light p-3 rounded">
+                                    <h4 class="text-danger mb-1">12%</h4>
+                                    <small class="text-muted">Material Obsoleto</small>
+                                </div>
+                            </div>
+                            <div class="col-md-2 text-center">
+                                <div class="bg-light p-3 rounded">
+                                    <h4 class="text-secondary mb-1">$89K</h4>
+                                    <small class="text-muted">Ahorro Reciclaje</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para detalles de material -->
+<div class="modal fade" id="materialDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Análisis Detallado del Material</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="materialDetailContent">
+                <!-- Contenido cargado dinámicamente -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                <button type="button" class="btn btn-primary" onclick="generateMaterialReport()">
+                    <i class="fas fa-file-pdf me-1"></i>Generar Reporte
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para configuración de alertas -->
+<div class="modal fade" id="alertConfigModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Configurar Alertas</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="alertConfigForm">
+                    <div class="mb-3">
+                        <label class="form-label">Umbral Stock Bajo (%)</label>
+                        <input type="number" class="form-control" name="low_stock_threshold" value="20" min="1" max="50">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Días sin Movimiento</label>
+                        <input type="number" class="form-control" name="no_movement_days" value="180" min="30" max="365">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Notificaciones por Email</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="emailStockBajo" checked>
+                            <label class="form-check-label" for="emailStockBajo">Stock bajo</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="emailDevolucionesPendientes">
+                            <label class="form-check-label" for="emailDevolucionesPendientes">Devoluciones pendientes</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="emailReportesSemanal">
+                            <label class="form-check-label" for="emailReportesSemanal">Reporte semanal</label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveAlertConfig()">
+                    <i class="fas fa-save me-1"></i>Guardar Configuración
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+// Variables globales para gráficos
+let mainChart, categoryChart, returnsChart, projectionChart, efficiencyChart;
+
+// Datos de ejemplo (en producción vendrían del servidor)
+const flowData = {
+    labels: ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio'],
+    datasets: [{
+        label: 'Entradas',
+        data: [120, 190, 300, 500, 200, 300],
+        borderColor: 'rgb(75, 192, 192)',
+        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+        tension: 0.1
+    }, {
+        label: 'Salidas',
+        data: [180, 250, 280, 480, 180, 250],
+        borderColor: 'rgb(255, 99, 132)',
+        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+        tension: 0.1
+    }]
+};
+
+const categoryData = {
+    labels: ['Metales', 'Textiles', 'Ferretería', 'Químicos', 'Electrónicos', 'Otros'],
+    datasets: [{
+        data: [30, 25, 20, 15, 7, 3],
+        backgroundColor: [
+            '#FF6384',
+            '#36A2EB',
+            '#FFCE56',
+            '#4BC0C0',
+            '#9966FF',
+            '#FF9F40'
+        ]
+    }]
+};
+
+function initializeCharts() {
+    // Gráfico principal de flujo
+    const ctx1 = document.getElementById('mainChart').getContext('2d');
+    mainChart = new Chart(ctx1, {
+        type: 'line',
+        data: flowData,
+        options: {
+            responsive: true,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Flujo de Materiales - Últimos 6 Meses'
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    // Gráfico de categorías
+    const ctx2 = document.getElementById('categoryChart').getContext('2d');
+    categoryChart = new Chart(ctx2, {
+        type: 'doughnut',
+        data: categoryData,
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+
+    // Gráfico de devoluciones
+    {% if returns_stats %}
+    const ctx3 = document.getElementById('returnsChart').getContext('2d');
+    returnsChart = new Chart(ctx3, {
+        type: 'bar',
+        data: {
+            labels: [{% for condition, count in returns_stats %}'{{ condition|title }}'{% if not loop.last %},{% endif %}{% endfor %}],
+            datasets: [{
+                label: 'Cantidad',
+                data: [{% for condition, count in returns_stats %}{{ count }}{% if not loop.last %},{% endif %}{% endfor %}],
+                backgroundColor: ['#28a745', '#ffc107', '#17a2b8', '#dc3545']
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+    {% endif %}
+
+    // Gráfico de proyección
+    const ctx4 = document.getElementById('projectionChart').getContext('2d');
+    projectionChart = new Chart(ctx4, {
+        type: 'line',
+        data: {
+            labels: ['Semana 1', 'Semana 2', 'Semana 3', 'Semana 4'],
+            datasets: [{
+                label: 'Proyección Stock',
+                data: [100, 85, 70, 55],
+                borderColor: 'rgb(255, 159, 64)',
+                backgroundColor: 'rgba(255, 159, 64, 0.2)',
+                tension: 0.1
+            }, {
+                label: 'Stock Mínimo',
+                data: [50, 50, 50, 50],
+                borderColor: 'rgb(255, 99, 132)',
+                borderDash: [5, 5],
+                fill: false
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: true
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    // Gráfico de eficiencia
+    const ctx5 = document.getElementById('efficiencyChart').getContext('2d');
+    efficiencyChart = new Chart(ctx5, {
+        type: 'radar',
+        data: {
+            labels: ['Producción', 'Mantenimiento', 'Calidad', 'Ingeniería', 'Logística'],
+            datasets: [{
+                label: 'Eficiencia %',
+                data: [90, 85, 95, 88, 92],
+                borderColor: 'rgb(54, 162, 235)',
+                backgroundColor: 'rgba(54, 162, 235, 0.2)'
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                r: {
+                    beginAtZero: true,
+                    max: 100
+                }
+            }
+        }
+    });
+}
+
+function changeChart(type) {
+    // Cambiar botón activo
+    document.querySelectorAll('.btn-group .btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+
+    // Actualizar gráfico principal
+    switch(type) {
+        case 'flow':
+            mainChart.data = flowData;
+            mainChart.options.plugins.title.text = 'Flujo de Materiales - Últimos 6 Meses';
+            break;
+        case 'categories':
+            mainChart.data = {
+                labels: categoryData.labels,
+                datasets: [{
+                    label: 'Cantidad de Materiales',
+                    data: [45, 38, 32, 25, 12, 8],
+                    backgroundColor: categoryData.datasets[0].backgroundColor
+                }]
+            };
+            mainChart.options.plugins.title.text = 'Distribución de Materiales por Categoría';
+            mainChart.config.type = 'bar';
+            break;
+        case 'trends':
+            mainChart.data = {
+                labels: ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun'],
+                datasets: [{
+                    label: 'Tendencia de Consumo',
+                    data: [65, 75, 80, 85, 90, 95],
+                    borderColor: 'rgb(153, 102, 255)',
+                    backgroundColor: 'rgba(153, 102, 255, 0.2)',
+                    tension: 0.4
+                }]
+            };
+            mainChart.options.plugins.title.text = 'Tendencia de Consumo de Materiales';
+            mainChart.config.type = 'line';
+            break;
+    }
+    mainChart.update();
+}
+
+function updateReports() {
+    const formData = new FormData(document.getElementById('reportFilters'));
+    const params = new URLSearchParams(formData);
+    
+    // Mostrar indicador de carga
+    showLoadingIndicator();
+    
+    // Hacer petición AJAX para actualizar datos
+    fetch('/api/reports/update?' + params.toString())
+        .then(response => response.json())
+        .then(data => {
+            updateDashboardData(data);
+            hideLoadingIndicator();
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            hideLoadingIndicator();
+            alert('Error al actualizar reportes');
+        });
+}
+
+function updateDashboardData(data) {
+    // Actualizar valores del resumen ejecutivo
+    document.getElementById('totalValue').textContent = data.totalValue || '0.00';
+    document.getElementById('totalMaterials').textContent = data.totalMaterials || '0';
+    document.getElementById('lowStockCount').textContent = data.lowStockCount || '0';
+    document.getElementById('movementsCount').textContent = data.movementsCount || '0';
+    
+    // Actualizar gráficos con nuevos datos
+    if (data.flowData) {
+        mainChart.data = data.flowData;
+        mainChart.update();
+    }
+    
+    if (data.categoryData) {
+        categoryChart.data = data.categoryData;
+        categoryChart.update();
+    }
+    
+    // Actualizar tabla de actividad de usuarios
+    updateUserActivityTable(data.userActivity);
+}
+
+function updateUserActivityTable(userData) {
+    const tbody = document.getElementById('userActivityTable');
+    if (userData && userData.length > 0) {
+        tbody.innerHTML = userData.map(user => `
+            <tr>
+                <td>
+                    <strong>${user.username}</strong><br>
+                    <small class="text-muted">${user.department || 'N/A'}</small>
+                </td>
+                <td><span class="badge bg-primary">${user.movements}</span></td>
+                <td><span class="badge bg-info">${user.requests}</span></td>
+                <td><small class="text-muted">${user.lastAccess}</small></td>
+            </tr>
+        `).join('');
+    } else {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="4" class="text-center text-muted">
+                    No hay datos de actividad disponibles
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function exportReport(type) {
+    const formData = new FormData(document.getElementById('reportFilters'));
+    const params = new URLSearchParams(formData);
+    params.append('type', type);
+    
+    // Mostrar indicador de descarga
+    showDownloadIndicator();
+    
+    // Generar y descargar archivo
+    window.location.href = '/api/reports/export?' + params.toString();
+    
+    // Ocultar indicador después de un momento
+    setTimeout(hideDownloadIndicator, 2000);
+}
+
+function requestPurchase(materialId) {
+    if (confirm('¿Desea generar una solicitud de compra para este material?')) {
+        fetch(`/api/materials/${materialId}/request-purchase`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Solicitud de compra generada exitosamente');
+                updateReports(); // Refrescar datos
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error al generar solicitud de compra');
+        });
+    }
+}
+
+function reviewMaterial(materialId) {
+    // Cargar detalles del material en modal
+    fetch(`/api/materials/${materialId}/detail`)
+        .then(response => response.json())
+        .then(data => {
+            showMaterialDetail(data);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error al cargar detalles del material');
+        });
+}
+
+function showMaterialDetail(material) {
+    const content = `
+        <div class="row">
+            <div class="col-md-6">
+                <h6>Información del Material</h6>
+                <table class="table table-sm">
+                    <tr><td><strong>Código:</strong></td><td>${material.code}</td></tr>
+                    <tr><td><strong>Nombre:</strong></td><td>${material.name}</td></tr>
+                    <tr><td><strong>Categoría:</strong></td><td>${material.category}</td></tr>
+                    <tr><td><strong>Stock Actual:</strong></td><td>${material.currentStock} ${material.unit}</td></tr>
+                    <tr><td><strong>Valor:</strong></td><td>${material.value}</td></tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <h6>Análisis de Movimientos</h6>
+                <canvas id="materialMovementChart" height="150"></canvas>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-12">
+                <h6>Recomendaciones</h6>
+                <div class="alert alert-info">
+                    ${material.recommendations || 'No hay recomendaciones específicas para este material.'}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('materialDetailContent').innerHTML = content;
+    
+    const modal = new bootstrap.Modal(document.getElementById('materialDetailModal'));
+    modal.show();
+    
+    // Crear gráfico de movimientos del material
+    setTimeout(() => {
+        const ctx = document.getElementById('materialMovementChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'line',
+            data: material.movementData || {
+                labels: ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'],
+                datasets: [{
+                    label: 'Stock',
+                    data: [100, 85, 70, 55],
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+    }, 100);
+}
+
+function markObsolete(materialId) {
+    if (confirm('¿Está seguro de marcar este material como obsoleto? Se moverá a una categoría especial.')) {
+        fetch(`/api/materials/${materialId}/mark-obsolete`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Material marcado como obsoleto');
+                updateReports();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error al marcar material como obsoleto');
+        });
+    }
+}
+
+function showAllLowStock() {
+    window.location.href = '/materials?low_stock=true';
+}
+
+function showAllNoMovement() {
+    window.location.href = '/materials?no_movement=true';
+}
+
+function generateMaterialReport() {
+    // Generar reporte específico del material seleccionado
+    alert('Generando reporte detallado del material...');
+}
+
+function saveAlertConfig() {
+    const form = document.getElementById('alertConfigForm');
+    const formData = new FormData(form);
+    
+    fetch('/api/alerts/config', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Configuración de alertas guardada');
+            bootstrap.Modal.getInstance(document.getElementById('alertConfigModal')).hide();
+        } else {
+            alert('Error: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error al guardar configuración');
+    });
+}
+
+function showLoadingIndicator() {
+    // Crear y mostrar indicador de carga
+    const indicator = document.createElement('div');
+    indicator.id = 'loadingIndicator';
+    indicator.className = 'position-fixed top-50 start-50 translate-middle';
+    indicator.innerHTML = `
+        <div class="bg-white p-4 rounded shadow">
+            <div class="d-flex align-items-center">
+                <div class="spinner-border text-primary me-3" role="status"></div>
+                <span>Actualizando reportes...</span>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(indicator);
+}
+
+function hideLoadingIndicator() {
+    const indicator = document.getElementById('loadingIndicator');
+    if (indicator) {
+        indicator.remove();
+    }
+}
+
+function showDownloadIndicator() {
+    const toast = document.createElement('div');
+    toast.className = 'toast position-fixed bottom-0 end-0 m-3';
+    toast.innerHTML = `
+        <div class="toast-header">
+            <i class="fas fa-download text-primary me-2"></i>
+            <strong class="me-auto">Descarga</strong>
+        </div>
+        <div class="toast-body">
+            Generando archivo de reporte...
+        </div>
+    `;
+    document.body.appendChild(toast);
+    
+    const bsToast = new bootstrap.Toast(toast);
+    bsToast.show();
+    
+    setTimeout(() => toast.remove(), 3000);
+}
+
+function hideDownloadIndicator() {
+    // Toast se oculta automáticamente
+}
+
+// Manejo del filtro de período personalizado
+document.getElementById('periodFilter').addEventListener('change', function() {
+    const customDateRange = document.getElementById('customDateRange');
+    if (this.value === 'custom') {
+        customDateRange.style.display = 'block';
+        customDateRange.querySelectorAll('input').forEach(input => {
+            input.required = true;
+        });
+    } else {
+        customDateRange.style.display = 'none';
+        customDateRange.querySelectorAll('input').forEach(input => {
+            input.required = false;
+        });
+    }
+});
+
+// Auto-actualización de reportes cada 5 minutos
+setInterval(function() {
+    updateReports();
+}, 300000);
+
+// Inicialización al cargar la página
+document.addEventListener('DOMContentLoaded', function() {
+    // Inicializar gráficos
+    initializeCharts();
+    
+    // Cargar datos de actividad de usuarios
+    loadUserActivity();
+    
+    // Configurar fechas por defecto
+    const today = new Date().toISOString().split('T')[0];
+    const lastMonth = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    
+    document.querySelector('input[name="date_to"]').value = today;
+    document.querySelector('input[name="date_from"]').value = lastMonth;
+    
+    // Agregar tooltips
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+
+function loadUserActivity() {
+    fetch('/api/reports/user-activity')
+        .then(response => response.json())
+        .then(data => {
+            updateUserActivityTable(data.users);
+        })
+        .catch(error => {
+            console.error('Error loading user activity:', error);
+            updateUserActivityTable([]);
+        });
+}
+
+// Funciones de utilidad
+function formatCurrency(amount) {
+    return new Intl.NumberFormat('es-MX', {
+        style: 'currency',
+        currency: 'MXN'
+    }).format(amount);
+}
+
+function formatNumber(number) {
+    return new Intl.NumberFormat('es-MX').format(number);
+}
+
+function calculatePercentageChange(current, previous) {
+    if (previous === 0) return 0;
+    return ((current - previous) / previous * 100).toFixed(1);
+}
+
+// Manejo de errores global
+window.addEventListener('error', function(event) {
+    console.error('Error en reportes:', event.error);
+});
+
+// Función para imprimir reportes
+function printReport() {
+    window.print();
+}
+
+// Configuración de alertas rápida
+function quickConfigAlert(type) {
+    const modal = new bootstrap.Modal(document.getElementById('alertConfigModal'));
+    modal.show();
+}
+</script>
+
+<style>
+.alert {
+    border-left: 4px solid;
+}
+
+.alert-info {
+    border-left-color: #17a2b8;
+}
+
+.alert-warning {
+    border-left-color: #ffc107;
+}
+
+.alert-success {
+    border-left-color: #28a745;
+}
+
+.card {
+    transition: transform 0.2s ease-in-out;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.bg-light {
+    background-color: #f8f9fa !important;
+    border: 1px solid #e9ecef;
+}
+
+.table-sm th,
+.table-sm td {
+    padding: 0.5rem;
+    vertical-align: middle;
+}
+
+.btn-group .btn {
+    border-radius: 0;
+}
+
+.btn-group .btn:first-child {
+    border-top-left-radius: 0.375rem;
+    border-bottom-left-radius: 0.375rem;
+}
+
+.btn-group .btn:last-child {
+    border-top-right-radius: 0.375rem;
+    border-bottom-right-radius: 0.375rem;
+}
+
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+}
+
+.toast {
+    z-index: 1060;
+}
+
+@media (max-width: 768px) {
+    .col-md-2 {
+        margin-bottom: 1rem;
+    }
+    
+    .table-responsive {
+        font-size: 0.875rem;
+    }
+}
+
+@media print {
+    .btn, .modal, .card-header .btn-group {
+        display: none !important;
+    }
+    
+    .card {
+        border: 1px solid #dee2e6 !important;
+        box-shadow: none !important;
+    }
+    
+    .col-md-3 {
+        display: none;
+    }
+    
+    .col-md-9 {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+}
+</style>
+{% endblock %}

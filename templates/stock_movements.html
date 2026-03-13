@@ -1,0 +1,1560 @@
+{% extends "base.html" %}
+
+{% block page_title %}Movimientos de Stock{% endblock %}
+
+{% block content %}
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+<div class="row">
+    <div class="col-md-9">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-exchange-alt me-2"></i>Historial de Movimientos</h5>
+                <div>
+                    {% if current_user.role != 'requisitador' %}
+                    <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#entryModal">
+                        <i class="fas fa-arrow-down me-1"></i>Entrada
+                    </button>
+                    <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#exitModal">
+                        <i class="fas fa-arrow-up me-1"></i>Salida
+                    </button>
+                    <button class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#returnModal">
+                        <i class="fas fa-undo me-1"></i>Retorno Gral.
+                    </button>
+                    <button class="btn btn-info" data-bs-toggle="modal" data-bs-target="#importModal">
+                        <i class="fas fa-upload me-1"></i>Importar
+                    </button>
+                    <button class="btn btn-outline-primary" onclick="exportMovements()">
+                        <i class="fas fa-download me-1"></i>Exportar
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="card-body">
+                <form method="GET" class="row g-3 mb-4">
+                    <div class="col-md-2">
+                        <label class="form-label">Tipo</label>
+                        <select class="form-select" name="type">
+                            <option value="">Todos</option>
+                            <option value="entrada" {% if request.args.get('type')=='entrada' %}selected{% endif %}>
+                                Entrada</option>
+                            <option value="salida" {% if request.args.get('type')=='salida' %}selected{% endif %}>Salida
+                            </option>
+                            <option value="retorno" {% if request.args.get('type')=='retorno' %}selected{% endif %}>
+                                Retorno</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Material</label>
+                        <input type="text" class="form-control" name="material" placeholder="Buscar..."
+                            value="{{ request.args.get('material', '') }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Área</label>
+                        <input type="text" class="form-control" name="area" placeholder="Área..."
+                            value="{{ request.args.get('area', '') }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Desde</label>
+                        <input type="date" class="form-control" name="date_from"
+                            value="{{ request.args.get('date_from', '') }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Hasta</label>
+                        <input type="date" class="form-control" name="date_to"
+                            value="{{ request.args.get('date_to', '') }}">
+                    </div>
+                    <div class="col-md-1">
+                        <label class="form-label">&nbsp;</label>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                    </div>
+                </form>
+
+                {% if movements.items %}
+                <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                    <table class="table table-hover table-sm">
+                        <thead class="sticky-top bg-light shadow-sm" style="z-index: 1;">
+                            <tr>
+                                <th>ID</th>
+                                <th style="width: auto;">Material</th>
+                                <th>Tipo</th>
+                                <th style="width: 130px; min-width: 130px; max-width: 130px; white-space: nowrap;">
+                                    Cantidad</th>
+                                <th>FP</th>
+                                <th>Cliente</th>
+                                <th>Fecha/Hora</th>
+                                <th>Entregado a</th>
+                                <th>Área</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for movement in movements.items %}
+                            <tr
+                                class="{% if movement.movement_type == 'entrada' %}table-success-subtle{% elif movement.movement_type == 'salida' %}table-danger-subtle{% elif movement.movement_type == 'retorno' %}table-warning-subtle{% endif %}">
+                                <td><strong>{{ movement.id }}</strong></td>
+                                <td>
+                                    <strong>{{ movement.material.code }}</strong><br>
+                                    <small class="text-muted">{{ movement.material.name[:30] }}...</small>
+                                </td>
+                                <td>
+                                    {% if movement.movement_type == 'entrada' %}<span class="badge bg-success"><i
+                                            class="fas fa-arrow-down me-1"></i>Entrada</span>
+                                    {% elif movement.movement_type == 'salida' %}<span class="badge bg-danger"><i
+                                            class="fas fa-arrow-up me-1"></i>Salida</span>
+                                    {% else %}<span class="badge bg-warning text-dark"><i
+                                            class="fas fa-undo me-1"></i>Retorno</span>
+                                    {% endif %}
+                                </td>
+                                <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>{{
+                                        movement.quantity }}</strong> {{ movement.material.unit }}</td>
+                                <td>
+                                    {% if movement.fp_code %}<span class="badge bg-primary fp-tooltip"
+                                        style="cursor: pointer;" data-fp="{{ movement.fp_code }}">{{ movement.fp_code
+                                        }}</span>
+                                    {% else %}<span class="text-muted d-inline-block px-2 py-1 rounded"
+                                        style="background-color: rgba(0,0,0,0.05);">N/A</span>{% endif %}
+                                </td>
+                                <td>
+                                    {% if movement.fp_code and projects_dict is defined and
+                                    projects_dict.get(movement.fp_code) %}
+                                    <small>{{ projects_dict[movement.fp_code] }}</small>
+                                    {% else %}
+                                    <span class="text-muted d-inline-block px-2 py-1 rounded"
+                                        style="background-color: rgba(0,0,0,0.05);">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <strong
+                                        class="{% if not movement.fecha %}text-muted d-inline-block px-2 py-1 rounded{% endif %}"
+                                        {% if not movement.fecha %}style="background-color: rgba(0,0,0,0.05);" {% endif
+                                        %}>{{ movement.fecha.strftime('%d/%m/%Y') if movement.fecha else 'N/A'
+                                        }}</strong><br>
+                                    <small class="text-muted">{{ movement.hora.strftime('%H:%M') if movement.hora else
+                                        '--:--' }}</small>
+                                </td>
+                                <td>{{ movement.personal or movement.user.username }}</td>
+                                <td>
+                                    {% if movement.area %}
+                                    {{ movement.area }}
+                                    {% else %}
+                                    <span class="text-muted d-inline-block px-2 py-1 rounded"
+                                        style="background-color: rgba(0,0,0,0.05);">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if movement.movement_type == 'salida' %}
+                                    {% if movement.returned %}
+                                    <span class="badge bg-success"><i class="fas fa-check me-1"></i>Devuelto</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark"><i
+                                            class="fas fa-clock me-1"></i>Pendiente</span>
+                                    {% endif %}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-info" title="Ver detalles"
+                                            onclick="viewMovementDetail({{ movement.id }})" data-bs-toggle="modal"
+                                            data-bs-target="#movementDetailModal"><i class="fas fa-eye"></i></button>
+                                        {% if current_user.role != 'requisitador' and movement.movement_type == 'salida'
+                                        and not movement.returned %}
+                                        <button class="btn btn-outline-success"
+                                            onclick="markAsReturned({{ movement.id }}, {{ movement.quantity }})"
+                                            title="Marcar como devuelto" data-bs-toggle="modal"
+                                            data-bs-target="#returnConfirmModal"><i class="fas fa-check"></i></button>
+                                        {% endif %}
+                                        {% if current_user.role == 'admin' %}
+                                        <button class="btn btn-outline-danger" title="Eliminar"
+                                            onclick="deleteMovement({{ movement.id }})"><i
+                                                class="fas fa-trash"></i></button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-5">
+                    <i class="fas fa-exchange-alt fa-3x mb-3"></i>
+                    <h5>No se encontraron movimientos</h5>
+                </div>
+                {% endif %}
+
+                {% if movements.pages > 1 %}
+                <nav aria-label="Paginación" class="mt-4">
+                    {% set args = dict(request.args) %}
+                    {% if 'page' in args %}{% set _ = args.pop('page') %}{% endif %}
+                    <ul class="pagination justify-content-center">
+                        {% if movements.has_prev %}<li class="page-item"><a class="page-link"
+                                href="{{ url_for('stock_movements', page=movements.prev_num, **args) }}">Anterior</a>
+                        </li>{% endif %}
+                        {% for page_num in movements.iter_pages(left_edge=1, right_edge=1, left_current=1,
+                        right_current=2) %}
+                        {% if page_num %}
+                        {% if movements.page == page_num %}<li class="page-item active"><span class="page-link">{{
+                                page_num }}</span></li>
+                        {% else %}<li class="page-item"><a class="page-link"
+                                href="{{ url_for('stock_movements', page=page_num, **args) }}">{{ page_num
+                                }}</a></li>
+                        {% endif %}
+                        {% else %}<li class="page-item disabled"><span class="page-link">...</span></li>
+                        {% endif %}
+                        {% endfor %}
+                        {% if movements.has_next %}<li class="page-item"><a class="page-link"
+                                href="{{ url_for('stock_movements', page=movements.next_num, **args) }}">Siguiente</a>
+                        </li>{% endif %}
+                    </ul>
+                </nav>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-3">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-clock me-2"></i>Movimientos Recientes</h6>
+            </div>
+            <div class="card-body">
+                {% if movements.items %}
+                {% for movement in movements.items[:5] %}
+                <div class="d-flex align-items-center mb-2">
+                    <div class="me-2">
+                        {% if movement.movement_type == 'entrada' %}<i class="fas fa-arrow-down text-success"></i>
+                        {% elif movement.movement_type == 'salida' %}<i class="fas fa-arrow-up text-danger"></i>
+                        {% else %}<i class="fas fa-undo text-warning"></i>
+                        {% endif %}
+                    </div>
+                    <div class="flex-grow-1">
+                        <div class="fw-bold">{{ movement.material.code }}</div>
+                        <small class="text-muted">{{ movement.quantity }} {{ movement.material.unit }}</small>
+                    </div>
+                    <small class="text-muted">{{ movement.hora.strftime('%H:%M') if movement.hora else '--:--'
+                        }}</small>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="text-center text-muted p-3"><i class="fas fa-inbox fa-2x mb-2"></i>
+                    <p class="mb-0">No hay movimientos recientes</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% if current_user.role != 'requisitador' %}
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-bolt me-2"></i>Acciones Rápidas</h6>
+            </div>
+            <div class="card-body d-grid gap-2">
+                <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#entryModal"><i
+                        class="fas fa-plus me-1"></i> Nueva Entrada</button>
+                <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#exitModal"><i
+                        class="fas fa-minus me-1"></i> Nueva Salida</button>
+                <button class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#returnModal"><i
+                        class="fas fa-undo me-1"></i> Registrar Retorno</button>
+                <button class="btn btn-outline-primary" onclick="exportMovements()"><i class="fas fa-download me-1"></i>
+                    Exportar Reporte</button>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Modal ENTRADA -->
+<div class="modal fade" id="entryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="fas fa-arrow-down me-2"></i>Registrar Entrada de Material</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="entryForm">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Material <span class="text-danger">*</span></label>
+                        <select class="form-select" name="material_id" id="entryMaterialSelect" required>
+                            <option value="">Seleccionar material...</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Cantidad <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <input type="number" class="form-control" name="quantity" step="any" min="0.01" required>
+                            <span class="input-group-text" id="entryQuantityUnit">-</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Notas</label>
+                        <textarea class="form-control" name="notes" rows="2"
+                            placeholder="Observaciones adicionales..."></textarea>
+                    </div>
+                    <div class="alert alert-info small mb-0">
+                        <i class="fas fa-info-circle me-1"></i> El ID, fecha, hora y costo se asignarán automáticamente.
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-success" onclick="saveEntry()">
+                    <i class="fas fa-save me-1"></i>Registrar Entrada
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal SALIDA MEJORADO -->
+<div class="modal fade" id="exitModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="fas fa-arrow-up me-2"></i>Registrar Salida de Material</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="exitForm">
+                    <!-- Paso 1: Búsqueda de Proyecto -->
+                    <div class="card mb-3">
+                        <div class="card-header bg-light">
+                            <strong><i class="fas fa-search me-2"></i>Paso 1: Buscar Proyecto</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-12 mb-3">
+                                    <label class="form-label fw-bold">Código FP del Proyecto <span
+                                            class="text-danger">*</span></label>
+                                    <div class="position-relative">
+                                        <input type="text" class="form-control" id="exitFpSearch"
+                                            placeholder="Escriba al menos 2 caracteres para buscar..."
+                                            autocomplete="off">
+                                        <input type="hidden" name="fp_code" id="exitFpCode" required>
+                                        <div id="exitFpResults" class="dropdown-menu w-100"
+                                            style="max-height: 300px; overflow-y: auto;"></div>
+                                        <div id="exitFpLoader"
+                                            class="position-absolute top-50 end-0 translate-middle-y me-2"
+                                            style="display: none;">
+                                            <i class="fas fa-spinner fa-spin text-primary"></i>
+                                        </div>
+                                    </div>
+                                    <div id="exitProjectInfo" class="mt-2" style="display: none;">
+                                        <div class="alert alert-success mb-0 py-2">
+                                            <i class="fas fa-check-circle me-2"></i>
+                                            <strong>Proyecto Seleccionado:</strong>
+                                            <span id="exitProjectDetails"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Paso 2: Selección de Departamento -->
+                    <div class="card mb-3" id="exitDepartmentCard" style="display: none;">
+                        <div class="card-header bg-light">
+                            <strong><i class="fas fa-building me-2"></i>Paso 2: Seleccionar Departamento</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-12">
+                                    <label class="form-label fw-bold">Departamento <span
+                                            class="text-danger">*</span></label>
+                                    <select class="form-select" name="department" id="exitDepartmentSelect" required
+                                        disabled>
+                                        <option value="" selected disabled>Cargando departamentos...</option>
+                                    </select>
+                                    <small class="form-text text-muted">
+                                        <i class="fas fa-info-circle me-1"></i>
+                                        Solo se muestran departamentos con requisiciones pendientes para este proyecto
+                                    </small>
+                                    <div id="exitDeptLoader" style="display:none;" class="text-center mt-2">
+                                        <i class="fas fa-spinner fa-spin text-primary"></i> <span
+                                            class="text-muted">Cargando departamentos...</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Paso 3: Información del Personal -->
+                    <div class="card mb-3" id="exitPersonnelCard" style="display: none;">
+                        <div class="card-header bg-light">
+                            <strong><i class="fas fa-users me-2"></i>Paso 3: Información del Personal</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label fw-bold">Persona que Solicita <span
+                                            class="text-danger">*</span></label>
+                                    <select class="form-select" id="exitRequesterSelect" required disabled>
+                                        <option value="" selected disabled>Cargando personal...</option>
+                                    </select>
+                                    <div id="exitRequesterLoader" style="display:none;" class="text-center mt-2">
+                                        <i class="fas fa-spinner fa-spin text-primary"></i>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label fw-bold">Persona que Entrega</label>
+                                    <input type="text" class="form-control" id="exitDelivererName" readonly>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Paso 4: Materiales -->
+                    <div class="card mb-3" id="exitMaterialsCard" style="display: none;">
+                        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                            <strong><i class="fas fa-boxes me-2"></i>Paso 4: Agregar Materiales</strong>
+                            <button type="button" class="btn btn-sm btn-success" id="exitAddMaterialBtn" disabled>
+                                <i class="fas fa-plus me-1"></i>Agregar Material
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div class="alert alert-light p-2 text-center small" id="exitMaterialLoader"
+                                style="display: none;">
+                                <i class="fas fa-spinner fa-spin me-2"></i>Cargando materiales requisitados...
+                            </div>
+
+                            <!-- Formulario para agregar material -->
+                            <div id="exitMaterialForm" class="border rounded p-3 mb-3 bg-light">
+                                <div class="row">
+                                    <div class="col-md-7 mb-3">
+                                        <label class="form-label fw-bold">Material Requisitado</label>
+                                        <select class="form-select" id="exitMaterialSelect" disabled>
+                                            <option value="">Seleccione un material...</option>
+                                        </select>
+                                        <small class="form-text text-muted">Materiales pendientes de entrega</small>
+                                    </div>
+                                    <div class="col-md-5 mb-3">
+                                        <label class="form-label fw-bold">Cantidad a Entregar</label>
+                                        <div class="input-group">
+                                            <input type="number" class="form-control" id="exitQuantityInput" step="0.01"
+                                                min="0.01" disabled placeholder="0.00">
+                                            <span class="input-group-text" id="exitPendingLabel">-</span>
+                                        </div>
+                                        <small class="form-text text-muted" id="exitQuantityHelp"></small>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Tabla de materiales agregados -->
+                            <div id="exitMaterialsListContainer" style="display: none;">
+                                <h6 class="fw-bold mb-3">
+                                    <i class="fas fa-list me-2"></i>Materiales a Entregar
+                                    <span class="badge bg-primary" id="exitMaterialsCount">0</span>
+                                </h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-hover">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Código</th>
+                                                <th>Material</th>
+                                                <th>Cantidad</th>
+                                                <th>Pendiente</th>
+                                                <th width="80">Acciones</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="exitMaterialsList">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Paso 5: Notas Adicionales -->
+                    <div class="card" id="exitNotesCard" style="display: none;">
+                        <div class="card-header bg-light">
+                            <strong><i class="fas fa-sticky-note me-2"></i>Notas Adicionales</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-0">
+                                <label class="form-label fw-bold">Observaciones</label>
+                                <textarea class="form-control" id="exitNotes" rows="3"
+                                    placeholder="Notas generales que se aplicarán a todos los materiales..."></textarea>
+                                <small class="form-text text-muted">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    Esta nota se aplicará a todos los materiales en esta salida
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="fas fa-times me-1"></i>Cancelar
+                </button>
+                <button type="button" class="btn btn-danger" id="exitSubmitBtn" onclick="saveExitMultiple()" disabled>
+                    <i class="fas fa-save me-1"></i>Registrar Salida
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal RETORNO -->
+<div class="modal fade" id="returnModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title"><i class="fas fa-undo me-2"></i>Registrar Retorno de Material</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="returnForm">
+                    <div class="mb-3"><label class="form-label fw-bold">Proyecto (FP) de Origen <span
+                                class="text-danger">*</span></label><select class="form-select" name="fp_code"
+                            id="returnFpSelect" required></select></div>
+                    <div class="alert alert-light p-2 text-center small" id="returnLoader" style="display: none;"><i
+                            class="fas fa-spinner fa-spin me-2"></i>Buscando materiales...</div>
+                    <div class="mb-3"><label class="form-label fw-bold">Material a Devolver <span
+                                class="text-danger">*</span></label><select class="form-select" name="material_id"
+                            id="returnMaterialSelect" required disabled>
+                            <option value="">Seleccione un proyecto</option>
+                        </select></div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3"><label class="form-label fw-bold">Cantidad Devuelta <span
+                                    class="text-danger">*</span></label><input type="number" class="form-control"
+                                name="return_quantity" id="returnQuantityInput" step="any" min="0.01" required disabled>
+                            <div class="form-text" id="returnQuantityHelp"></div>
+                        </div>
+                        <div class="col-md-6 mb-3"><label class="form-label fw-bold">Condición <span
+                                    class="text-danger">*</span></label><select class="form-select"
+                                name="condition_on_return" required>
+                                <option value="bueno">Buen Estado</option>
+                                <option value="reutilizable">Reutilizable</option>
+                                <option value="reciclable">Para Reciclaje</option>
+                                <option value="desecho">Desecho</option>
+                            </select></div>
+                    </div>
+                    <div class="mb-3"><label class="form-label fw-bold">Notas del Retorno</label><textarea
+                            class="form-control" name="notes" rows="2"></textarea></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-warning" onclick="saveReturn()">
+                    <i class="fas fa-save me-1"></i>Registrar Retorno
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal IMPORTAR -->
+<div class="modal fade" id="importModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Importar Movimientos desde Excel</h5><button type="button" class="btn-close"
+                    data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <h6><i class="fas fa-info-circle me-2"></i>Información Importante</h6>
+                    <ul class="mb-0">
+                        <li>El archivo debe contener las columnas: IDM, Material, Movimiento, Cantidad, Rollos, FP,
+                            Fecha, Hora, Personal, Area.</li>
+                        <li>Los códigos de material deben existir en el sistema.</li>
+                    </ul>
+                </div>
+                <form id="importForm" enctype="multipart/form-data">
+                    <div class="mb-3"><label class="form-label">Seleccionar Archivo <span
+                                class="text-danger">*</span></label><input type="file" class="form-control" name="file"
+                            accept=".xlsx,.xls,.csv" required></div>
+                </form>
+                <div id="importResults" class="mt-3" style="display: none;"></div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-secondary"
+                    data-bs-dismiss="modal">Cancelar</button><button type="button" class="btn btn-primary"
+                    onclick="importMovements()">Importar</button></div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal DETALLE DE MOVIMIENTO -->
+<div class="modal fade" id="movementDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Detalles del Movimiento</h5><button type="button" class="btn-close"
+                    data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="movementDetailContent">
+                <p class="text-center p-4">Cargando detalles...</p>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-secondary"
+                    data-bs-dismiss="modal">Cerrar</button></div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal CONFIRMAR RETORNO -->
+<div class="modal fade" id="returnConfirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirmar Retorno Rápido</h5><button type="button" class="btn-close"
+                    data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="returnConfirmContent"></div>
+                <form id="quickReturnForm">
+                    <input type="hidden" id="quickReturnMovementId" name="movement_id">
+                    <div class="row">
+                        <div class="col-md-6 mb-3"><label class="form-label">Cantidad Devuelta</label><input
+                                type="number" class="form-control" id="quickReturnQuantity" name="return_quantity"
+                                step="any" min="0.01" required></div>
+                        <div class="col-md-6 mb-3"><label class="form-label">Condición</label><select
+                                class="form-select" name="condition_on_return" required>
+                                <option value="bueno">Buen Estado</option>
+                                <option value="reutilizable">Reutilizable</option>
+                                <option value="reciclable">Solo Reciclable</option>
+                                <option value="desecho">Desecho</option>
+                            </select></div>
+                    </div>
+                    <div class="mb-3"><label class="form-label">Notas</label><textarea class="form-control" name="notes"
+                            rows="2" placeholder="Observaciones..."></textarea></div>
+                </form>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-secondary"
+                    data-bs-dismiss="modal">Cancelar</button><button type="button" class="btn btn-success"
+                    onclick="confirmQuickReturn()"><i class="fas fa-check me-1"></i>Confirmar</button></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        // ===================================================================
+        // FIX PARA GESTIÓN DE MODALES BOOTSTRAP
+        // ===================================================================
+        const modals = document.querySelectorAll('.modal');
+        modals.forEach(modal => {
+            modal.addEventListener('show.bs.modal', function () {
+                const backdrops = document.getElementsByClassName('modal-backdrop');
+                if (backdrops.length > 0) {
+                    Array.from(backdrops).forEach(backdrop => backdrop.remove());
+                }
+            });
+            modal.addEventListener('hidden.bs.modal', function () {
+                if (document.querySelectorAll('.modal.show').length === 0) {
+                    document.body.classList.remove('modal-open');
+                    document.body.style.paddingRight = '';
+                    document.body.style.overflow = 'auto';
+                }
+            });
+        });
+
+        // ===================================================================
+        // MODAL DE ENTRADA
+        // ===================================================================
+        let entryTomSelect = null;
+        let materialsDataMap = {};
+        const entryModal = document.getElementById('entryModal');
+        if (entryModal) {
+            entryModal.addEventListener('show.bs.modal', () => {
+                fetch('/api/materials/list').then(res => res.json()).then(data => {
+                    materialsDataMap = {};
+                    const select = document.getElementById('entryMaterialSelect');
+                    select.innerHTML = '<option value="">Seleccionar material...</option>';
+                    // Orden alfabetico ascendente
+                    data.materials.sort((a, b) => a.name.localeCompare(b.name));
+                    data.materials.forEach(mat => {
+                        materialsDataMap[mat.id] = mat;
+                        // Mostrar el nombre primero y el código en gris/secundario en el template si fuera posible, o sin concatenar ID al inicio.
+                        const option = new Option(`${mat.name} (${mat.code})`, mat.id);
+                        select.add(option);
+                    });
+
+                    if (entryTomSelect) {
+                        entryTomSelect.destroy();
+                    }
+                    entryTomSelect = new TomSelect("#entryMaterialSelect", {
+                        create: false,
+                        maxOptions: null, // Quitar límite de opciones
+                        sortField: { field: "text", direction: "asc" }
+                    });
+                });
+            });
+            document.getElementById('entryMaterialSelect').addEventListener('change', function () {
+                const matId = this.value;
+                const unit = materialsDataMap[matId] ? materialsDataMap[matId].unit : '-';
+                document.getElementById('entryQuantityUnit').textContent = unit;
+            });
+        }
+
+        // ===================================================================
+        // MODAL DE SALIDA MEJORADO
+        // ===================================================================
+        let exitMaterialsData = [];
+        let availableMaterials = [];
+        let selectedProjectData = null;
+
+        const exitModal = document.getElementById('exitModal');
+        if (!exitModal) return;
+
+        const fpSearchInput = document.getElementById('exitFpSearch');
+        const fpResultsDropdown = document.getElementById('exitFpResults');
+        const fpCodeHidden = document.getElementById('exitFpCode');
+        const projectInfo = document.getElementById('exitProjectInfo');
+        const projectDetails = document.getElementById('exitProjectDetails');
+        const fpLoader = document.getElementById('exitFpLoader');
+
+        const exitDepartmentCard = document.getElementById('exitDepartmentCard');
+        const exitDepartmentSelect = document.getElementById('exitDepartmentSelect');
+        const exitDeptLoader = document.getElementById('exitDeptLoader');
+
+        const exitPersonnelCard = document.getElementById('exitPersonnelCard');
+        const exitRequesterSelect = document.getElementById('exitRequesterSelect');
+        const exitRequesterLoader = document.getElementById('exitRequesterLoader');
+        const exitDelivererName = document.getElementById('exitDelivererName');
+
+        const exitMaterialsCard = document.getElementById('exitMaterialsCard');
+        const exitMaterialSelect = document.getElementById('exitMaterialSelect');
+        const exitQuantityInput = document.getElementById('exitQuantityInput');
+        const exitPendingLabel = document.getElementById('exitPendingLabel');
+        const exitQuantityHelp = document.getElementById('exitQuantityHelp');
+        const exitMaterialLoader = document.getElementById('exitMaterialLoader');
+        const exitAddMaterialBtn = document.getElementById('exitAddMaterialBtn');
+        const exitMaterialsList = document.getElementById('exitMaterialsList');
+        const exitMaterialsListContainer = document.getElementById('exitMaterialsListContainer');
+        const exitMaterialsCount = document.getElementById('exitMaterialsCount');
+
+        const exitNotesCard = document.getElementById('exitNotesCard');
+        const exitNotes = document.getElementById('exitNotes');
+        const exitSubmitBtn = document.getElementById('exitSubmitBtn');
+
+        let searchTimeout;
+
+        // Resetear modal al abrir
+        exitModal.addEventListener('show.bs.modal', async () => {
+            fpSearchInput.value = '';
+            fpCodeHidden.value = '';
+            fpResultsDropdown.innerHTML = '';
+            fpResultsDropdown.classList.remove('show');
+            projectInfo.style.display = 'none';
+            selectedProjectData = null;
+
+            exitDepartmentCard.style.display = 'none';
+            exitDepartmentSelect.innerHTML = '<option value="" selected disabled>Cargando...</option>';
+            exitDepartmentSelect.disabled = true;
+
+            exitPersonnelCard.style.display = 'none';
+            exitRequesterSelect.innerHTML = '<option value="" selected disabled>Cargando...</option>';
+            exitRequesterSelect.disabled = true;
+            exitDelivererName.value = '';
+
+            exitMaterialsCard.style.display = 'none';
+            exitMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
+            exitMaterialSelect.disabled = true;
+            exitQuantityInput.value = '';
+            exitQuantityInput.disabled = true;
+            exitPendingLabel.textContent = '-';
+            exitQuantityHelp.textContent = '';
+
+            exitNotesCard.style.display = 'none';
+            exitNotes.value = '';
+
+            exitSubmitBtn.disabled = true;
+            exitAddMaterialBtn.disabled = true;
+
+            exitMaterialsData = [];
+            availableMaterials = [];
+            updateMaterialsList();
+
+            await loadCurrentUserFullname();
+        });
+
+        // Cargar nombre completo del usuario
+        async function loadCurrentUserFullname() {
+            try {
+                const response = await fetch('/api/user/fullname');
+                const data = await response.json();
+                if (data.success) {
+                    exitDelivererName.value = data.fullname;
+                }
+            } catch (error) {
+                console.error('Error cargando nombre completo:', error);
+            }
+        }
+
+        // Búsqueda de proyecto
+        fpSearchInput.addEventListener('input', function () {
+            const searchTerm = this.value.trim();
+            clearTimeout(searchTimeout);
+
+            if (searchTerm.length < 2) {
+                fpResultsDropdown.classList.remove('show');
+                fpResultsDropdown.innerHTML = '';
+                return;
+            }
+
+            fpLoader.style.display = 'block';
+
+            searchTimeout = setTimeout(async function () {
+                try {
+                    const response = await fetch(`/search_fp?fp=${encodeURIComponent(searchTerm)}`);
+                    const data = await response.json();
+                    fpLoader.style.display = 'none';
+
+                    if (data.success && data.data && data.data.length > 0) {
+                        fpResultsDropdown.innerHTML = '';
+                        data.data.forEach(project => {
+                            const item = document.createElement('a');
+                            item.className = 'dropdown-item';
+                            item.href = '#';
+                            item.innerHTML = `
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>${project.fp_code}</strong>
+                                    <div class="small text-muted">${project.nombre || 'Sin nombre'}</div>
+                                </div>
+                                ${project.cliente ? `<span class="badge bg-secondary">${project.cliente}</span>` : ''}
+                            </div>
+                        `;
+                            item.addEventListener('click', function (e) {
+                                e.preventDefault();
+                                selectProject(project);
+                            });
+                            fpResultsDropdown.appendChild(item);
+                        });
+                        fpResultsDropdown.classList.add('show');
+                    } else {
+                        fpResultsDropdown.innerHTML = '<div class="dropdown-item text-muted">No se encontraron proyectos</div>';
+                        fpResultsDropdown.classList.add('show');
+                    }
+                } catch (error) {
+                    console.error('Error buscando FP:', error);
+                    fpLoader.style.display = 'none';
+                }
+            }, 300);
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!fpSearchInput.contains(e.target) && !fpResultsDropdown.contains(e.target)) {
+                fpResultsDropdown.classList.remove('show');
+            }
+        });
+
+        // Seleccionar proyecto
+        async function selectProject(project) {
+            selectedProjectData = project;
+            fpSearchInput.value = `${project.fp_code} - ${project.nombre || ''}`;
+            fpCodeHidden.value = project.fp_code;
+            projectDetails.textContent = `${project.fp_code} - ${project.nombre || ''} ${project.cliente ? '(' + project.cliente + ')' : ''}`;
+            projectInfo.style.display = 'block';
+            fpResultsDropdown.classList.remove('show');
+
+            exitDepartmentCard.style.display = 'block';
+            exitPersonnelCard.style.display = 'block';
+
+            await Promise.all([
+                loadDepartments(project.fp_code),
+                loadActiveEmployees()
+            ]);
+        }
+
+        // Cargar departamentos
+        async function loadDepartments(fpCode) {
+            if (!fpCode) return;
+
+            exitDepartmentSelect.disabled = true;
+            exitDepartmentSelect.innerHTML = '<option value="">Cargando departamentos...</option>';
+            exitDeptLoader.style.display = 'block';
+
+            exitMaterialsCard.style.display = 'none';
+            exitNotesCard.style.display = 'none';
+            exitSubmitBtn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/stock/departments-by-fp?fp_code=${encodeURIComponent(fpCode)}`);
+                const data = await response.json();
+
+                if (data.success && data.departments && data.departments.length > 0) {
+                    exitDepartmentSelect.innerHTML = '<option value="" selected disabled>Seleccione un departamento...</option>';
+                    data.departments.forEach(dept => {
+                        const option = new Option(dept, dept);
+                        exitDepartmentSelect.add(option);
+                    });
+                    exitDepartmentSelect.disabled = false;
+                } else {
+                    exitDepartmentSelect.innerHTML = '<option value="">No hay requisiciones para este proyecto</option>';
+                }
+            } catch (error) {
+                console.error('Error cargando departamentos:', error);
+                exitDepartmentSelect.innerHTML = '<option value="">Error al cargar departamentos</option>';
+            } finally {
+                exitDeptLoader.style.display = 'none';
+            }
+        }
+
+        // Cargar empleados activos
+        async function loadActiveEmployees() {
+            exitRequesterSelect.disabled = true;
+            exitRequesterLoader.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/employees/active');
+                const data = await response.json();
+
+                if (data.success && data.employees && data.employees.length > 0) {
+                    exitRequesterSelect.innerHTML = '<option value="" selected disabled>Seleccione una persona...</option>';
+                    data.employees.forEach(emp => {
+                        const option = new Option(emp.nombre, emp.id);
+                        option.dataset.nombre = emp.nombre;
+                        exitRequesterSelect.add(option);
+                    });
+                    exitRequesterSelect.disabled = false;
+                } else {
+                    exitRequesterSelect.innerHTML = '<option value="">No se encontraron empleados</option>';
+                }
+            } catch (error) {
+                console.error('Error cargando empleados:', error);
+                exitRequesterSelect.innerHTML = '<option value="">Error al cargar empleados</option>';
+            } finally {
+                exitRequesterLoader.style.display = 'none';
+            }
+        }
+
+        // Cargar materiales al seleccionar departamento
+        exitDepartmentSelect.addEventListener('change', async function () {
+            await loadRequisitionedMaterials();
+        });
+
+        // Cargar materiales requisitados
+        async function loadRequisitionedMaterials() {
+            const fpCode = fpCodeHidden.value;
+            const department = exitDepartmentSelect.value;
+
+            exitMaterialSelect.disabled = true;
+            exitQuantityInput.disabled = true;
+            exitQuantityInput.value = '';
+            exitPendingLabel.textContent = '-';
+            exitQuantityHelp.textContent = '';
+            exitAddMaterialBtn.disabled = true;
+
+            if (!fpCode || !department) {
+                exitMaterialSelect.innerHTML = '<option value="">Seleccione proyecto y departamento</option>';
+                exitMaterialsCard.style.display = 'none';
+                return;
+            }
+
+            exitMaterialsCard.style.display = 'block';
+            exitNotesCard.style.display = 'block';
+            exitMaterialLoader.style.display = 'block';
+
+            try {
+                const url = `/api/stock/requisitioned-materials?fp_code=${encodeURIComponent(fpCode)}&department=${encodeURIComponent(department)}`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
+
+                if (data.success && data.materials && data.materials.length > 0) {
+                    availableMaterials = data.materials;
+                    updateAvailableMaterialsSelect();
+                    exitMaterialSelect.disabled = false;
+                } else {
+                    exitMaterialSelect.innerHTML = '<option value="">No hay materiales pendientes</option>';
+                }
+            } catch (error) {
+                console.error('Error cargando materiales:', error);
+                exitMaterialSelect.innerHTML = '<option value="">Error al cargar materiales</option>';
+            } finally {
+                exitMaterialLoader.style.display = 'none';
+            }
+        }
+
+        // Actualizar select de materiales disponibles
+        function updateAvailableMaterialsSelect() {
+            exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
+
+            availableMaterials.forEach(mat => {
+                let pendingForThisMaterial = mat.pending;
+                const alreadyAdded = exitMaterialsData.find(m => m.material_id == mat.id);
+                if (alreadyAdded) {
+                    pendingForThisMaterial -= alreadyAdded.quantity;
+                }
+
+                if (pendingForThisMaterial > 0.001) {
+                    const text = `${mat.code} - ${mat.name} (Pendiente: ${pendingForThisMaterial.toFixed(2)} ${mat.unit})`;
+                    const option = new Option(text, mat.id);
+                    option.dataset.pending = pendingForThisMaterial;
+                    option.dataset.stock = mat.stock;
+                    option.dataset.unit = mat.unit;
+                    option.dataset.code = mat.code;
+                    option.dataset.name = mat.name;
+                    exitMaterialSelect.add(option);
+                }
+            });
+        }
+
+        // Al seleccionar material, actualizar label y cantidad
+        exitMaterialSelect.addEventListener('change', function () {
+            if (!this.value) {
+                exitQuantityInput.disabled = true;
+                exitPendingLabel.textContent = '-';
+                exitQuantityHelp.textContent = '';
+                exitAddMaterialBtn.disabled = true;
+                return;
+            }
+
+            const selected = this.options[this.selectedIndex];
+            const pending = parseFloat(selected.dataset.pending);
+            const stock = parseFloat(selected.dataset.stock);
+            const unit = selected.dataset.unit;
+            const maxAllowed = Math.min(pending, stock);
+
+            exitQuantityInput.max = maxAllowed;
+            exitQuantityInput.value = '';
+            exitQuantityInput.disabled = false;
+            exitQuantityInput.focus();
+
+            exitPendingLabel.textContent = `/ ${pending.toFixed(2)} ${unit}`;
+
+            exitQuantityHelp.innerHTML = `
+            <i class="fas fa-info-circle me-1"></i>
+            <strong>Máximo permitido:</strong> ${maxAllowed.toFixed(2)} ${unit}
+            <br><small class="text-muted">Stock disponible: ${stock} | Pendiente: ${pending}</small>
+        `;
+
+            exitAddMaterialBtn.disabled = true;
+        });
+
+        // Habilitar botón agregar cuando hay cantidad válida
+        exitQuantityInput.addEventListener('input', function () {
+            const quantity = parseFloat(this.value);
+            const max = parseFloat(this.max);
+
+            // Clean previous alerts if they exist
+            let alertMsg = document.getElementById('exitQuantityAlert');
+            if (!alertMsg) {
+                alertMsg = document.createElement('div');
+                alertMsg.id = 'exitQuantityAlert';
+                alertMsg.className = 'text-danger small mt-1 fw-bold';
+                this.parentNode.parentNode.appendChild(alertMsg);
+            }
+            alertMsg.innerHTML = '';
+
+            if (quantity > 0 && quantity <= max) {
+                exitAddMaterialBtn.disabled = false;
+                this.classList.remove('is-invalid');
+            } else {
+                exitAddMaterialBtn.disabled = true;
+                if (quantity > max) {
+                    this.classList.add('is-invalid');
+                    const selected = exitMaterialSelect.options[exitMaterialSelect.selectedIndex];
+                    const pending = parseFloat(selected.dataset.pending);
+                    const stock = parseFloat(selected.dataset.stock);
+
+                    if (quantity > stock && quantity <= pending) {
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible en inventario.';
+                    } else if (quantity > pending && quantity <= stock) {
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el límite Pendiente de la requisición.';
+                    } else {
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock y el límite Pendiente de la requisición.';
+                    }
+                } else {
+                    this.classList.remove('is-invalid');
+                }
+            }
+        });
+
+        // Agregar material a la lista
+        exitAddMaterialBtn.addEventListener('click', function () {
+            const materialId = exitMaterialSelect.value;
+            const quantity = parseFloat(exitQuantityInput.value);
+
+            if (!materialId || !quantity || quantity <= 0) {
+                alert('Por favor seleccione un material y una cantidad válida');
+                return;
+            }
+
+            const selected = exitMaterialSelect.options[exitMaterialSelect.selectedIndex];
+            const materialCode = selected.dataset.code;
+            const materialName = selected.dataset.name;
+            const unit = selected.dataset.unit;
+            const pending = parseFloat(selected.dataset.pending);
+
+            exitMaterialsData.push({
+                material_id: materialId,
+                code: materialCode,
+                name: materialName,
+                quantity: quantity,
+                unit: unit,
+                pending_after: pending - quantity
+            });
+
+            updateMaterialsList();
+            updateAvailableMaterialsSelect();
+
+            exitMaterialSelect.value = '';
+            exitQuantityInput.value = '';
+            exitQuantityInput.disabled = true;
+            exitPendingLabel.textContent = '-';
+            exitQuantityHelp.textContent = '';
+            exitAddMaterialBtn.disabled = true;
+
+            if (exitMaterialsData.length > 0) {
+                exitSubmitBtn.disabled = false;
+            }
+        });
+
+        // Actualizar lista de materiales agregados
+        function updateMaterialsList() {
+            exitMaterialsCount.textContent = exitMaterialsData.length;
+
+            if (exitMaterialsData.length === 0) {
+                exitMaterialsListContainer.style.display = 'none';
+                exitSubmitBtn.disabled = true;
+                return;
+            }
+
+            exitMaterialsListContainer.style.display = 'block';
+            exitMaterialsList.innerHTML = '';
+
+            exitMaterialsData.forEach((item, index) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                <td><strong>${item.code}</strong></td>
+                <td>${item.name}</td>
+                <td><strong>${item.quantity.toFixed(2)} ${item.unit}</strong></td>
+                <td class="material-item-pending">
+                    ${item.pending_after.toFixed(2)} ${item.unit}
+                </td>
+                <td>
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeMaterialFromList(${index})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            `;
+                exitMaterialsList.appendChild(row);
+            });
+        }
+
+        // Función global para remover material
+        window.removeMaterialFromList = function (index) {
+            exitMaterialsData.splice(index, 1);
+            updateMaterialsList();
+            updateAvailableMaterialsSelect();
+        };
+
+        // Función global para guardar salida con múltiples materiales
+        window.saveExitMultiple = async function () {
+            if (exitMaterialsData.length === 0) {
+                alert('Debe agregar al menos un material');
+                return;
+            }
+
+            const requesterSelected = exitRequesterSelect.options[exitRequesterSelect.selectedIndex];
+            if (!requesterSelected || !requesterSelected.value) {
+                alert('Debe seleccionar la persona que solicita');
+                return;
+            }
+
+            const requestData = {
+                fp_code: fpCodeHidden.value,
+                department: exitDepartmentSelect.value,
+                requester_id: requesterSelected.value,
+                requester_name: requesterSelected.dataset.nombre,
+                deliverer_name: exitDelivererName.value,
+                notes: exitNotes.value,
+                materials: exitMaterialsData.map(m => ({
+                    material_id: m.material_id,
+                    quantity: m.quantity
+                }))
+            };
+
+            const originalButtonText = exitSubmitBtn.innerHTML;
+            exitSubmitBtn.disabled = true;
+            exitSubmitBtn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i> Registrando...`;
+
+            try {
+                const response = await fetch('/api/stock/exit-multiple', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(data.message);
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.message);
+                    if (data.errors && data.errors.length > 0) {
+                        console.error('Errores:', data.errors);
+                    }
+                    exitSubmitBtn.disabled = false;
+                    exitSubmitBtn.innerHTML = originalButtonText;
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Ocurrió un error de conexión.');
+                exitSubmitBtn.disabled = false;
+                exitSubmitBtn.innerHTML = originalButtonText;
+            }
+        };
+
+        // ===================================================================
+        // MODAL DE RETORNO
+        // ===================================================================
+        const returnModal = document.getElementById('returnModal');
+        if (returnModal) {
+            const returnFpSelect = document.getElementById('returnFpSelect');
+            const returnMaterialSelect = document.getElementById('returnMaterialSelect');
+            const returnQuantityInput = document.getElementById('returnQuantityInput');
+            const returnQuantityHelp = document.getElementById('returnQuantityHelp');
+            const returnLoader = document.getElementById('returnLoader');
+
+            returnModal.addEventListener('show.bs.modal', () => {
+                fetch('/api/projects/list').then(res => res.json()).then(data => {
+                    returnFpSelect.innerHTML = '<option value="" selected disabled>Seleccione un proyecto...</option>';
+                    data.projects.forEach(p => returnFpSelect.add(new Option(`${p.fp_code} - ${p.name}`, p.fp_code)));
+                });
+            });
+
+            returnFpSelect.addEventListener('change', function () {
+                const fpCode = this.value;
+                returnMaterialSelect.disabled = true;
+                returnQuantityInput.disabled = true;
+                returnQuantityInput.value = '';
+                returnQuantityHelp.textContent = '';
+                if (!fpCode) {
+                    returnMaterialSelect.innerHTML = '<option value="">Seleccione un proyecto</option>';
+                    return;
+                }
+                returnLoader.style.display = 'block';
+                fetch(`/api/stock/pending-return-by-fp?fp_code=${encodeURIComponent(fpCode)}`)
+                    .then(res => res.json()).then(data => {
+                        returnMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione material...</option>';
+                        if (data.materials && data.materials.length > 0) {
+                            data.materials.forEach(mat => {
+                                const text = `${mat.code} - ${mat.name} (Pendiente: ${mat.pending_quantity.toFixed(2)} ${mat.unit})`;
+                                const option = new Option(text, mat.id);
+                                option.dataset.pending = mat.pending_quantity;
+                                option.dataset.unit = mat.unit;
+                                returnMaterialSelect.add(option);
+                            });
+                            returnMaterialSelect.disabled = false;
+                        } else {
+                            returnMaterialSelect.innerHTML = '<option value="">No hay materiales pendientes</option>';
+                        }
+                    }).finally(() => {
+                        returnLoader.style.display = 'none';
+                    });
+            });
+
+            returnMaterialSelect.addEventListener('change', function () {
+                if (!this.value) return;
+                const selected = this.options[this.selectedIndex];
+                const pending = parseFloat(selected.dataset.pending);
+                returnQuantityInput.max = pending;
+                returnQuantityInput.value = pending.toFixed(2);
+                returnQuantityInput.disabled = false;
+                returnQuantityHelp.textContent = `Máximo a devolver: ${pending.toFixed(2)} ${selected.dataset.unit}`;
+            });
+        }
+
+        // Tooltips para FP
+        const fpTooltips = document.querySelectorAll('.fp-tooltip');
+        let activePopover = null;
+
+        fpTooltips.forEach(el => {
+            // Inicializar popover dummy
+            const fp = el.dataset.fp;
+            const popover = new bootstrap.Popover(el, {
+                title: `Proyecto ${fp}`,
+                content: '<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>',
+                html: true,
+                trigger: 'manual',
+                placement: 'right'
+            });
+
+            const showTooltip = async (e) => {
+                e.preventDefault();
+                if (activePopover && activePopover !== popover) {
+                    activePopover.hide();
+                }
+                activePopover = popover;
+                popover.show();
+
+                try {
+                    const res = await fetch(`/api/project_details/${encodeURIComponent(fp)}`);
+                    const data = await res.json();
+
+                    let contentHtml = '';
+                    if (data.success) {
+                        contentHtml = `
+                            <div class="small">
+                                <strong>Nombre:</strong> ${data.data.nombre}<br>
+                                <strong>Cliente:</strong> ${data.data.cliente}<br>
+                                <strong>Vendedora:</strong> ${data.data.vendedora}<br>
+                                <strong>Líder:</strong> ${data.data.lider}
+                            </div>
+                        `;
+                    } else {
+                        contentHtml = `<div class="text-danger small"><i class="fas fa-exclamation-triangle"></i> Datos no disponibles</div>`;
+                    }
+
+                    const tip = popover.getTipElement();
+                    if (tip) {
+                        tip.querySelector('.popover-body').innerHTML = contentHtml;
+                    }
+                    popover._config.content = contentHtml; // Update instance config
+                } catch (err) {
+                    const tip = popover.getTipElement();
+                    if (tip) {
+                        tip.querySelector('.popover-body').innerHTML = `<div class="text-danger small">Error de conexión</div>`;
+                    }
+                }
+            };
+
+            const hideTooltip = () => {
+                popover.hide();
+                if (activePopover === popover) activePopover = null;
+            };
+
+            el.addEventListener('mouseenter', showTooltip);
+            el.addEventListener('mouseleave', hideTooltip);
+
+            // Para tabletas
+            el.addEventListener('touchstart', showTooltip);
+            document.addEventListener('touchstart', (e) => {
+                if (activePopover && !el.contains(e.target) && !activePopover.getTipElement().contains(e.target)) {
+                    hideTooltip();
+                }
+            });
+        });
+
+    });
+
+    // ===================================================================
+    // FUNCIONES GLOBALES Y NOTIFICACIONES
+    // ===================================================================
+    function showToast(message, isError = false) {
+        const toastEl = document.getElementById('actionToast');
+        const toastBody = document.getElementById('actionToastBody');
+        
+        toastEl.classList.remove('bg-success', 'bg-danger', 'text-white');
+        if (isError) {
+            toastEl.classList.add('bg-danger', 'text-white');
+        } else {
+            toastEl.classList.add('bg-success', 'text-white');
+        }
+        
+        toastBody.innerHTML = `<i class="fas ${isError ? 'fa-exclamation-circle' : 'fa-check-circle'} me-2"></i> ${message}`;
+        
+        const toast = new bootstrap.Toast(toastEl, { delay: 3000 });
+        toast.show();
+    }
+
+    async function submitForm(url, formId) {
+        const form = document.getElementById(formId);
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+        const formData = new FormData(form);
+        const modal = form.closest('.modal');
+        const button = modal.querySelector('.modal-footer button[onclick]');
+        const originalButtonText = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Guardando...`;
+
+        try {
+            const response = await fetch(url, { method: 'POST', body: formData });
+            const data = await response.json();
+            if (data.success) {
+                // Cerrar modal
+                const bsModal = bootstrap.Modal.getInstance(modal);
+                if (bsModal) bsModal.hide();
+                // Limpiar form
+                form.reset();
+                if (entryTomSelect && formId === 'entryForm') {
+                    entryTomSelect.clear();
+                }
+                
+                showToast(data.message);
+                
+                // Recargar página silenciosamente después del toast para actualizar la lista
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                showToast('Error: ' + data.message, true);
+                button.disabled = false;
+                button.innerHTML = originalButtonText;
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showToast('Ocurrió un error de conexión.', true);
+            button.disabled = false;
+            button.innerHTML = originalButtonText;
+        }
+    }
+
+    window.saveEntry = () => submitForm('/api/stock/entry', 'entryForm');
+    window.saveReturn = () => submitForm('/api/stock/return', 'returnForm');
+    window.confirmQuickReturn = () => submitForm('/api/stock/quick-return', 'quickReturnForm');
+
+    window.viewMovementDetail = (movementId) => {
+        document.getElementById('movementDetailContent').innerHTML = `<p class="text-center p-4">Cargando detalles para movimiento #${movementId}...</p>`;
+    };
+
+    window.markAsReturned = (movementId, quantity) => {
+        document.getElementById('returnConfirmContent').innerHTML = `<div class="alert alert-info">Confirmando retorno para movimiento ID ${movementId}.</div>`;
+        document.getElementById('quickReturnMovementId').value = movementId;
+        const qtyInput = document.getElementById('quickReturnQuantity');
+        qtyInput.value = quantity;
+        qtyInput.max = quantity;
+    };
+
+    window.deleteMovement = (movementId) => {
+        if (confirm('¿Está seguro de eliminar este movimiento? Afectará el stock.')) {
+            fetch(`/api/stock/movements/${movementId}`, { method: 'DELETE' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast(data.message);
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        showToast('Error: ' + data.message, true);
+                    }
+                }).catch(error => {
+                    console.error('Error:', error);
+                    showToast('Error al eliminar.', true);
+                });
+        }
+    };
+
+    window.exportMovements = () => {
+        const params = new URLSearchParams(window.location.search);
+        window.location.href = '/api/stock/movements/export?' + params.toString();
+    };
+
+    window.downloadTemplate = () => window.location.href = '/api/stock/movements/template';
+    window.importMovements = () => alert("Lógica de importación no implementada en este script.");
+
+</script>
+
+<!-- Toast Container for Notifications -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 1090">
+    <div id="actionToast" class="toast align-items-center border-0 shadow" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+            <div class="toast-body fw-bold" id="actionToastBody">
+                <!-- Message goes here -->
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .table-success-subtle {
+        background-color: rgba(25, 135, 84, 0.1);
+    }
+
+    .table-danger-subtle {
+        background-color: rgba(220, 53, 69, 0.1);
+    }
+
+    .table-warning-subtle {
+        background-color: rgba(255, 193, 7, 0.15);
+    }
+
+    .badge-sm {
+        font-size: 0.65rem;
+    }
+
+    .form-text {
+        font-size: 0.8em;
+        color: #6c757d;
+    }
+
+    .btn-group-sm .btn {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    #exitFpResults {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        z-index: 1050;
+        display: none;
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    }
+
+    #exitFpResults.show {
+        display: block;
+    }
+
+    #exitFpResults .dropdown-item {
+        cursor: pointer;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    #exitFpResults .dropdown-item:hover {
+        background-color: #f8f9fa;
+    }
+
+    #exitFpResults .dropdown-item:last-child {
+        border-bottom: none;
+    }
+
+    .card {
+        transition: all 0.3s ease;
+    }
+
+    #exitDepartmentCard,
+    #exitPersonnelCard,
+    #exitMaterialsCard,
+    #exitNotesCard {
+        animation: slideDown 0.3s ease-out;
+    }
+
+    @keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    #exitPendingLabel {
+        min-width: 120px;
+        font-weight: 600;
+        color: #0d6efd;
+    }
+
+    .material-item-pending {
+        color: #6c757d;
+        font-size: 0.875rem;
+    }
+
+    .table-hover tbody tr:hover {
+        background-color: rgba(0, 0, 0, 0.075);
+    }
+</style>
+{% endblock %}
