@@ -636,22 +636,13 @@
 <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
-        // ===================================================================
-        // FIX PARA GESTIÓN DE MODALES BOOTSTRAP
-        // ===================================================================
-        const modals = document.querySelectorAll('.modal');
-        modals.forEach(modal => {
-            modal.addEventListener('show.bs.modal', function () {
-                const backdrops = document.getElementsByClassName('modal-backdrop');
-                if (backdrops.length > 0) {
-                    Array.from(backdrops).forEach(backdrop => backdrop.remove());
-                }
-            });
+        // Limpiar estado modal al cerrarse (sin tocar el backdrop al abrir)
+        document.querySelectorAll('.modal').forEach(function(modal) {
             modal.addEventListener('hidden.bs.modal', function () {
                 if (document.querySelectorAll('.modal.show').length === 0) {
                     document.body.classList.remove('modal-open');
+                    document.body.style.overflow = '';
                     document.body.style.paddingRight = '';
-                    document.body.style.overflow = 'auto';
                 }
             });
         });
@@ -702,7 +693,7 @@
         let selectedProjectData = null;
 
         const exitModal = document.getElementById('exitModal');
-        if (!exitModal) return;
+        if (!exitModal) { console.warn('exitModal not found, skipping exit modal setup'); return; }
 
         const fpSearchInput = document.getElementById('exitFpSearch');
         const fpResultsDropdown = document.getElementById('exitFpResults');
