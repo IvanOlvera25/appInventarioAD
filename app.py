@@ -329,6 +329,14 @@ def safe_init_db():
                 if not _mysql_column_exists(conn, 'user', 'is_leader'):
                     conn.execute(text('ALTER TABLE `user` ADD COLUMN is_leader TINYINT(1) DEFAULT 0'))
                     print("  ✅ Columna 'is_leader' agregada a user")
+                # Ampliar password_hash si es muy corta para hashes scrypt
+                col_info = conn.execute(text(
+                    "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = 'AD17_Almacen' AND TABLE_NAME = 'user' AND COLUMN_NAME = 'password_hash'"
+                )).scalar()
+                if col_info and int(col_info) < 256:
+                    conn.execute(text('ALTER TABLE `user` MODIFY COLUMN password_hash VARCHAR(256) NOT NULL'))
+                    print("  ✅ Columna 'password_hash' ampliada a VARCHAR(256)")
 
             conn.commit()
 
