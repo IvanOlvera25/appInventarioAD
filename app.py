@@ -91,6 +91,26 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 db.init_app(app)
+
+# ===== MIGRACIÓN CRÍTICA: se ejecuta siempre (incluso en WSGI/PythonAnywhere) =====
+with app.app_context():
+    try:
+        from sqlalchemy import text as _text, inspect as _inspect
+        _inspector = _inspect(db.engine)
+        if 'user' in _inspector.get_table_names():
+            with db.engine.connect() as _conn:
+                _col_len = _conn.execute(_text(
+                    "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'password_hash'"
+                )).scalar()
+                if _col_len and int(_col_len) < 256:
+                    _conn.execute(_text('ALTER TABLE `user` MODIFY COLUMN password_hash VARCHAR(256) NOT NULL'))
+                    _conn.commit()
+                    print("  ✅ Columna 'password_hash' ampliada a VARCHAR(256)")
+    except Exception as _e:
+        print(f"  ⚠️ Migración password_hash: {_e}")
+# ===== FIN MIGRACIÓN CRÍTICA =====
+
 Compress(app)   # Compresión automática de respuestas HTML/JSON
 cache = Cache(app)  # Cache en memoria
 login_manager = LoginManager()
