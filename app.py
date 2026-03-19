@@ -5598,9 +5598,27 @@ def register():
             flash('Todos los campos son obligatorios.', 'danger')
             return redirect(url_for('register'))
 
-        # Reconstruir y validar código fijo
+        # Reconstruir código completo
         full_code = _normalize_full_code(selected_role, code_input)
+
+        # 1) Intentar validar contra los códigos fijos (permanentes)
         role_from_code = VALID_CODES.get(full_code)
+        db_code_record = None  # referencia al registro de BD si se usa
+
+        # 2) Si no es código fijo, buscar en la tabla verification_code de la BD
+        if not role_from_code:
+            db_code_record = VerificationCode.query.filter_by(
+                code=full_code,
+                is_active=True
+            ).first()
+
+            if db_code_record:
+                # Verificar que no haya expirado
+                if db_code_record.expires_at and db_code_record.expires_at < datetime.utcnow():
+                    flash('El código de verificación ha expirado. Solicita uno nuevo al administrador.', 'danger')
+                    return redirect(url_for('register'))
+                role_from_code = db_code_record.role
+
         if not role_from_code:
             flash('Código de verificación inválido.', 'danger')
             return redirect(url_for('register'))
@@ -5620,6 +5638,13 @@ def register():
             is_leader=True if role_from_code == 'admin' else False
         )
         db.session.add(new_user)
+        db.session.flush()  # obtener new_user.id antes del commit
+
+        # Marcar el código de BD como usado (los fijos permanecen activos)
+        if db_code_record:
+            db_code_record.is_active = False
+            db_code_record.used_by = new_user.id
+
         db.session.commit()
 
         # Feedback
