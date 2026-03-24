@@ -154,8 +154,7 @@
                                             data-roll-number="{{ roll.roll_number }}"
                                             data-total="{{ roll.total_length }}"
                                             data-remaining="{{ roll.remaining_length }}"
-                                            data-width="{{ roll.width or '' }}" data-status="{{ roll.status }}"
-                                            data-notes="{{ roll.notes or '' }}">
+                                            data-width="{{ roll.width or '' }}" data-status="{{ roll.status }}">
                                             <i class="fas fa-edit"></i>
                                         </button>
                                         {% endif %}
@@ -387,11 +386,6 @@
                             <div class="form-text">Se llena automáticamente según el material</div>
                         </div>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Observaciones</label>
-                        <textarea class="form-control" name="notes" rows="2"
-                            placeholder="Información adicional del rollo..."></textarea>
-                    </div>
                 </form>
             </div>
             <div class="modal-footer">
@@ -496,10 +490,6 @@
                             <option value="agotado">Agotado</option>
                         </select>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Observaciones</label>
-                        <textarea class="form-control" id="editNotes" name="notes" rows="2"></textarea>
-                    </div>
                 </form>
             </div>
             <div class="modal-footer">
@@ -599,7 +589,6 @@
         document.getElementById('editTotalLength').value = d.total || '';
         document.getElementById('editWidth').value = d.width || '';
         document.getElementById('editStatus').value = d.status || 'disponible';
-        document.getElementById('editNotes').value = d.notes || '';
 
         // Si ya hubo cortes (remaining < total) bloquea edición de total_length
         const hasCuts = parseFloat(d.remaining || '0') < parseFloat(d.total || '0');

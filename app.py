@@ -6453,9 +6453,13 @@ def _roll_status(total, remaining):
 
 def get_default_width_for_material(material_id):
     """Ancho por defecto para un material de tela:
-       - ancho del último rollo de ese material (si existe)
+       - fabric_width del material (si está definido en BD)
+       - si no, ancho del último rollo de ese material (si existe)
        - si no, 150 cm por defecto
     """
+    material = Material.query.get(material_id)
+    if material and material.fabric_width:
+        return float(material.fabric_width)
     last_roll = FabricRoll.query.filter_by(material_id=material_id)\
                                 .order_by(FabricRoll.id.desc()).first()
     if last_roll and last_roll.width:
@@ -6529,8 +6533,7 @@ def api_create_fabric_roll():
             total_length=total_length,
             remaining_length=total_length,
             width=width,
-            status=_roll_status(total_length, total_length),
-            notes=notes
+            status=_roll_status(total_length, total_length)
         )
         db.session.add(roll)
 
