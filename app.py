@@ -1728,16 +1728,30 @@ def dashboard():
     alerts_page = request.args.get('alerts_page', 1, type=int)
 
     # Consultar alertas del sistema: las globales (target_user_id IS NULL) y las del usuario actual
-    system_alerts_query = SystemAlert.query.filter(
-        db.or_(
-            SystemAlert.target_user_id.is_(None),
-            SystemAlert.target_user_id == current_user.id
-        )
-    ).order_by(SystemAlert.created_at.desc())
+    try:
+        system_alerts_query = SystemAlert.query.filter(
+            db.or_(
+                SystemAlert.target_user_id.is_(None),
+                SystemAlert.target_user_id == current_user.id
+            )
+        ).order_by(SystemAlert.created_at.desc())
 
-    system_alerts_paginated = system_alerts_query.paginate(
-        page=alerts_page, per_page=100, error_out=False
-    )
+        system_alerts_paginated = system_alerts_query.paginate(
+            page=alerts_page, per_page=100, error_out=False
+        )
+    except Exception:
+        # Si la tabla no existe, crearla y reintentar
+        db.create_all()
+        system_alerts_query = SystemAlert.query.filter(
+            db.or_(
+                SystemAlert.target_user_id.is_(None),
+                SystemAlert.target_user_id == current_user.id
+            )
+        ).order_by(SystemAlert.created_at.desc())
+
+        system_alerts_paginated = system_alerts_query.paginate(
+            page=alerts_page, per_page=100, error_out=False
+        )
 
     # Personalizar KPIs según rol
     if current_user.role == 'requisitador':
