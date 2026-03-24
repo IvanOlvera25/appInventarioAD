@@ -233,6 +233,21 @@ class PurchaseRequest(db.Model):
     material = db.relationship('Material', backref='purchase_requests')
     requester = db.relationship('User', backref='purchase_requests')
 
+# --- NUEVO: Alertas del sistema persistentes ---
+class SystemAlert(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    alert_type = db.Column(db.String(50), nullable=False)  # requisicion_alta, material_abastecido, requisicion_abastecida, retorno_pendiente, cancelacion_solicitada
+    message = db.Column(db.Text, nullable=False)
+    severity = db.Column(db.String(20), default='info')  # warning, info, success, danger
+    target_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)  # NULL = para todos
+    request_id = db.Column(db.Integer, db.ForeignKey('request.id'), nullable=True)
+    is_read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    target_user = db.relationship('User', foreign_keys=[target_user_id])
+    request = db.relationship('Request', foreign_keys=[request_id])
+
+
 # --- NUEVO: Códigos de verificación por tipo de usuario ---
 class VerificationCode(db.Model):
     id = db.Column(db.Integer, primary_key=True)

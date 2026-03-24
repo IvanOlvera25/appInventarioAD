@@ -52,6 +52,10 @@
     overflow: hidden;
     box-shadow: 0 4px 16px rgba(0, 0, 0, .06);
     background: #fff;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
   }
 
   .alerts-header {
@@ -61,6 +65,7 @@
     gap: 12px;
     padding: 14px 16px;
     border-bottom: 1px solid #eef1f4;
+    flex-shrink: 0;
   }
 
   .alerts-header .title {
@@ -74,6 +79,10 @@
 
   .alerts-body {
     padding: 12px 16px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 200px;
+    max-height: calc(100vh - 420px);
   }
 
   .alert.compact {
@@ -81,17 +90,27 @@
     margin-bottom: .5rem;
     border-radius: 10px;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: .5rem;
+  }
+
+  .alert.compact .alert-time {
+    font-size: .75rem;
+    color: #8e99a4;
+    white-space: nowrap;
+    margin-left: auto;
+    flex-shrink: 0;
   }
 
   .alerts-footer {
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
+    align-items: center;
     gap: 10px;
     padding: 10px 16px;
     border-top: 1px solid #eef1f4;
     background: #fafbfc;
+    flex-shrink: 0;
   }
 
   /* ——— Acciones rápidas ——— */
@@ -129,6 +148,21 @@
     border-radius: 10px;
     padding: .25rem .5rem;
     font-weight: 600;
+  }
+
+  .alerts-pagination .btn {
+    min-width: 90px;
+  }
+
+  .empty-alerts {
+    text-align: center;
+    padding: 40px 20px;
+    color: #8e99a4;
+  }
+  .empty-alerts i {
+    font-size: 48px;
+    margin-bottom: 12px;
+    opacity: .4;
   }
 </style>
 
@@ -197,49 +231,8 @@
   {% endif %}
 </div>
 
-
-{% if alerts %}
-<!-- Alertas del sistema (persistentes, con mostrar/ocultar) -->
-<div class="row" id="alerts-row">
-  <div class="col-12">
-    <div class="alerts-wrapper">
-      <div class="alerts-header">
-        <h5 class="title mb-0">
-          <i class="fas fa-bell"></i>
-          Alertas del Sistema
-          <span class="badge-soft ms-2">{{ alerts|length }}</span>
-        </h5>
-        <div class="d-flex align-items-center gap-2">
-          <button id="toggle-alerts-btn" class="btn btn-sm btn-outline-secondary">
-            <i class="fas fa-eye-slash me-1" id="toggle-alerts-icon"></i> Ocultar
-          </button>
-          <button id="refresh-alerts-btn" class="btn btn-sm btn-outline-primary" title="Refrescar">
-            <i class="fas fa-sync"></i>
-          </button>
-        </div>
-      </div>
-
-      <div class="alerts-body" id="alerts-body">
-        {% for alert in alerts %}
-        <!-- Clase distintiva sys-alert; sin fade ni alert-dismissible -->
-        <div class="alert alert-{{ alert.type }} sys-alert compact mb-2" role="status">
-          <i class="fas fa-exclamation-circle me-1"></i>
-          <div>{{ alert.message }}</div>
-        </div>
-        {% endfor %}
-      </div>
-
-      <div class="alerts-footer">
-        <small class="text-muted">Estas alertas no se descartan automáticamente. Puedes ocultarlas y volver a
-          mostrarlas.</small>
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
-
-<!-- Acciones rápidas -->
-<div class="row mt-4">
+<!-- Acciones rápidas (ahora arriba de las alertas) -->
+<div class="row mt-2 mb-4">
   <div class="col-12">
     <div class="row g-3">
       <div class="col-md-3">
@@ -282,6 +275,80 @@
         </a>
       </div>
       {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Alertas del sistema (persistentes, paginadas, scrollable) -->
+<div class="row" id="alerts-row">
+  <div class="col-12">
+    <div class="alerts-wrapper">
+      <div class="alerts-header">
+        <h5 class="title mb-0">
+          <i class="fas fa-bell"></i>
+          Alertas del Sistema
+          <span class="badge-soft ms-2">{{ system_alerts.total }}</span>
+        </h5>
+        <div class="d-flex align-items-center gap-2">
+          <button id="toggle-alerts-btn" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-eye-slash me-1" id="toggle-alerts-icon"></i> Ocultar
+          </button>
+          <button id="refresh-alerts-btn" class="btn btn-sm btn-outline-primary" title="Refrescar">
+            <i class="fas fa-sync"></i>
+          </button>
+        </div>
+      </div>
+
+      <div class="alerts-body" id="alerts-body">
+        {% if system_alerts.items %}
+          {% for alert in system_alerts.items %}
+          <div class="alert alert-{{ alert.severity }} sys-alert compact mb-2" role="status">
+            {% if alert.severity == 'danger' %}
+              <i class="fas fa-times-circle me-1"></i>
+            {% elif alert.severity == 'success' %}
+              <i class="fas fa-check-circle me-1"></i>
+            {% elif alert.severity == 'warning' %}
+              <i class="fas fa-exclamation-triangle me-1"></i>
+            {% else %}
+              <i class="fas fa-info-circle me-1"></i>
+            {% endif %}
+            <div>{{ alert.message }}</div>
+            <span class="alert-time">
+              {{ alert.created_at.strftime('%d/%m/%Y %H:%M') }}
+            </span>
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="empty-alerts">
+            <i class="fas fa-bell-slash d-block"></i>
+            <p class="mb-0">No hay alertas del sistema.</p>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="alerts-footer">
+        <small class="text-muted">
+          {% if system_alerts.total > 0 %}
+            Mostrando {{ ((system_alerts.page - 1) * system_alerts.per_page) + 1 }}
+            - {{ [system_alerts.page * system_alerts.per_page, system_alerts.total] | min }}
+            de {{ system_alerts.total }} alertas
+          {% else %}
+            Sin alertas
+          {% endif %}
+        </small>
+        <div class="alerts-pagination d-flex gap-2">
+          {% if system_alerts.has_prev %}
+          <a href="?alerts_page={{ system_alerts.prev_num }}" class="btn btn-sm btn-outline-secondary">
+            <i class="fas fa-chevron-left me-1"></i>Anterior
+          </a>
+          {% endif %}
+          {% if system_alerts.has_next %}
+          <a href="?alerts_page={{ system_alerts.next_num }}" class="btn btn-sm btn-outline-primary">
+            Siguiente<i class="fas fa-chevron-right ms-1"></i>
+          </a>
+          {% endif %}
+        </div>
+      </div>
     </div>
   </div>
 </div>

@@ -15,7 +15,7 @@ import tempfile
 import pymysql
 import pymysql.cursors
 from contextlib import contextmanager
-from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit
+from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert
 from functools import wraps
 import secrets  # <- si estás generando códigos de verificación
 from sqlalchemy import text
@@ -371,6 +371,25 @@ def safe_init_db():
         traceback.print_exc()
         return False
 
+
+def create_system_alert(alert_type, message, severity='info', target_user_id=None, request_id=None):
+    """Helper para crear alertas del sistema persistentes.
+    Si target_user_id es None, la alerta es visible para todos los usuarios.
+    """
+    try:
+        alert = SystemAlert(
+            alert_type=alert_type,
+            message=message,
+            severity=severity,
+            target_user_id=target_user_id,
+            request_id=request_id,
+            created_at=datetime.utcnow()
+        )
+        db.session.add(alert)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"⚠️ Error creando alerta del sistema: {e}")
 
 
 class RemoteDatabase:
@@ -1699,11 +1718,28 @@ def validate_excel_row(row_data, row_number):
 def dashboard():
     # Estadísticas generales
     total_materials = Material.query.count()
-    low_stock_materials = Material.query.filter(Material.current_stock <= Material.min_stock).count()
-    
-    # Personalizar KPIs y Alertas según rol
-    alerts = []
-    
+    # Solo contar materiales con min_stock > 0
+    low_stock_materials = Material.query.filter(
+        Material.min_stock > 0,
+        Material.current_stock <= Material.min_stock
+    ).count()
+
+    # Paginación de alertas del sistema
+    alerts_page = request.args.get('alerts_page', 1, type=int)
+
+    # Consultar alertas del sistema: las globales (target_user_id IS NULL) y las del usuario actual
+    system_alerts_query = SystemAlert.query.filter(
+        db.or_(
+            SystemAlert.target_user_id.is_(None),
+            SystemAlert.target_user_id == current_user.id
+        )
+    ).order_by(SystemAlert.created_at.desc())
+
+    system_alerts_paginated = system_alerts_query.paginate(
+        page=alerts_page, per_page=100, error_out=False
+    )
+
+    # Personalizar KPIs según rol
     if current_user.role == 'requisitador':
         # KPIs propios del usuario
         req_pendientes = Request.query.filter_by(user_id=current_user.id, status='pendiente').count()
@@ -1712,38 +1748,12 @@ def dashboard():
         req_total       = Request.query.filter_by(user_id=current_user.id).count()
         pending_requests = req_pendientes
 
-        # Alertas de sus requisiciones
-        my_recent = Request.query.filter_by(user_id=current_user.id)\
-                        .order_by(Request.created_at.desc()).limit(10).all()
-        STATUS_LABELS = {
-            'pendiente': 'Pendiente',
-            'abastecido': 'Abastecida',
-            'pendiente_compra': 'Pendiente de Compra',
-            'en_entrega': 'En Entrega',
-            'completada': 'Completada',
-            'cancelada': 'Cancelada',
-        }
-        for req in my_recent:
-            atype = {
-                'pendiente': 'warning',
-                'abastecido': 'info',
-                'pendiente_compra': 'secondary',
-                'en_entrega': 'primary',
-                'completada': 'success',
-                'cancelada': 'danger',
-            }.get(req.status, 'info')
-            label = STATUS_LABELS.get(req.status, req.status.upper())
-            alerts.append({
-                'type': atype,
-                'message': f'Requisición {req.request_number} — Estado: {label}'
-            })
-
         return render_template('dashboard.html',
                              total_materials=None,
                              low_stock_materials=None,
                              pending_requests=pending_requests,
                              no_movement_materials=None,
-                             alerts=alerts,
+                             system_alerts=system_alerts_paginated,
                              is_requisitador=True,
                              req_total=req_total,
                              req_pendientes=req_pendientes,
@@ -1753,14 +1763,6 @@ def dashboard():
     else:
         # Admin / Almacenista / Líder
         pending_requests = Request.query.filter_by(status='pendiente').count()
-
-        # Alertas de Stock Bajo (solo para quienes gestionan stock)
-        low_stock = Material.query.filter(Material.current_stock <= Material.min_stock).all()
-        for material in low_stock:
-            alerts.append({
-                'type': 'warning',
-                'message': f'Stock bajo: {material.name} ({material.current_stock} {material.unit})'
-            })
 
     # Materiales sin movimiento en 6 meses
     six_months_ago = datetime.utcnow() - timedelta(days=180)
@@ -1773,7 +1775,7 @@ def dashboard():
                          low_stock_materials=low_stock_materials,
                          pending_requests=pending_requests,
                          no_movement_materials=no_movement_materials,
-                         alerts=alerts,
+                         system_alerts=system_alerts_paginated,
                          is_requisitador=False)
 
 
@@ -2547,6 +2549,15 @@ def new_request():
             print(f"  - Nuevos materiales: {new_materials_created}")
             print("="*60 + "\n")
 
+            # === ALERTA DEL SISTEMA: Alta de Requisición (para todos) ===
+            create_system_alert(
+                alert_type='requisicion_alta',
+                message=f'Alta de Requisicion {req_number}, para el proyecto {fp_code}, generada por {current_user.username}',
+                severity='info',
+                target_user_id=None,
+                request_id=new_req.id
+            )
+
             # ===== 10. RESPUESTA =====
             return jsonify({
                 'success': True,
@@ -3126,6 +3137,17 @@ def request_cancellation(request_id):
         req.cancellation_requested_at = datetime.utcnow()
         req.cancellation_requester_id = current_user.id
         db.session.commit()
+
+        # === ALERTA DEL SISTEMA: Solicitud de cancelación (para todos) ===
+        fp_code = req.project.fp_code if req.project else ''
+        create_system_alert(
+            alert_type='cancelacion_solicitada',
+            message=f'{current_user.username} ha solicitado la cancelacion de la RQ{req.request_number} del FP{fp_code}',
+            severity='danger',
+            target_user_id=None,
+            request_id=req.id
+        )
+
         return jsonify({'success': True, 'message': 'Solicitud de cancelación enviada'})
     except Exception as e:
         db.session.rollback()
@@ -3221,6 +3243,16 @@ def api_request_cancellation(id):
         req.cancellation_requested_at = datetime.utcnow()
         db.session.commit()
 
+        # === ALERTA DEL SISTEMA: Solicitud de cancelación (para todos) ===
+        fp_code = req.project.fp_code if req.project else ''
+        create_system_alert(
+            alert_type='cancelacion_solicitada',
+            message=f'{current_user.username} ha solicitado la cancelacion de la RQ{req.request_number} del FP{fp_code}',
+            severity='danger',
+            target_user_id=None,
+            request_id=req.id
+        )
+
         return jsonify({'success': True, 'message': 'Solicitud de cancelación enviada'})
     except Exception as e:
         db.session.rollback()
@@ -3272,10 +3304,23 @@ def recalculate_request_status(req):
     for item in items:
         if item.will_return and item.return_expected_date:
             if today > item.return_expected_date and not item.actual_return_date:
-                item.item_status = 'pendiente_retorno'
+                if item.item_status != 'pendiente_retorno':  # Solo generar alerta si cambia de estado
+                    item.item_status = 'pendiente_retorno'
+                    # === ALERTA: Retorno pendiente (para el autor de la requisición) ===
+                    mat_name = item.material.name if item.material else item.new_material_name or 'Desconocido'
+                    fp_code = req.project.fp_code if req.project else ''
+                    create_system_alert(
+                        alert_type='retorno_pendiente',
+                        message=f'Aun no se ha registrado retorno de material {mat_name}, de RQ{req.request_number} para el FP{fp_code}.',
+                        severity='warning',
+                        target_user_id=req.user_id,
+                        request_id=req.id
+                    )
 
     # Recargar estados después de verificar retornos
     statuses = [i.item_status for i in items]
+
+    old_status = req.status
 
     # Priority 1: pendiente_compra (highest priority per requirements)
     if 'pendiente_compra' in statuses:
@@ -3289,6 +3334,15 @@ def recalculate_request_status(req):
             req.status = 'en_entrega'
         else:
             req.status = 'abastecido'
+            # === ALERTA: Requisición completamente abastecida (para el autor) ===
+            if old_status != 'abastecido':
+                create_system_alert(
+                    alert_type='requisicion_abastecida',
+                    message=f'RQ{req.request_number} ha sido completamente abastecida',
+                    severity='success',
+                    target_user_id=req.user_id,
+                    request_id=req.id
+                )
     elif any(s == 'pendiente' for s in statuses):
         req.status = 'pendiente'
 
@@ -3365,6 +3419,15 @@ def api_analyze_item_stock(id):
             item.item_status = 'pendiente_compra'
         else:
             item.item_status = 'abastecido'
+            # === ALERTA: Material abastecido (para el autor de la requisición) ===
+            mat_name = item.material.name if item.material else item.new_material_name or 'Desconocido'
+            create_system_alert(
+                alert_type='material_abastecido',
+                message=f'Material {mat_name}, de RQ{item.request.request_number} ha sido completamente abastecido',
+                severity='success',
+                target_user_id=item.request.user_id,
+                request_id=item.request_id
+            )
 
         # Recalcular estado de requisición
         recalculate_request_status(item.request)
@@ -3414,6 +3477,17 @@ def api_mark_item_supplied(id):
 
         item.item_status = 'abastecido'
         item.quantity_supplied = item.quantity_requested
+
+        # === ALERTA: Material abastecido (para el autor de la requisición) ===
+        mat_name = item.material.name if item.material else item.new_material_name or 'Desconocido'
+        create_system_alert(
+            alert_type='material_abastecido',
+            message=f'Material {mat_name}, de RQ{item.request.request_number} ha sido completamente abastecido',
+            severity='success',
+            target_user_id=item.request.user_id,
+            request_id=item.request_id
+        )
+
         recalculate_request_status(item.request)
         db.session.commit()
         return jsonify({'success': True, 'message': 'Material marcado como abastecido'})
