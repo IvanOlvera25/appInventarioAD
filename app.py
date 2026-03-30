@@ -2039,9 +2039,9 @@ def requests():
     unique_clients = [c[0] for c in clients]
 
     # Aplicar filtros de permisos
-    # Admin y requisitadores ven todas las requisiciones
+    # Admin, requisitadores y almacenistas ven todas las requisiciones
     # Usuario regular solo ve las suyas
-    if current_user.role not in ('admin', 'requisitador'):
+    if current_user.role not in ('admin', 'requisitador', 'almacenista'):
         query = query.filter_by(user_id=current_user.id)
 
 
@@ -3126,6 +3126,13 @@ def generate_project_summary(project_id):
 @login_required
 def edit_request(id):
     req = Request.query.get_or_404(id)
+
+    # Verificar permisos: admin y almacenistas pueden editar cualquiera,
+    # otros usuarios solo pueden editar sus propias requisiciones
+    if current_user.role not in ('admin', 'almacenista') and req.user_id != current_user.id:
+        flash('Solo el autor de la requisición, un almacenista o un administrador puede editarla.', 'danger')
+        return redirect(url_for('requests'))
+
     materials = Material.query.all()
     # Usar 'requisition' en vez de 'request' para no sobrescribir el request de Flask
     return render_template('edit_request.html', requisition=req, materials=materials)
@@ -3678,10 +3685,6 @@ def approve_reject_request():
 @app.route('/reports')
 @login_required
 def reports():
-    if current_user.role == 'requisitador':
-        flash('Sección no disponible para requisitadores.', 'warning')
-        return redirect(url_for('dashboard'))
-
     if current_user.role == 'requisitador':
         flash('Sección no disponible para requisitadores.', 'warning')
         return redirect(url_for('dashboard'))

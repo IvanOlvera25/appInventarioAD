@@ -230,12 +230,14 @@
                                                 </button>
 
                                                 {% if item_status == 'pendiente' %}
-                                                <!-- Modificar Cantidad -->
+                                                <!-- Modificar Cantidad (admin siempre, almacenistas solo si la req fue creada por un almacenista, o el autor) -->
+                                                {% if current_user.role == 'admin' or current_user.id == requisition.user_id or (current_user.role == 'almacenista' and requisition.user.role == 'almacenista') %}
                                                 <button class="btn btn-outline-info"
                                                     onclick="openQuantityModal({{ item.id }}, {{ item.quantity_requested }})"
                                                     title="Modificar Cantidad">
                                                     <i class="fas fa-edit"></i>
                                                 </button>
+                                                {% endif %}
 
                                                 <!-- Analizar Stock (solo almacenistas/admin) -->
                                                 {% if current_user.role in ['admin', 'almacenista'] %}
@@ -245,11 +247,13 @@
                                                 </button>
                                                 {% endif %}
 
-                                                <!-- Cancelar Material -->
+                                                <!-- Cancelar Material (solo requisitadores y admin) -->
+                                                {% if current_user.role in ['admin', 'requisitador'] %}
                                                 <button class="btn btn-outline-danger"
                                                     onclick="cancelItem({{ item.id }})" title="Cancelar Material">
                                                     <i class="fas fa-times"></i>
                                                 </button>
+                                                {% endif %}
                                                 {% endif %}
 
                                                 {% if item_status == 'pendiente_compra' and current_user.role in

@@ -308,10 +308,10 @@
         </div>
       </div>
 
-      <!-- Lateral: Resumen y acciones -->
+      <!-- Lateral: Resumen y acciones (solo para no-requisitadores) -->
+      {% if current_user.role != 'requisitador' %}
       <div class="col-md-3">
 
-        {% if current_user.role != 'requisitador' %}
         <!-- Acciones -->
         <div class="card mb-3">
           <div class="card-header py-2">
@@ -333,7 +333,6 @@
             </button>
           </div>
         </div>
-        {% endif %}
 
         <!-- Resumen -->
         <div class="card mb-3">
@@ -418,6 +417,7 @@
 
 
       </div>
+      {% endif %}
     </div>
   </div>
 
