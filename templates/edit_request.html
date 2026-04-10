@@ -247,8 +247,8 @@
                                                 </button>
                                                 {% endif %}
 
-                                                <!-- Cancelar Material (solo requisitadores y admin) -->
-                                                {% if current_user.role in ['admin', 'requisitador'] %}
+                                                <!-- Cancelar Material (solo admin o requisitador autor) -->
+                                                {% if current_user.role == 'admin' or (current_user.role == 'requisitador' and current_user.id == requisition.user_id) %}
                                                 <button class="btn btn-outline-danger"
                                                     onclick="cancelItem({{ item.id }})" title="Cancelar Material">
                                                     <i class="fas fa-times"></i>

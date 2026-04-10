@@ -163,10 +163,7 @@
                                             data-bs-target="#movementDetailModal"><i class="fas fa-eye"></i></button>
                                         {% if current_user.role != 'requisitador' and movement.movement_type == 'salida'
                                         and not movement.returned %}
-                                        <button class="btn btn-outline-success"
-                                            onclick="markAsReturned({{ movement.id }}, {{ movement.quantity }})"
-                                            title="Marcar como devuelto" data-bs-toggle="modal"
-                                            data-bs-target="#returnConfirmModal"><i class="fas fa-check"></i></button>
+                                        <!-- Retorno rápido eliminado — usar Retorno Gral. -->
                                         {% endif %}
                                         {% if current_user.role == 'admin' %}
                                         <button class="btn btn-outline-danger" title="Eliminar"
@@ -351,6 +348,17 @@
                                         </div>
                                     </div>
                                 </div>
+                                <!-- Toggle Consumible -->
+                                <div class="col-12 mt-2">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="exitConsumableToggle">
+                                        <label class="form-check-label" for="exitConsumableToggle">
+                                            <i class="fas fa-box-open text-info me-1"></i>
+                                            <strong>Salida de Consumible</strong>
+                                            <small class="text-muted">(sin necesidad de requisición)</small>
+                                        </label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -499,9 +507,9 @@
     </div>
 </div>
 
-<!-- Modal RETORNO -->
+<!-- Modal RETORNO MEJORADO -->
 <div class="modal fade" id="returnModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header bg-warning">
                 <h5 class="modal-title"><i class="fas fa-undo me-2"></i>Registrar Retorno de Material</h5>
@@ -509,33 +517,103 @@
             </div>
             <div class="modal-body">
                 <form id="returnForm">
-                    <div class="mb-3"><label class="form-label fw-bold">Proyecto (FP) de Origen <span
-                                class="text-danger">*</span></label><select class="form-select" name="fp_code"
-                            id="returnFpSelect" required></select></div>
-                    <div class="alert alert-light p-2 text-center small" id="returnLoader" style="display: none;"><i
-                            class="fas fa-spinner fa-spin me-2"></i>Buscando materiales...</div>
-                    <div class="mb-3"><label class="form-label fw-bold">Material a Devolver <span
-                                class="text-danger">*</span></label><select class="form-select" name="material_id"
-                            id="returnMaterialSelect" required disabled>
-                            <option value="">Seleccione un proyecto</option>
-                        </select></div>
-                    <div class="row">
-                        <div class="col-md-6 mb-3"><label class="form-label fw-bold">Cantidad Devuelta <span
-                                    class="text-danger">*</span></label><input type="number" class="form-control"
-                                name="return_quantity" id="returnQuantityInput" step="any" min="0.01" required disabled>
-                            <div class="form-text" id="returnQuantityHelp"></div>
+                    <!-- Paso 1: Buscar Proyecto por FP -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Proyecto FP de Origen <span class="text-danger">*</span></label>
+                        <div class="position-relative">
+                            <input type="text" class="form-control" id="returnFpSearch"
+                                placeholder="Escriba el código FP del proyecto..." autocomplete="off">
+                            <input type="hidden" name="fp_code" id="returnFpCode" required>
+                            <div id="returnFpResults" class="dropdown-menu w-100"
+                                style="max-height: 300px; overflow-y: auto;"></div>
                         </div>
-                        <div class="col-md-6 mb-3"><label class="form-label fw-bold">Condición <span
-                                    class="text-danger">*</span></label><select class="form-select"
-                                name="condition_on_return" required>
-                                <option value="bueno">Buen Estado</option>
-                                <option value="reutilizable">Reutilizable</option>
-                                <option value="reciclable">Para Reciclaje</option>
-                                <option value="desecho">Desecho</option>
-                            </select></div>
+                        <div id="returnProjectInfo" class="mt-2" style="display: none;">
+                            <div class="alert alert-success mb-0 py-2">
+                                <i class="fas fa-check-circle me-2"></i>
+                                <strong>Proyecto:</strong> <span id="returnProjectDetails"></span>
+                            </div>
+                        </div>
                     </div>
-                    <div class="mb-3"><label class="form-label fw-bold">Notas del Retorno</label><textarea
-                            class="form-control" name="notes" rows="2"></textarea></div>
+
+                    <!-- Paso 2: Material a devolver -->
+                    <div class="alert alert-light p-2 text-center small" id="returnLoader" style="display: none;">
+                        <i class="fas fa-spinner fa-spin me-2"></i>Buscando materiales...
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Material a Devolver <span class="text-danger">*</span></label>
+                        <select class="form-select" name="material_id" id="returnMaterialSelect" required disabled>
+                            <option value="">Seleccione un proyecto primero</option>
+                        </select>
+                    </div>
+
+                    <!-- Paso 3: Condición de retorno -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Condición de Retorno <span class="text-danger">*</span></label>
+                        <div class="d-flex gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="condition_reutilizable" id="condReutilizable" value="reutilizable">
+                                <label class="form-check-label" for="condReutilizable">
+                                    <i class="fas fa-recycle text-success me-1"></i>Reutilizable
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="condition_reciclable" id="condReciclable" value="reciclable">
+                                <label class="form-check-label" for="condReciclable">
+                                    <i class="fas fa-sync text-info me-1"></i>Reciclable
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="condition_desecho" id="condDesecho" value="desecho">
+                                <label class="form-check-label" for="condDesecho">
+                                    <i class="fas fa-trash text-danger me-1"></i>Desecho
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sección de reciclaje (visible si seleccionan Reciclable) -->
+                    <div id="returnRecycleSection" class="card mb-3" style="display: none;">
+                        <div class="card-header bg-info text-white py-2">
+                            <strong><i class="fas fa-sync me-2"></i>Materiales de Reciclaje</strong>
+                            <button type="button" class="btn btn-sm btn-light float-end" id="addRecycleLineBtn">
+                                <i class="fas fa-plus me-1"></i>Agregar línea
+                            </button>
+                        </div>
+                        <div class="card-body" id="recycleLinesContainer">
+                            <div class="recycle-line row g-2 mb-2" data-index="0">
+                                <div class="col-md-7">
+                                    <select class="form-select form-select-sm" name="recycle_material_0">
+                                        <option value="">Seleccione material reciclado...</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <input type="number" class="form-control form-control-sm" name="recycle_qty_0"
+                                        step="0.01" min="0.01" placeholder="Cantidad">
+                                </div>
+                                <div class="col-md-1">
+                                    <button type="button" class="btn btn-sm btn-outline-danger remove-recycle-line" disabled>
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-footer small text-muted">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Seleccione los materiales reciclados que resultarán de este retorno
+                        </div>
+                    </div>
+
+                    <!-- Notas -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Notas del Retorno</label>
+                        <textarea class="form-control" name="notes" rows="2" placeholder="Observaciones..."></textarea>
+                    </div>
+
+                    <div class="alert alert-info small mb-0">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Al registrar el retorno, todos los items de este material en las requisiciones del proyecto
+                        se marcarán con estatus <strong>"Retornado"</strong>.
+                    </div>
                 </form>
             </div>
             <div class="modal-footer">
@@ -596,40 +674,7 @@
     </div>
 </div>
 
-<!-- Modal CONFIRMAR RETORNO -->
-<div class="modal fade" id="returnConfirmModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Confirmar Retorno Rápido</h5><button type="button" class="btn-close"
-                    data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div id="returnConfirmContent"></div>
-                <form id="quickReturnForm">
-                    <input type="hidden" id="quickReturnMovementId" name="movement_id">
-                    <div class="row">
-                        <div class="col-md-6 mb-3"><label class="form-label">Cantidad Devuelta</label><input
-                                type="number" class="form-control" id="quickReturnQuantity" name="return_quantity"
-                                step="any" min="0.01" required></div>
-                        <div class="col-md-6 mb-3"><label class="form-label">Condición</label><select
-                                class="form-select" name="condition_on_return" required>
-                                <option value="bueno">Buen Estado</option>
-                                <option value="reutilizable">Reutilizable</option>
-                                <option value="reciclable">Solo Reciclable</option>
-                                <option value="desecho">Desecho</option>
-                            </select></div>
-                    </div>
-                    <div class="mb-3"><label class="form-label">Notas</label><textarea class="form-control" name="notes"
-                            rows="2" placeholder="Observaciones..."></textarea></div>
-                </form>
-            </div>
-            <div class="modal-footer"><button type="button" class="btn btn-secondary"
-                    data-bs-dismiss="modal">Cancelar</button><button type="button" class="btn btn-success"
-                    onclick="confirmQuickReturn()"><i class="fas fa-check me-1"></i>Confirmar</button></div>
-        </div>
-    </div>
-</div>
+<!-- Modal de Retorno Rápido ELIMINADO — se usa Retorno Gral. -->
 {% endblock %}
 
 {% block scripts %}
@@ -987,6 +1032,7 @@
                     option.dataset.code = mat.code;
                     option.dataset.name = mat.name;
                     option.dataset.totalRequested = mat.total_requested || 0;
+                    option.dataset.totalSupplied = mat.total_supplied || 0;
                     option.dataset.totalDelivered = mat.total_delivered || 0;
                     option.dataset.abastecidaPendiente = mat.abastecida_pendiente || 0;
                     exitMaterialSelect.add(option);
@@ -1009,12 +1055,12 @@
             const stock = parseFloat(selected.dataset.stock);
             const unit = selected.dataset.unit;
             const totalRequested = parseFloat(selected.dataset.totalRequested || 0);
+            const totalSupplied = parseFloat(selected.dataset.totalSupplied || 0);
             const totalDelivered = parseFloat(selected.dataset.totalDelivered || 0);
             const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
 
-            // El máximo permitido es: stock disponible + abastecida pendiente (ya salió del almacén pero no se ha marcado como entregado)
-            // Pero no puede superar el pendiente de la requisición
-            const maxAllowed = Math.min(pending, stock + abastecidaPendiente);
+            // El máximo permitido es el menor entre stock disponible y abastecida pendiente
+            const maxAllowed = Math.min(stock, abastecidaPendiente);
 
             exitQuantityInput.max = maxAllowed;
             exitQuantityInput.value = '';
@@ -1032,21 +1078,24 @@
                     </div>
                     <div class="col-6">
                         <span class="text-muted">Total Abastecido:</span>
-                        <strong class="text-success ms-1">${totalDelivered.toFixed(2)} ${unit}</strong>
+                        <strong class="text-success ms-1">${totalSupplied.toFixed(2)} ${unit}</strong>
+                    </div>
+                    <div class="col-6">
+                        <span class="text-muted">Total Entregado:</span>
+                        <strong class="text-secondary ms-1">${totalDelivered.toFixed(2)} ${unit}</strong>
+                    </div>
+                    <div class="col-6">
+                        <span class="text-muted">Abastecido Pend. Entregar:</span>
+                        <strong class="text-info ms-1">${abastecidaPendiente.toFixed(2)} ${unit}</strong>
                     </div>
                     <div class="col-6">
                         <span class="text-muted">Stock Disponible:</span>
                         <strong class="text-primary ms-1">${stock.toFixed(2)} ${unit}</strong>
                     </div>
-                    <div class="col-6">
-                        <span class="text-muted">Abastecido Pendiente:</span>
-                        <strong class="text-warning ms-1">${abastecidaPendiente.toFixed(2)} ${unit}</strong>
-                    </div>
-                    <div class="col-12 mt-1 border-top pt-1">
+                    <div class="col-6 border-top pt-1">
                         <i class="fas fa-arrow-circle-right text-danger me-1"></i>
-                        <span class="text-muted">Máximo a entregar ahora:</span>
+                        <span class="text-muted">Máx. a entregar:</span>
                         <strong class="text-danger ms-1">${maxAllowed.toFixed(2)} ${unit}</strong>
-                        <small class="text-muted ms-1">(Stock + Abastecido Pendiente, sin superar el Pendiente de req.)</small>
                     </div>
                 </div>
             </div>
@@ -1082,12 +1131,12 @@
                     const stock = parseFloat(selected.dataset.stock);
                     const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
 
-                    if (quantity > (stock + abastecidaPendiente) && quantity <= pending) {
-                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible más el Abastecido Pendiente.';
-                    } else if (quantity > pending && quantity <= (stock + abastecidaPendiente)) {
-                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el límite Pendiente de la requisición.';
-                    } else {
-                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible y el límite Pendiente de la requisición.';
+                    if (quantity > stock && quantity > abastecidaPendiente) {
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible y el Abastecido Pendiente por Entregar.';
+                    } else if (quantity > stock) {
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible (' + stock.toFixed(2) + ').';
+                    } else if (quantity > abastecidaPendiente) {
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Abastecido Pendiente por Entregar (' + abastecidaPendiente.toFixed(2) + ').';
                     }
                 } else {
                     this.classList.remove('is-invalid');
@@ -1187,13 +1236,15 @@
                 return;
             }
 
+            const isConsumable = document.getElementById('exitConsumableToggle').checked;
             const requestData = {
                 fp_code: fpCodeHidden.value,
-                department: exitDepartmentSelect.value,
+                department: isConsumable ? '' : exitDepartmentSelect.value,
                 requester_id: requesterSelected.value,
                 requester_name: requesterSelected.dataset.nombre,
                 deliverer_name: exitDelivererName.value,
                 notes: exitNotes.value,
+                is_consumable_exit: isConsumable,
                 materials: exitMaterialsData.map(m => ({
                     material_id: m.material_id,
                     quantity: m.quantity
@@ -1235,62 +1286,257 @@
         };
 
         // ===================================================================
-        // MODAL DE RETORNO
+        // MODAL DE RETORNO (Mejorado)
         // ===================================================================
         const returnModal = document.getElementById('returnModal');
         if (returnModal) {
-            const returnFpSelect = document.getElementById('returnFpSelect');
+            const returnFpSearch = document.getElementById('returnFpSearch');
+            const returnFpCode = document.getElementById('returnFpCode');
+            const returnFpResults = document.getElementById('returnFpResults');
+            const returnProjectInfo = document.getElementById('returnProjectInfo');
+            const returnProjectDetails = document.getElementById('returnProjectDetails');
             const returnMaterialSelect = document.getElementById('returnMaterialSelect');
-            const returnQuantityInput = document.getElementById('returnQuantityInput');
-            const returnQuantityHelp = document.getElementById('returnQuantityHelp');
             const returnLoader = document.getElementById('returnLoader');
+            const returnRecycleSection = document.getElementById('returnRecycleSection');
+            const recycleLinesContainer = document.getElementById('recycleLinesContainer');
+            const condReciclable = document.getElementById('condReciclable');
+            const addRecycleLineBtn = document.getElementById('addRecycleLineBtn');
 
+            let returnSearchTimeout;
+            let returnRecycledOptions = [];
+
+            // Reset on open
             returnModal.addEventListener('show.bs.modal', () => {
-                fetch('/api/projects/list').then(res => res.json()).then(data => {
-                    returnFpSelect.innerHTML = '<option value="" selected disabled>Seleccione un proyecto...</option>';
-                    data.projects.forEach(p => returnFpSelect.add(new Option(`${p.fp_code} - ${p.name}`, p.fp_code)));
+                returnFpSearch.value = '';
+                returnFpCode.value = '';
+                returnFpResults.innerHTML = '';
+                returnFpResults.classList.remove('show');
+                returnProjectInfo.style.display = 'none';
+                returnMaterialSelect.innerHTML = '<option value="">Seleccione un proyecto primero</option>';
+                returnMaterialSelect.disabled = true;
+                returnRecycleSection.style.display = 'none';
+                document.getElementById('condReutilizable').checked = false;
+                document.getElementById('condReciclable').checked = false;
+                document.getElementById('condDesecho').checked = false;
+            });
+
+            // FP Search
+            returnFpSearch.addEventListener('input', function () {
+                const searchTerm = this.value.trim();
+                clearTimeout(returnSearchTimeout);
+                if (searchTerm.length < 2) {
+                    returnFpResults.classList.remove('show');
+                    return;
+                }
+                returnSearchTimeout = setTimeout(async function () {
+                    try {
+                        const response = await fetch(`/search_fp?fp=${encodeURIComponent(searchTerm)}`);
+                        const data = await response.json();
+                        if (data.success && data.data && data.data.length > 0) {
+                            returnFpResults.innerHTML = '';
+                            data.data.forEach(project => {
+                                const item = document.createElement('a');
+                                item.className = 'dropdown-item';
+                                item.href = '#';
+                                item.innerHTML = `
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>${project.fp_code}</strong>
+                                        <div class="small text-muted">${project.nombre || 'Sin nombre'}</div>
+                                    </div>
+                                    ${project.cliente ? `<span class="badge bg-secondary">${project.cliente}</span>` : ''}
+                                </div>`;
+                                item.addEventListener('click', function (e) {
+                                    e.preventDefault();
+                                    selectReturnProject(project);
+                                });
+                                returnFpResults.appendChild(item);
+                            });
+                            returnFpResults.classList.add('show');
+                        } else {
+                            returnFpResults.innerHTML = '<div class="dropdown-item text-muted">No se encontraron proyectos</div>';
+                            returnFpResults.classList.add('show');
+                        }
+                    } catch (error) {
+                        console.error('Error buscando FP:', error);
+                    }
+                }, 300);
+            });
+
+            document.addEventListener('click', function (e) {
+                if (!returnFpSearch.contains(e.target) && !returnFpResults.contains(e.target)) {
+                    returnFpResults.classList.remove('show');
+                }
+            });
+
+            async function selectReturnProject(project) {
+                returnFpSearch.value = `${project.fp_code} - ${project.nombre || ''}`;
+                returnFpCode.value = project.fp_code;
+                returnProjectDetails.textContent = `${project.fp_code} - ${project.nombre || ''} ${project.cliente ? '(' + project.cliente + ')' : ''}`;
+                returnProjectInfo.style.display = 'block';
+                returnFpResults.classList.remove('show');
+
+                // Load materials for this project
+                returnLoader.style.display = 'block';
+                try {
+                    const res = await fetch(`/api/stock/pending-return-by-fp?fp_code=${encodeURIComponent(project.fp_code)}`);
+                    const data = await res.json();
+                    returnMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione material...</option>';
+                    if (data.materials && data.materials.length > 0) {
+                        data.materials.forEach(mat => {
+                            const text = `${mat.code} - ${mat.name} (${mat.pending_quantity.toFixed(2)} ${mat.unit})`;
+                            const option = new Option(text, mat.id);
+                            option.dataset.materialId = mat.id;
+                            returnMaterialSelect.add(option);
+                        });
+                        returnMaterialSelect.disabled = false;
+                    } else {
+                        returnMaterialSelect.innerHTML = '<option value="">No hay materiales con salidas para este proyecto</option>';
+                    }
+                } catch (error) {
+                    console.error('Error cargando materiales:', error);
+                    returnMaterialSelect.innerHTML = '<option value="">Error al cargar materiales</option>';
+                } finally {
+                    returnLoader.style.display = 'none';
+                }
+            }
+
+            // When material is selected, load recycled options
+            returnMaterialSelect.addEventListener('change', async function () {
+                if (!this.value) return;
+                try {
+                    const res = await fetch(`/api/materials/${this.value}/recycled-options`);
+                    const data = await res.json();
+                    returnRecycledOptions = data.materials || [];
+                    updateRecycleSelects();
+                } catch (error) {
+                    console.error('Error cargando opciones de reciclaje:', error);
+                    returnRecycledOptions = [];
+                }
+            });
+
+            // Toggle recycle section on checkbox change
+            condReciclable.addEventListener('change', function () {
+                returnRecycleSection.style.display = this.checked ? 'block' : 'none';
+            });
+
+            // Add recycle line
+            addRecycleLineBtn.addEventListener('click', function () {
+                const lines = recycleLinesContainer.querySelectorAll('.recycle-line');
+                const newIndex = lines.length;
+                const newLine = document.createElement('div');
+                newLine.className = 'recycle-line row g-2 mb-2';
+                newLine.dataset.index = newIndex;
+
+                let optionsHtml = '<option value="">Seleccione material reciclado...</option>';
+                returnRecycledOptions.forEach(m => {
+                    optionsHtml += `<option value="${m.id}">${m.code} - ${m.name} (${m.unit})</option>`;
+                });
+
+                newLine.innerHTML = `
+                    <div class="col-md-7">
+                        <select class="form-select form-select-sm" name="recycle_material_${newIndex}">
+                            ${optionsHtml}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <input type="number" class="form-control form-control-sm" name="recycle_qty_${newIndex}"
+                            step="0.01" min="0.01" placeholder="Cantidad">
+                    </div>
+                    <div class="col-md-1">
+                        <button type="button" class="btn btn-sm btn-outline-danger remove-recycle-line">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>`;
+                recycleLinesContainer.appendChild(newLine);
+
+                newLine.querySelector('.remove-recycle-line').addEventListener('click', function () {
+                    newLine.remove();
                 });
             });
 
-            returnFpSelect.addEventListener('change', function () {
-                const fpCode = this.value;
-                returnMaterialSelect.disabled = true;
-                returnQuantityInput.disabled = true;
-                returnQuantityInput.value = '';
-                returnQuantityHelp.textContent = '';
-                if (!fpCode) {
-                    returnMaterialSelect.innerHTML = '<option value="">Seleccione un proyecto</option>';
-                    return;
-                }
-                returnLoader.style.display = 'block';
-                fetch(`/api/stock/pending-return-by-fp?fp_code=${encodeURIComponent(fpCode)}`)
-                    .then(res => res.json()).then(data => {
-                        returnMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione material...</option>';
-                        if (data.materials && data.materials.length > 0) {
-                            data.materials.forEach(mat => {
-                                const text = `${mat.code} - ${mat.name} (Pendiente: ${mat.pending_quantity.toFixed(2)} ${mat.unit})`;
-                                const option = new Option(text, mat.id);
-                                option.dataset.pending = mat.pending_quantity;
-                                option.dataset.unit = mat.unit;
-                                returnMaterialSelect.add(option);
-                            });
-                            returnMaterialSelect.disabled = false;
-                        } else {
-                            returnMaterialSelect.innerHTML = '<option value="">No hay materiales pendientes</option>';
-                        }
-                    }).finally(() => {
-                        returnLoader.style.display = 'none';
+            function updateRecycleSelects() {
+                const selects = recycleLinesContainer.querySelectorAll('select');
+                selects.forEach(sel => {
+                    sel.innerHTML = '<option value="">Seleccione material reciclado...</option>';
+                    returnRecycledOptions.forEach(m => {
+                        sel.add(new Option(`${m.code} - ${m.name} (${m.unit})`, m.id));
                     });
-            });
+                });
+            }
+        }
 
-            returnMaterialSelect.addEventListener('change', function () {
-                if (!this.value) return;
-                const selected = this.options[this.selectedIndex];
-                const pending = parseFloat(selected.dataset.pending);
-                returnQuantityInput.max = pending;
-                returnQuantityInput.value = pending.toFixed(2);
-                returnQuantityInput.disabled = false;
-                returnQuantityHelp.textContent = `Máximo a devolver: ${pending.toFixed(2)} ${selected.dataset.unit}`;
+        // ===================================================================
+        // CONSUMIBLE TOGGLE
+        // ===================================================================
+        const consumableToggle = document.getElementById('exitConsumableToggle');
+        if (consumableToggle) {
+            consumableToggle.addEventListener('change', async function () {
+                const isConsumable = this.checked;
+
+                if (isConsumable) {
+                    // Hide department, show materials directly
+                    exitDepartmentCard.style.display = 'none';
+                    exitMaterialsCard.style.display = 'block';
+                    exitNotesCard.style.display = 'block';
+
+                    // Load consumables
+                    exitMaterialLoader.style.display = 'block';
+                    exitMaterialSelect.innerHTML = '<option value="" selected disabled>Cargando consumibles...</option>';
+                    exitMaterialSelect.disabled = true;
+
+                    try {
+                        const res = await fetch('/api/stock/consumables-list');
+                        const data = await res.json();
+                        exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un consumible...</option>';
+
+                        if (data.success && data.materials.length > 0) {
+                            availableMaterials = data.materials.map(m => ({
+                                id: m.id, code: m.code, name: m.name, unit: m.unit,
+                                stock: m.stock, pending: m.stock, // max is stock for consumables
+                                total_requested: 0, total_supplied: 0, total_delivered: 0,
+                                abastecida_pendiente: m.stock
+                            }));
+
+                            availableMaterials.forEach(mat => {
+                                const text = `${mat.code} - ${mat.name} (Stock: ${mat.stock.toFixed(2)} ${mat.unit})`;
+                                const option = new Option(text, mat.id);
+                                option.dataset.pending = mat.stock;
+                                option.dataset.stock = mat.stock;
+                                option.dataset.unit = mat.unit;
+                                option.dataset.code = mat.code;
+                                option.dataset.name = mat.name;
+                                option.dataset.totalRequested = 0;
+                                option.dataset.totalSupplied = 0;
+                                option.dataset.totalDelivered = 0;
+                                option.dataset.abastecidaPendiente = mat.stock;
+                                exitMaterialSelect.add(option);
+                            });
+                            exitMaterialSelect.disabled = false;
+                        } else {
+                            exitMaterialSelect.innerHTML = '<option value="">No hay consumibles disponibles</option>';
+                        }
+                    } catch (error) {
+                        console.error('Error cargando consumibles:', error);
+                        exitMaterialSelect.innerHTML = '<option value="">Error al cargar consumibles</option>';
+                    } finally {
+                        exitMaterialLoader.style.display = 'none';
+                    }
+                } else {
+                    // Restore normal flow: hide materials until department is selected
+                    exitDepartmentCard.style.display = fpCodeHidden.value ? 'block' : 'none';
+                    exitMaterialsCard.style.display = 'none';
+                    exitNotesCard.style.display = 'none';
+                    exitMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
+                    exitMaterialSelect.disabled = true;
+                    exitQuantityInput.value = '';
+                    exitQuantityInput.disabled = true;
+                    exitPendingLabel.textContent = '-';
+                    exitQuantityHelp.textContent = '';
+                    exitAddMaterialBtn.disabled = true;
+                    exitMaterialsData = [];
+                    updateMaterialsList();
+                }
             });
         }
 
@@ -1431,19 +1677,62 @@
     }
 
     window.saveEntry = () => submitForm('/api/stock/entry', 'entryForm');
-    window.saveReturn = () => submitForm('/api/stock/return', 'returnForm');
-    window.confirmQuickReturn = () => submitForm('/api/stock/quick-return', 'quickReturnForm');
+
+    // Custom saveReturn: collect checkbox conditions and add to form
+    window.saveReturn = async () => {
+        const form = document.getElementById('returnForm');
+        const fpCode = document.getElementById('returnFpCode').value;
+        const materialId = document.getElementById('returnMaterialSelect').value;
+
+        if (!fpCode || !materialId) {
+            alert('Seleccione un proyecto y un material');
+            return;
+        }
+
+        // Collect conditions
+        const conditions = [];
+        if (document.getElementById('condReutilizable').checked) conditions.push('reutilizable');
+        if (document.getElementById('condReciclable').checked) conditions.push('reciclable');
+        if (document.getElementById('condDesecho').checked) conditions.push('desecho');
+
+        if (conditions.length === 0) {
+            alert('Seleccione al menos una condición de retorno');
+            return;
+        }
+
+        const formData = new FormData(form);
+        formData.set('condition_on_return', conditions.join(','));
+
+        const modal = form.closest('.modal');
+        const button = modal.querySelector('.modal-footer button[onclick]');
+        const originalButtonText = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Guardando...`;
+
+        try {
+            const response = await fetch('/api/stock/return', { method: 'POST', body: formData });
+            const data = await response.json();
+            if (data.success) {
+                const bsModal = bootstrap.Modal.getInstance(modal);
+                if (bsModal) bsModal.hide();
+                form.reset();
+                showToast(data.message);
+                setTimeout(() => window.location.reload(), 1500);
+            } else {
+                showToast('Error: ' + data.message, true);
+                button.disabled = false;
+                button.innerHTML = originalButtonText;
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showToast('Ocurrió un error de conexión.', true);
+            button.disabled = false;
+            button.innerHTML = originalButtonText;
+        }
+    };
 
     window.viewMovementDetail = (movementId) => {
         document.getElementById('movementDetailContent').innerHTML = `<p class="text-center p-4">Cargando detalles para movimiento #${movementId}...</p>`;
-    };
-
-    window.markAsReturned = (movementId, quantity) => {
-        document.getElementById('returnConfirmContent').innerHTML = `<div class="alert alert-info">Confirmando retorno para movimiento ID ${movementId}.</div>`;
-        document.getElementById('quickReturnMovementId').value = movementId;
-        const qtyInput = document.getElementById('quickReturnQuantity');
-        qtyInput.value = quantity;
-        qtyInput.max = quantity;
     };
 
     window.deleteMovement = (movementId) => {
@@ -1540,6 +1829,36 @@
     }
 
     #exitFpResults .dropdown-item:last-child {
+        border-bottom: none;
+    }
+
+    #returnFpResults {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        z-index: 1050;
+        display: none;
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 0.25rem;
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    }
+
+    #returnFpResults.show {
+        display: block;
+    }
+
+    #returnFpResults .dropdown-item {
+        cursor: pointer;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    #returnFpResults .dropdown-item:hover {
+        background-color: #f8f9fa;
+    }
+
+    #returnFpResults .dropdown-item:last-child {
         border-bottom: none;
     }
 

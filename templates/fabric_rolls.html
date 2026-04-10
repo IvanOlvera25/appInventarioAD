@@ -181,10 +181,14 @@
                         <i class="fas fa-times me-1"></i>Limpiar Filtros
                     </button>
                     {% else %}
+                    {% if current_user.role != 'requisitador' %}
                     <p>Comienza agregando tu primer rollo de tela</p>
                     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRollModal">
                         <i class="fas fa-plus me-1"></i>Agregar Primer Rollo
                     </button>
+                    {% else %}
+                    <p>No hay rollos de tela en el inventario actualmente</p>
+                    {% endif %}
                     {% endif %}
                 </div>
                 {% endif %}

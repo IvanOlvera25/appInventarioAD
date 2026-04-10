@@ -3128,8 +3128,12 @@ def edit_request(id):
     req = Request.query.get_or_404(id)
 
     # Verificar permisos: admin y almacenistas pueden editar cualquiera,
-    # otros usuarios solo pueden editar sus propias requisiciones
-    if current_user.role not in ('admin', 'almacenista') and req.user_id != current_user.id:
+    # requisitadores solo pueden editar sus propias requisiciones
+    if current_user.role in ('admin', 'almacenista'):
+        pass  # Pueden editar cualquier requisición
+    elif current_user.role == 'requisitador' and req.user_id == current_user.id:
+        pass  # Requisitadores pueden editar solo sus propias requisiciones
+    else:
         flash('Solo el autor de la requisición, un almacenista o un administrador puede editarla.', 'danger')
         return redirect(url_for('requests'))
 
@@ -3470,6 +3474,14 @@ def api_cancel_item(id):
     """Cancelar un item individual"""
     try:
         item = RequestItem.query.get_or_404(id)
+
+        # Solo admin o el requisitador autor de la requisición pueden cancelar items
+        if current_user.role == 'admin':
+            pass
+        elif current_user.role == 'requisitador' and item.request.user_id == current_user.id:
+            pass
+        else:
+            return jsonify({'success': False, 'message': 'No tiene permisos para cancelar este material'})
 
         if item.item_status != 'pendiente':
             return jsonify({'success': False, 'message': 'Solo se pueden cancelar items pendientes'})
@@ -4690,10 +4702,15 @@ def get_projects_list():
 def get_requisitioned_materials():
     """
     Obtiene materiales requisitados para un FP y departamento específico.
-    Ahora usa 'department' en lugar de 'area'
+    Calcula correctamente:
+    - total_requested: suma de quantity_requested de los RequestItem
+    - total_supplied: suma de quantity_supplied (lo abastecido en el análisis vs stock)
+    - total_delivered: suma de quantity_delivered (lo entregado físicamente)
+    - abastecida_pendiente: total_supplied - total_delivered (lo confirmado disponible pero no entregado)
+    - max_allowed: min(stock, abastecida_pendiente) — el menor de los dos es el tope
     """
     fp_code = request.args.get('fp_code')
-    department = request.args.get('department')  # ✅ Cambiado de 'area' a 'department'
+    department = request.args.get('department')
 
     if not fp_code or not department:
         return jsonify({'success': False, 'materials': []})
@@ -4702,7 +4719,7 @@ def get_requisitioned_materials():
     if not project:
         return jsonify({'success': False, 'materials': []})
 
-    # Consulta usando 'department' en lugar de 'area', excluyendo materiales de categoría Telas
+    # Consulta excluyendo materiales de categoría Telas
     items = db.session.query(
         Material.id,
         Material.code,
@@ -4710,13 +4727,14 @@ def get_requisitioned_materials():
         Material.unit,
         Material.current_stock,
         func.sum(RequestItem.quantity_requested).label('total_requested'),
+        func.sum(RequestItem.quantity_supplied).label('total_supplied'),
         func.sum(RequestItem.quantity_delivered).label('total_delivered')
     ).join(RequestItem, Material.id == RequestItem.material_id)\
      .join(Request, RequestItem.request_id == Request.id)\
      .filter(
          Request.project_id == project.id,
          Request.department == department,
-         ~Material.category.ilike('%tela%'),  # ✅ Excluir materiales de categoría Telas
+         ~Material.category.ilike('%tela%'),
          Material.is_fabric_roll == False
      )\
      .group_by(Material.id, Material.code, Material.name, Material.unit, Material.current_stock)\
@@ -4725,23 +4743,12 @@ def get_requisitioned_materials():
     materials_data = []
     for item in items:
         total_requested = item.total_requested or 0
-        total_delivered = item.total_delivered or 0
-        pending_quantity = total_requested - total_delivered  # pendiente de la requisición
+        total_supplied = item.total_supplied or 0  # Lo abastecido desde stock en análisis
+        total_delivered = item.total_delivered or 0  # Lo entregado físicamente
+        pending_quantity = total_requested - total_delivered  # Pendiente de entregar de la requisición
 
-        # Calcular cuánto se ha abastecido desde almacén (salidas) vs. cuánto se ha entregado a la req.
-        # "abastecida_pendiente" = lo que ya salió del almacén para este material/proyecto/depto
-        # menos lo registrado como entregado en la requisición.
-        # Esto representa stock que ya salió del almacén pero no se ha marcado como entregado.
-        salidas_almacen = db.session.query(
-            func.sum(StockMovement.quantity)
-        ).filter(
-            StockMovement.material_id == item.id,
-            StockMovement.fp_code == fp_code,
-            StockMovement.area == department,
-            StockMovement.movement_type == 'salida'
-        ).scalar() or 0
-
-        abastecida_pendiente = max(0, salidas_almacen - total_delivered)
+        # Abastecida pendiente: lo que se confirmó disponible pero aún no se ha sacado del almacén
+        abastecida_pendiente = max(0, total_supplied - total_delivered)
 
         if pending_quantity > 0:
             materials_data.append({
@@ -4752,12 +4759,50 @@ def get_requisitioned_materials():
                 'stock': item.current_stock,
                 'pending': pending_quantity,
                 'total_requested': total_requested,
+                'total_supplied': total_supplied,
                 'total_delivered': total_delivered,
                 'abastecida_pendiente': abastecida_pendiente
             })
 
     return jsonify({'success': True, 'materials': materials_data})
 
+
+@app.route('/api/stock/consumables-list')
+@login_required
+def get_consumables_list():
+    """Lista de materiales consumibles con stock disponible, excluyendo Telas."""
+    materials = Material.query.filter(
+        Material.is_consumible == True,
+        ~Material.category.ilike('%tela%'),
+        Material.is_fabric_roll == False,
+        Material.current_stock > 0
+    ).order_by(Material.name).all()
+
+    result = [{
+        'id': m.id,
+        'code': m.code,
+        'name': m.name,
+        'unit': m.unit,
+        'stock': m.current_stock,
+        'category': m.category
+    } for m in materials]
+
+    return jsonify({'success': True, 'materials': result})
+
+
+@app.route('/api/materials/<int:material_id>/recycled-options')
+@login_required
+def get_recycled_options(material_id):
+    """Obtiene materiales reciclados vinculados a un material original."""
+    recycled = Material.query.filter_by(recycled_from_id=material_id).all()
+    result = [{
+        'id': m.id,
+        'code': m.code,
+        'name': m.name,
+        'unit': m.unit,
+        'stock': m.current_stock
+    } for m in recycled]
+    return jsonify({'success': True, 'materials': result})
 
 
 @app.route('/api/stock/exit', methods=['POST'])
@@ -4955,7 +5000,6 @@ def get_current_user_fullname():
 
     except Exception as e:
         app.logger.error(f"Error obteniendo nombre completo: {str(e)}")
-        # En caso de error, devolver el username como fallback
         return jsonify({
             'success': True,
             'fullname': current_user.username
@@ -4970,7 +5014,7 @@ def register_exit_multiple():
 
     """
     Registra múltiples salidas de material en una sola operación.
-    Todos los materiales comparten la misma información de proyecto, departamento y notas.
+    Soporta salidas de consumibles sin requisición (is_consumable_exit=True).
     """
     try:
         data = request.get_json()
@@ -4981,7 +5025,9 @@ def register_exit_multiple():
         requester_name = data.get('requester_name')
         deliverer_name = data.get('deliverer_name')
         notes = data.get('notes', '')
-        materials = data.get('materials', [])  # Lista de {material_id, quantity}
+        materials = data.get('materials', [])
+        is_consumable_exit = data.get('is_consumable_exit', False)
+
 
         if not materials or len(materials) == 0:
             return jsonify({
@@ -4989,13 +5035,15 @@ def register_exit_multiple():
                 'message': 'Debe agregar al menos un material'
             })
 
-        # Validar que el proyecto existe
-        project = Project.query.filter_by(fp_code=fp_code).first()
-        if not project:
-            return jsonify({
-                'success': False,
-                'message': 'Proyecto no encontrado'
-            })
+        # Validar que el proyecto existe (si se proporcionó FP)
+        project = None
+        if fp_code:
+            project = Project.query.filter_by(fp_code=fp_code).first()
+            if not project and not is_consumable_exit:
+                return jsonify({
+                    'success': False,
+                    'message': 'Proyecto no encontrado'
+                })
 
         movements_created = []
         errors = []
@@ -5011,50 +5059,56 @@ def register_exit_multiple():
                     errors.append(f"Material ID {material_id} no encontrado")
                     continue
 
-                # Calcular abastecida_pendiente: salidas previas del almac\u00e9n para este material/proyecto/depto
-                # menos lo ya registrado como entregado en la requisici\u00f3n.
-                salidas_previas = db.session.query(
-                    func.sum(StockMovement.quantity)
-                ).filter(
-                    StockMovement.material_id == material.id,
-                    StockMovement.fp_code == fp_code,
-                    StockMovement.area == department,
-                    StockMovement.movement_type == 'salida'
-                ).scalar() or 0
+                if is_consumable_exit:
+                    # Salida de consumible: solo validar contra stock
+                    if quantity > material.current_stock + 0.001:
+                        errors.append(
+                            f"{material.code}: Stock insuficiente. "
+                            f"Disponible: {material.current_stock} {material.unit}"
+                        )
+                        continue
+                    # Descontar directamente del stock
+                    material.current_stock -= quantity
+                    material.last_movement = datetime.utcnow()
+                else:
+                    # Salida normal: calcular abastecida_pendiente desde quantity_supplied
+                    req_items = db.session.query(RequestItem)\
+                        .join(Request)\
+                        .filter(
+                            Request.project_id == project.id,
+                            Request.department == department,
+                            RequestItem.material_id == material.id
+                        )\
+                        .all()
 
-                req_item_check = db.session.query(RequestItem)\
-                    .join(Request)\
-                    .filter(
-                        Request.project_id == project.id,
-                        Request.department == department,
-                        RequestItem.material_id == material.id
-                    )\
-                    .first()
+                    total_supplied = sum((ri.quantity_supplied or 0) for ri in req_items)
+                    total_delivered_so_far = sum((ri.quantity_delivered or 0) for ri in req_items)
+                    abastecida_pendiente = max(0, total_supplied - total_delivered_so_far)
 
-                qty_delivered_so_far = (req_item_check.quantity_delivered or 0) if req_item_check else 0
-                abastecida_pendiente = max(0, salidas_previas - qty_delivered_so_far)
+                    # Validar: máximo permitido es el menor entre stock y abastecida pendiente
+                    max_allowed = min(material.current_stock, abastecida_pendiente)
+                    if quantity > max_allowed + 0.001:
+                        if material.current_stock < abastecida_pendiente:
+                            errors.append(
+                                f"{material.code}: Stock insuficiente. "
+                                f"Disponible: {material.current_stock:.2f} {material.unit}, "
+                                f"Abastecido pendiente: {abastecida_pendiente:.2f} {material.unit}"
+                            )
+                        else:
+                            errors.append(
+                                f"{material.code}: Cantidad excede abastecido pendiente. "
+                                f"Abastecido pendiente: {abastecida_pendiente:.2f} {material.unit}, "
+                                f"Stock: {material.current_stock:.2f} {material.unit}"
+                            )
+                        continue
 
-                # Validar que la cantidad cabe en stock + abastecida_pendiente
-                max_allowed = material.current_stock + abastecida_pendiente
-                if quantity > max_allowed + 0.001:
-                    errors.append(
-                        f"{material.code}: Cantidad excede el m\u00e1ximo permitido. "
-                        f"Stock: {material.current_stock} + Abastecido Pendiente: {abastecida_pendiente:.2f} = {max_allowed:.2f} {material.unit}"
-                    )
-                    continue
+                    # Descontar del stock
+                    material.current_stock -= quantity
+                    material.last_movement = datetime.utcnow()
 
-                # Determinar cu\u00e1nto se descuenta del stock real y cu\u00e1nto viene del abastecida_pendiente
-                qty_from_abastecida = min(abastecida_pendiente, quantity)
-                qty_from_stock = quantity - qty_from_abastecida
-
-                # Validar que lo que se necesita descontar del stock est\u00e9 disponible
-                if qty_from_stock > material.current_stock + 0.001:
-                    errors.append(
-                        f"{material.code}: Stock insuficiente para la cantidad solicitada. "
-                        f"Disponible: {material.current_stock} {material.unit}"
-                    )
-                    continue
-
+                    # Actualizar quantity_delivered en RequestItem
+                    if req_items:
+                        req_items[0].quantity_delivered = (req_items[0].quantity_delivered or 0) + quantity
 
                 # Generar IDM único
                 last_id = StockMovement.query.count()
@@ -5072,30 +5126,11 @@ def register_exit_multiple():
                     hora=datetime.utcnow().time(),
                     personal=deliverer_name,
                     user_id=current_user.id,
-                    notes=f"Solicitante: {requester_name}. {notes}",
-                    reference_type='requisicion'
+                    notes=f"Solicitante: {requester_name}. {notes}" if not is_consumable_exit else f"Consumible. {notes}",
+                    reference_type='consumible' if is_consumable_exit else 'requisicion'
                 )
 
                 db.session.add(movement)
-
-                # Actualizar stock: solo descontar la parte que no viene del abastecida_pendiente
-                # (la parte del abastecida_pendiente ya fue descontada en una salida anterior)
-                if qty_from_stock > 0:
-                    material.current_stock -= qty_from_stock
-                material.last_movement = datetime.utcnow()
-
-                # Actualizar quantity_delivered en RequestItem (siempre con la cantidad total entregada)
-                req_item = db.session.query(RequestItem)\
-                    .join(Request)\
-                    .filter(
-                        Request.project_id == project.id,
-                        Request.department == department,
-                        RequestItem.material_id == material.id
-                    )\
-                    .first()
-
-                if req_item:
-                    req_item.quantity_delivered = (req_item.quantity_delivered or 0) + quantity
 
                 movements_created.append({
                     'idm': idm,
@@ -5106,6 +5141,7 @@ def register_exit_multiple():
             except Exception as e:
                 errors.append(f"Error procesando material {item.get('material_id')}: {str(e)}")
                 continue
+
 
         # Commit si hay al menos un movimiento exitoso
         if movements_created:
@@ -5278,63 +5314,72 @@ def register_return():
         return jsonify({'success': False, 'message': 'No tienes permisos para registrar retornos.'}), 403
 
     try:
-        movement_id = request.form.get('movement_id')
-        return_quantity = float(request.form.get('return_quantity'))
+        fp_code = request.form.get('fp_code')
+        material_id = request.form.get('material_id')
         condition = request.form.get('condition_on_return')
-        notes = request.form.get('notes')
+        notes = request.form.get('notes', '')
 
-        # Lógica similar a quick_return pero más completa
-        original_movement = StockMovement.query.get(movement_id)
-        if not original_movement:
-            return jsonify({'success': False, 'message': 'Movimiento no encontrado'})
+        if not fp_code or not material_id:
+            return jsonify({'success': False, 'message': 'Proyecto y material son obligatorios'})
 
-        # Validaciones
-        if original_movement.movement_type != 'salida':
-            return jsonify({'success': False, 'message': 'Solo se pueden devolver salidas'})
+        material = Material.query.get(material_id)
+        if not material:
+            return jsonify({'success': False, 'message': 'Material no encontrado'})
 
-        if original_movement.returned:
-            return jsonify({'success': False, 'message': 'Este movimiento ya fue devuelto'})
+        # Buscar proyecto
+        project = Project.query.filter_by(fp_code=fp_code).first()
+        if not project:
+            return jsonify({'success': False, 'message': f'Proyecto {fp_code} no encontrado'})
 
-        if return_quantity > original_movement.quantity:
-            return jsonify({'success': False, 'message': 'Cantidad de retorno excede la cantidad original'})
+        # Generar IDM para el retorno
+        last_id = StockMovement.query.count()
+        idm = f"RET-{datetime.utcnow().strftime('%y%m%d')}-{last_id + 1:04d}"
 
-        # Crear movimiento de retorno
+        # Crear movimiento de retorno (sin cantidad, registro informativo)
         return_movement = StockMovement(
-            idm=f"RET-{original_movement.idm}" if original_movement.idm else None,
-            material_id=original_movement.material_id,
+            idm=idm,
+            material_id=material.id,
             movement_type='retorno',
-            quantity=return_quantity,
-            rollos=original_movement.rollos,
-            fp_code=original_movement.fp_code,
+            quantity=0,  # Se actualizará cuando se reciba físicamente
+            fp_code=fp_code,
             fecha=datetime.now().date(),
             hora=datetime.now().time(),
-            personal=original_movement.personal,
-            area=original_movement.area,
+            personal=current_user.username,
+            area='',
             reference_type='devolucion',
-            reference_id=movement_id,
             user_id=current_user.id,
-            notes=notes
+            notes=f"Condición: {condition}. {notes}"
         )
 
         db.session.add(return_movement)
 
-        # Actualizar movimiento original
-        original_movement.returned = True
-        original_movement.return_date = datetime.utcnow()
-        original_movement.return_quantity = return_quantity
-        original_movement.condition_on_return = condition
-        original_movement.updated_at = datetime.utcnow()
+        # Marcar los RequestItems de este material/proyecto como "retornado"
+        req_items = db.session.query(RequestItem)\
+            .join(Request)\
+            .filter(
+                Request.project_id == project.id,
+                RequestItem.material_id == material.id,
+                RequestItem.will_return == True
+            ).all()
 
-        # Actualizar stock del material
-        material = original_movement.material
-        if condition in ['bueno', 'reutilizable', 'reciclable']:
-            material.current_stock += return_quantity
+        for ri in req_items:
+            ri.item_status = 'retornado'
+
+        # Si no hay items con will_return, marcar todos los items de ese material para este proyecto
+        if not req_items:
+            all_items = db.session.query(RequestItem)\
+                .join(Request)\
+                .filter(
+                    Request.project_id == project.id,
+                    RequestItem.material_id == material.id
+                ).all()
+            for ri in all_items:
+                ri.item_status = 'retornado'
 
         material.last_movement = datetime.utcnow()
-
         db.session.commit()
 
-        return jsonify({'success': True, 'message': 'Retorno registrado exitosamente'})
+        return jsonify({'success': True, 'message': 'Retorno registrado exitosamente. Los items han sido marcados como retornados.'})
 
     except Exception as e:
         db.session.rollback()
@@ -6954,6 +6999,10 @@ def admin_user_reset_password(user_id):
 @app.route('/api/fabric-rolls/export')
 @login_required
 def api_export_fabric_rolls():
+    # Requisitadores no pueden exportar el inventario de rollos
+    if current_user.role == 'requisitador':
+        flash('No tiene permisos para exportar el inventario de rollos de tela.', 'warning')
+        return redirect(url_for('fabric_rolls'))
     try:
         rolls = FabricRoll.query.join(Material).all()
         data = []
