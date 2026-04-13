@@ -2024,6 +2024,7 @@ def requests():
     department_filter = request.args.get('department', '', type=str)
     incident_filter = request.args.get('incident_filter', '', type=str)
     search_filter = request.args.get('search', '', type=str)
+    material_filter = request.args.get('material', '', type=str)
 
     client_filter = request.args.get('client', '', type=str)
     sort_by = request.args.get('sort', 'created_at_desc', type=str)
@@ -2046,7 +2047,9 @@ def requests():
 
 
     # Aplicar filtros
-    if status_filter:
+    if status_filter == 'pendientes':
+        query = query.filter(Request.status.in_(['pendiente', 'pendiente_compra']))
+    elif status_filter:
         query = query.filter_by(status=status_filter)
 
     if department_filter:
@@ -2059,6 +2062,16 @@ def requests():
         query = query.filter_by(is_incident=True)
     elif incident_filter == 'normal':
         query = query.filter_by(is_incident=False)
+
+    if material_filter:
+        query = query.filter(
+            Request.items.any(
+                db.or_(
+                    RequestItem.material.has(Material.name == material_filter),
+                    RequestItem.new_material_name == material_filter
+                )
+            )
+        )
 
     if search_filter:
         query = query.filter(
@@ -2085,15 +2098,23 @@ def requests():
 
     requests_paginated = query.paginate(page=page, per_page=20, error_out=False)
 
+    # Obtener materiales únicos para el filtro
+    unique_materials = db.session.query(Material.name).filter(
+        Material.name.isnot(None), Material.name != ''
+    ).distinct().order_by(Material.name).all()
+    unique_materials = [m[0] for m in unique_materials]
+
     return render_template('requests.html',
                          requests=requests_paginated,
                          status_filter=status_filter,
                          department_filter=department_filter,
                          client_filter=client_filter,
                          incident_filter=incident_filter,
+                         material_filter=material_filter,
                          search_filter=search_filter,
                          sort_by=sort_by,
-                         unique_clients=unique_clients)
+                         unique_clients=unique_clients,
+                         unique_materials=unique_materials)
 
 
 @app.route('/api/projects/active-with-requests')

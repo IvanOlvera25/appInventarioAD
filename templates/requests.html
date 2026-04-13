@@ -65,6 +65,8 @@
                                 <label class="form-label small mb-1">Estado</label>
                                 <select class="form-select form-select-sm" name="status">
                                     <option value="">Todos</option>
+                                    <option value="pendientes" {% if status_filter=='pendientes' %}selected{% endif %}>
+                                        ⚡ Pendientes (todos)</option>
                                     <option value="pendiente" {% if status_filter=='pendiente' %}selected{% endif %}>
                                         Pendiente</option>
                                     <option value="abastecido" {% if status_filter=='abastecido' %}selected{% endif %}>
@@ -129,6 +131,15 @@
                                     <option value="deadline_desc" {% if sort_by=='deadline_desc' %}selected{% endif %}>
                                         Límite (Lejano)</option>
                                     <option value="status" {% if sort_by=='status' %}selected{% endif %}>Estado</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small mb-1">Material</label>
+                                <select class="form-select form-select-sm" name="material">
+                                    <option value="">Todos</option>
+                                    {% for mat in unique_materials %}
+                                    <option value="{{ mat }}" {% if material_filter==mat %}selected{% endif %}>{{ mat }}</option>
+                                    {% endfor %}
                                 </select>
                             </div>
                             <div class="col-md-2">
@@ -283,7 +294,15 @@
                                             {% endif %}
                                         </td>
                                         <td>
-                                            <span class="badge bg-info">{{ req.department }}</span>
+                                            {% set dept_colors = {
+                                                'Metal': '#6c757d',
+                                                'Costura': '#e83e8c',
+                                                'Montaje': '#fd7e14',
+                                                'Impresión': '#6f42c1',
+                                                'Stagging': '#20c997',
+                                                'Administración': '#0d6efd'
+                                            } %}
+                                            <span class="badge" style="background-color: {{ dept_colors.get(req.department, '#6c757d') }};">{{ req.department }}</span>
                                         </td>
                                         <td>
                                             <span class="badge bg-{{ status_colors.get(req.status, 'secondary') }}">
@@ -396,6 +415,8 @@
                 </div>
             </div>
 
+            <!-- Tab 2: Proyectos Activos -->
+            <div class="tab-pane fade" id="projects-pane" role="tabpanel">
             <div class="card">
                 <div class="card-header">
                     <h5 class="mb-0"><i class="fas fa-hammer me-2"></i>Proyectos Activos (Con Requisiciones Pendientes)

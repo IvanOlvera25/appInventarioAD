@@ -80,6 +80,10 @@
                             <small class="text-muted">{{ requisition.project.fp_code }}</small>
                         </div>
                         <div class="col-md-2">
+                            <strong>Cliente:</strong><br>
+                            {{ requisition.project.client or 'N/A' }}
+                        </div>
+                        <div class="col-md-2">
                             <strong>Departamento:</strong><br>
                             {{ requisition.department or 'N/A' }}
                         </div>
@@ -91,12 +95,12 @@
                             <span class="badge bg-secondary">No</span>
                             {% endif %}
                         </div>
-                        <div class="col-md-2">
+                        <div class="col-md-1">
                             <strong>Fecha Límite:</strong><br>
-                            {{ requisition.acquisition_deadline.strftime('%d/%m/%Y') if requisition.acquisition_deadline
-                            else 'N/A' }}
+                            <small>{{ requisition.acquisition_deadline.strftime('%d/%m/%Y') if requisition.acquisition_deadline
+                            else 'N/A' }}</small>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <strong>Creada por:</strong><br>
                             {{ requisition.user.full_name if requisition.user else 'N/A' }}<br>
                             <small class="text-muted">{{ requisition.created_at.strftime('%d/%m/%Y %H:%M') }}</small>
