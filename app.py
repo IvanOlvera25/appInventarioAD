@@ -4305,9 +4305,6 @@ def edit_material(material_id):
 
             db.session.commit()
 
-            # Registrar el cambio en el log (opcional)
-            log_material_change(material_id, current_user.id, 'Material actualizado')
-
             return jsonify({
                 'success': True,
                 'message': 'Material actualizado exitosamente',
