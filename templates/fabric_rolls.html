@@ -24,16 +24,11 @@
                             placeholder="Buscar por número o material..." value="{{ request.args.get('search', '') }}">
                     </div>
                     <div class="col-md-3">
-                        <select class="form-select" name="status">
-                            <option value="">Todos los estados</option>
-                            <option value="disponible" {% if request.args.get('status')=='disponible' %}selected{% endif
-                                %}>Disponible</option>
-                            <option value="en_uso" {% if request.args.get('status')=='en_uso' %}selected{% endif %}>En
-                                Uso</option>
-                            <option value="agotado" {% if request.args.get('status')=='agotado' %}selected{% endif %}>
-                                Agotado</option>
-                            <option value="critico" {% if request.args.get('status')=='critico' %}selected{% endif %}>
-                                Crítico</option>
+                        <select class="form-select" name="location">
+                            <option value="">Todas las ubicaciones</option>
+                            <option value="Almacén de Telas" {% if request.args.get('location')=='Almacén de Telas' %}selected{% endif %}>Almacén de Telas</option>
+                            <option value="Área de Impresión" {% if request.args.get('location')=='Área de Impresión' %}selected{% endif %}>Área de Impresión</option>
+                            <option value="Área de Costura" {% if request.args.get('location')=='Área de Costura' %}selected{% endif %}>Área de Costura</option>
                         </select>
                     </div>
                     <div class="col-md-2">
@@ -43,7 +38,7 @@
                         </button>
                     </div>
                     {% if current_user.role != 'requisitador' %}
-                    <div class="col-md-3">
+                    <div class="col-md-3" style="display: none;">
                         <button type="button" class="btn btn-outline-success w-100" onclick="exportRolls()"
                             data-bs-toggle="tooltip" title="Exportar a Excel">
                             <i class="fas fa-download me-1"></i>Exportar
@@ -60,11 +55,13 @@
                             <tr>
                                 <th>No. Rollo</th>
                                 <th>Material</th>
-                                <th>Dimensiones</th>
+                                <th>Ancho</th>
                                 <th>Longitud</th>
                                 <th>% Disponible</th>
-                                <th>Estado</th>
+                                <th>Ubicación</th>
+                                {% if current_user.role == 'admin' %}
                                 <th>Valor</th>
+                                {% endif %}
                                 <th>Acciones</th>
                             </tr>
                         </thead>
@@ -73,19 +70,17 @@
                             <tr>
                                 <td>
                                     <strong>{{ roll.roll_number }}</strong>
-                                    <br><small class="text-muted">ID: {{ roll.id }}</small>
                                 </td>
                                 <td>
-                                    <strong>{{ roll.material.code }}</strong><br>
-                                    <small class="text-muted">{{ roll.material.name }}</small>
+                                    <strong>{{ roll.material.name }}</strong><br>
+                                    <small class="text-muted">{{ roll.material.code }}</small>
                                 </td>
                                 <td>
-                                    <div class="d-flex flex-column">
-                                        <span><strong>Total:</strong> {{ roll.total_length }} m</span>
-                                        {% if roll.width %}
-                                        <small class="text-muted">Ancho: {{ roll.width }} cm</small>
-                                        {% endif %}
-                                    </div>
+                                    {% if roll.width %}
+                                    {{ "%.2f"|format(roll.width / 100) }} m
+                                    {% else %}
+                                    <span class="text-muted">N/A</span>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     <div class="d-flex flex-column">
@@ -108,24 +103,28 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    {% if roll.status == 'disponible' %}
-                                    <span class="badge bg-success">
-                                        <i class="fas fa-check-circle me-1"></i>Disponible
+                                    {% set loc = roll.location|default('Almacén de Telas') %}
+                                    {% if loc == 'Almacén de Telas' %}
+                                    <span class="badge" style="background-color: #0d6efd;">
+                                        <i class="fas fa-warehouse me-1"></i>{{ loc }}
                                     </span>
-                                    {% elif roll.status == 'en_uso' %}
-                                    <span class="badge bg-warning text-dark">
-                                        <i class="fas fa-cog me-1"></i>En Uso
+                                    {% elif loc == 'Área de Impresión' %}
+                                    <span class="badge" style="background-color: #6f42c1;">
+                                        <i class="fas fa-print me-1"></i>{{ loc }}
                                     </span>
-                                    {% elif roll.status == 'critico' %}
-                                    <span class="badge bg-warning">
-                                        <i class="fas fa-exclamation-triangle me-1"></i>Crítico
+                                    {% elif loc == 'Área de Costura' %}
+                                    <span class="badge" style="background-color: #e83e8c;">
+                                        <i class="fas fa-cut me-1"></i>{{ loc }}
                                     </span>
                                     {% else %}
-                                    <span class="badge bg-secondary">
-                                        <i class="fas fa-times-circle me-1"></i>Agotado
-                                    </span>
+                                    <span class="badge bg-secondary">{{ loc }}</span>
+                                    {% endif %}
+                                    
+                                    {% if roll.provisioned_by_client %}
+                                    <br><small class="text-muted" title="{{ roll.provisioned_by_client }}"><i class="fas fa-user-tag text-info me-1"></i>Material P. x Cliente</small>
                                     {% endif %}
                                 </td>
+                                {% if current_user.role == 'admin' %}
                                 <td>
                                     {% if roll.material.unit_cost %}
                                     {% set total_value = roll.remaining_length * roll.material.unit_cost %}
@@ -133,9 +132,10 @@
                                     <br><small class="text-muted">${{ "%.2f"|format(roll.material.unit_cost)
                                         }}/m</small>
                                     {% else %}
-                                    <span class="text-muted">No definido</span>
+                                    <span class="text-muted">No def.</span>
                                     {% endif %}
                                 </td>
+                                {% endif %}
                                 <td>
                                     <div class="btn-group btn-group-sm">
                                         {% if current_user.role != 'requisitador' and roll.status != 'agotado' %}
@@ -152,9 +152,7 @@
                                         <button class="btn btn-outline-warning" title="Editar"
                                             onclick="editRoll(this)" data-roll-id="{{ roll.id }}"
                                             data-roll-number="{{ roll.roll_number }}"
-                                            data-total="{{ roll.total_length }}"
-                                            data-remaining="{{ roll.remaining_length }}"
-                                            data-width="{{ roll.width or '' }}" data-status="{{ roll.status }}">
+                                            data-location="{{ roll.location|default('Almacén de Telas') }}">
                                             <i class="fas fa-edit"></i>
                                         </button>
                                         {% endif %}
@@ -224,43 +222,43 @@
                 </div>
                 <hr>
 
-                <!-- Estados de rollos -->
+                <!-- Ubicaciones -->
                 <div class="mb-3">
                     <div class="d-flex justify-content-between">
-                        <span><i class="fas fa-cog me-1 text-warning"></i>En Uso:</span>
-                        {% set in_use_count = namespace(value=0) %}
+                        <span><i class="fas fa-warehouse me-1" style="color: #0d6efd;"></i>Almacén de Telas:</span>
+                        {% set count1 = namespace(value=0) %}
                         {% for roll in rolls %}
-                        {% if roll.status == 'en_uso' %}
-                        {% set in_use_count.value = in_use_count.value + 1 %}
+                        {% if roll.location|default('Almacén de Telas') == 'Almacén de Telas' %}
+                        {% set count1.value = count1.value + 1 %}
                         {% endif %}
                         {% endfor %}
-                        <strong class="text-warning">{{ in_use_count.value }}</strong>
+                        <strong style="color: #0d6efd;">{{ count1.value }}</strong>
                     </div>
                 </div>
 
                 <div class="mb-3">
                     <div class="d-flex justify-content-between">
-                        <span><i class="fas fa-exclamation-triangle me-1 text-warning"></i>Críticos:</span>
-                        {% set critical_count = namespace(value=0) %}
+                        <span><i class="fas fa-print me-1" style="color: #6f42c1;"></i>Área de Impresión:</span>
+                        {% set count2 = namespace(value=0) %}
                         {% for roll in rolls %}
-                        {% if roll.status == 'critico' %}
-                        {% set critical_count.value = critical_count.value + 1 %}
+                        {% if roll.location == 'Área de Impresión' %}
+                        {% set count2.value = count2.value + 1 %}
                         {% endif %}
                         {% endfor %}
-                        <strong class="text-warning">{{ critical_count.value }}</strong>
+                        <strong style="color: #6f42c1;">{{ count2.value }}</strong>
                     </div>
                 </div>
 
                 <div class="mb-3">
                     <div class="d-flex justify-content-between">
-                        <span><i class="fas fa-times-circle me-1 text-danger"></i>Agotados:</span>
-                        {% set depleted_count = namespace(value=0) %}
+                        <span><i class="fas fa-cut me-1" style="color: #e83e8c;"></i>Área de Costura:</span>
+                        {% set count3 = namespace(value=0) %}
                         {% for roll in rolls %}
-                        {% if roll.status == 'agotado' %}
-                        {% set depleted_count.value = depleted_count.value + 1 %}
+                        {% if roll.location == 'Área de Costura' %}
+                        {% set count3.value = count3.value + 1 %}
                         {% endif %}
                         {% endfor %}
-                        <strong class="text-danger">{{ depleted_count.value }}</strong>
+                        <strong style="color: #e83e8c;">{{ count3.value }}</strong>
                     </div>
                 </div>
 
@@ -380,15 +378,21 @@
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Longitud Total (metros) <span class="text-danger">*</span></label>
-                            <input type="number" class="form-control" name="total_length" step="0.01" min="0.01"
-                                required>
+                            <input type="number" class="form-control" name="total_length" step="0.01" min="0.01" required>
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">Ancho (cm)</label>
-                            <input type="number" class="form-control" name="width" id="widthInput" step="0.1" min="0.1"
-                                placeholder="150" readonly>
-                            <div class="form-text">Se llena automáticamente según el material</div>
+                            <label class="form-label">Ubicación</label>
+                            <select class="form-select" name="location">
+                                <option value="Almacén de Telas">Almacén de Telas</option>
+                                <option value="Área de Impresión">Área de Impresión</option>
+                                <option value="Área de Costura">Área de Costura</option>
+                            </select>
                         </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Provisionado por Cliente</label>
+                        <input type="text" class="form-control" name="provisioned_by_client" placeholder="Opcional">
+                        <div class="form-text">Escribir el nombre del cliente en caso de que el material haya sido provisionado por el cliente.</div>
                     </div>
                 </form>
             </div>
@@ -411,31 +415,50 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div id="rollInfo" class="alert alert-info mb-3"></div>
                 <form id="cutFabricForm">
                     <input type="hidden" id="cutRollId" name="roll_id">
+                    <input type="hidden" id="cutMaterialId" name="material_id">
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Motivo del Corte <span class="text-danger">*</span></label>
+                        <select class="form-select" id="cutReason" name="reason" required onchange="handleCutReasonChange()">
+                            <option value="">Seleccionar...</option>
+                            <option value="produccion">Producción</option>
+                            <option value="muestra">Muestra</option>
+                            <option value="desperdicio">Desperdicio</option>
+                            <option value="defecto">Material Defectuoso</option>
+                            {% if current_user.role == 'admin' %}
+                            <option value="ajuste">Ajuste de Inventario</option>
+                            {% endif %}
+                        </select>
+                    </div>
+
+                    <div id="productionFields" style="display: none;">
+                        <div class="mb-3">
+                            <label class="form-label">FP</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="cutFpCode" name="fp_code" placeholder="Ej: FP-2025-001">
+                                <button class="btn btn-outline-secondary" type="button" onclick="searchFpInfo()">Buscar</button>
+                            </div>
+                            <div id="fpProjectInfo" class="form-text mt-1 text-primary"></div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Área</label>
+                            <select class="form-select" id="cutArea" name="area">
+                                <option value="">Seleccione un FP primero...</option>
+                            </select>
+                            <div id="productionPendingLimit" class="form-text mt-1 text-warning"></div>
+                        </div>
+                    </div>
+
                     <div class="mb-3">
                         <label class="form-label">Longitud a Cortar (metros) <span class="text-danger">*</span></label>
                         <input type="number" class="form-control" id="cutLength" name="cut_length" step="0.01"
                             min="0.01" required>
-                        <div class="form-text">Máximo disponible: <span id="maxLength"></span> metros</div>
+                        <div class="form-text">Límite actual: <span id="maxLength"></span> metros</div>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label">Motivo del Corte <span class="text-danger">*</span></label>
-                        <select class="form-select" id="cutReason" name="reason" required>
-                            <option value="">Seleccionar...</option>
-                            <option value="requisicion">Requisición</option>
-                            <option value="muestra">Muestra</option>
-                            <option value="produccion">Producción</option>
-                            <option value="desperdicio">Desperdicio</option>
-                            <option value="defecto">Material Defectuoso</option>
-                            <option value="ajuste">Ajuste de Inventario</option>
-                        </select>
-                    </div>
-                    <div class="mb-3" id="requisitionDiv" style="display: none;">
-                        <label class="form-label">Número de Requisición</label>
-                        <input type="text" class="form-control" name="requisition_number" placeholder="REQ-2025-001">
-                    </div>
+                    
                     <div class="mb-3">
                         <label class="form-label">Notas</label>
                         <textarea class="form-control" id="cutNotes" name="notes" rows="2"
@@ -473,25 +496,12 @@
                         <label class="form-label">Número de Rollo</label>
                         <input type="text" class="form-control" id="editRollNumber" name="roll_number" required>
                     </div>
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Longitud Total (metros)</label>
-                            <input type="number" class="form-control" id="editTotalLength" name="total_length"
-                                step="0.01" min="0.01" required readonly>
-                            <div class="form-text">No se puede modificar si ya hay cortes</div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Ancho (cm)</label>
-                            <input type="number" class="form-control" id="editWidth" name="width" step="0.1" min="0.1">
-                        </div>
-                    </div>
                     <div class="mb-3">
-                        <label class="form-label">Estado</label>
-                        <select class="form-select" id="editStatus" name="status" required>
-                            <option value="disponible">Disponible</option>
-                            <option value="en_uso">En Uso</option>
-                            <option value="critico">Crítico</option>
-                            <option value="agotado">Agotado</option>
+                        <label class="form-label">Ubicación</label>
+                        <select class="form-select" id="editLocation" name="location" required>
+                            <option value="Almacén de Telas">Almacén de Telas</option>
+                            <option value="Área de Impresión">Área de Impresión</option>
+                            <option value="Área de Costura">Área de Costura</option>
                         </select>
                     </div>
                 </form>
@@ -509,15 +519,37 @@
 
 {% block scripts %}
 <script>
+    let currentRollRemainingLength = 0;
+    
     function cutFabric(rollId, rollNumber, remainingLength) {
         document.getElementById('cutRollId').value = rollId;
+        
+        // Find material_id by row
+        try {
+            const btn = document.querySelector(`button[data-roll-id="${rollId}"]`);
+            if (btn) {
+                const tr = btn.closest('tr');
+                const materialCode = tr.querySelector('td:nth-child(2) strong').innerText;
+                const materialsList = Array.from(document.getElementById('materialSelect').options);
+                const matOpt = materialsList.find(o => o.text.includes(materialCode));
+                if (matOpt) {
+                    document.getElementById('cutMaterialId').value = matOpt.value;
+                }
+            }
+        } catch(e) {}
+        
+        currentRollRemainingLength = remainingLength;
         document.getElementById('maxLength').textContent = remainingLength;
         document.getElementById('cutLength').max = remainingLength;
+        document.getElementById('cutLength').value = '';
 
-        document.getElementById('rollInfo').innerHTML = `
-        <strong>Rollo seleccionado:</strong> ${rollNumber}<br>
-        <strong>Longitud disponible:</strong> ${remainingLength} metros
-    `;
+        // Reset production fields
+        document.getElementById('cutReason').value = '';
+        document.getElementById('cutFpCode').value = '';
+        document.getElementById('fpProjectInfo').innerHTML = '';
+        document.getElementById('cutArea').innerHTML = '<option value="">Seleccione un FP primero...</option>';
+        document.getElementById('productionPendingLimit').innerHTML = '';
+        handleCutReasonChange();
     }
 
     function saveRoll() {
@@ -590,13 +622,7 @@
         const d = btn.dataset;
         document.getElementById('editRollId').value = d.rollId;
         document.getElementById('editRollNumber').value = d.rollNumber || '';
-        document.getElementById('editTotalLength').value = d.total || '';
-        document.getElementById('editWidth').value = d.width || '';
-        document.getElementById('editStatus').value = d.status || 'disponible';
-
-        // Si ya hubo cortes (remaining < total) bloquea edición de total_length
-        const hasCuts = parseFloat(d.remaining || '0') < parseFloat(d.total || '0');
-        document.getElementById('editTotalLength').readOnly = hasCuts;
+        document.getElementById('editLocation').value = d.location || 'Almacén de Telas';
 
         // Abrir modal (por si el navegador no respeta el data-bs-target)
         const modal = new bootstrap.Modal(document.getElementById('editRollModal'));
@@ -673,21 +699,93 @@
         alert('Funcionalidad de corte masivo en desarrollo');
     }
 
-    // Mostrar/ocultar campo de requisición según el motivo
-    document.getElementById('cutReason').addEventListener('change', function () {
-        const requisitionDiv = document.getElementById('requisitionDiv');
-        if (this.value === 'requisicion') {
-            requisitionDiv.style.display = 'block';
-            requisitionDiv.querySelector('input').required = true;
+    // Lógica dinámica para modal de corte
+    function handleCutReasonChange() {
+        const reason = document.getElementById('cutReason').value;
+        const prodFields = document.getElementById('productionFields');
+        const cutLengthInput = document.getElementById('cutLength');
+        
+        if (reason === 'produccion') {
+            prodFields.style.display = 'block';
+            document.getElementById('cutFpCode').required = true;
+            document.getElementById('cutArea').required = true;
         } else {
-            requisitionDiv.style.display = 'none';
-            requisitionDiv.querySelector('input').required = false;
+            prodFields.style.display = 'none';
+            document.getElementById('cutFpCode').required = false;
+            document.getElementById('cutArea').required = false;
+            
+            // Reset to roll limit
+            document.getElementById('maxLength').textContent = currentRollRemainingLength;
+            cutLengthInput.max = currentRollRemainingLength;
+            document.getElementById('productionPendingLimit').innerHTML = '';
+        }
+    }
+    
+    async function searchFpInfo() {
+        const fpCode = document.getElementById('cutFpCode').value.trim();
+        const materialId = document.getElementById('cutMaterialId').value;
+        const infoDiv = document.getElementById('fpProjectInfo');
+        const areaSelect = document.getElementById('cutArea');
+        const limitDiv = document.getElementById('productionPendingLimit');
+        
+        if (!fpCode) return;
+        
+        infoDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando...';
+        
+        try {
+            const res = await fetch(`/api/fabric-rolls/production-info?fp_code=${encodeURIComponent(fpCode)}&material_id=${materialId || ''}`);
+            const data = await res.json();
+            
+            if (data.success) {
+                // Set project info
+                infoDiv.innerHTML = `<strong>${data.project_name}</strong>` + (data.client ? ` · Cliente: ${data.client}` : '');
+                
+                // Clear and populate areas
+                areaSelect.innerHTML = '';
+                
+                if (data.areas && data.areas.length > 0) {
+                    areaSelect.innerHTML = '<option value="">Seleccionar área...</option>';
+                    data.areas.forEach(a => {
+                        const opt = document.createElement('option');
+                        opt.value = a.area;
+                        opt.text = `${a.area} (Pendiente: ${a.pending}m)`;
+                        opt.dataset.pending = a.pending;
+                        areaSelect.appendChild(opt);
+                    });
+                } else {
+                    areaSelect.innerHTML = '<option value="">Sin material pendiente de entregar</option>';
+                    limitDiv.innerHTML = '⚠️ No hay material pendiente registrado para entrega.';
+                }
+            } else {
+                infoDiv.innerHTML = `<span class="text-danger">${data.message}</span>`;
+                areaSelect.innerHTML = '<option value="">Seleccione un FP válido...</option>';
+            }
+        } catch (err) {
+            infoDiv.innerHTML = `<span class="text-danger">Error de red</span>`;
+        }
+    }
+    
+    document.getElementById('cutArea').addEventListener('change', function() {
+        if (this.selectedIndex > 0) {
+            const opt = this.options[this.selectedIndex];
+            const pendingQty = parseFloat(opt.dataset.pending || 0);
+            
+            let finalMax = currentRollRemainingLength;
+            if (pendingQty > 0) {
+                finalMax = Math.min(pendingQty, currentRollRemainingLength);
+                document.getElementById('productionPendingLimit').innerHTML = `Se detectó <strong>${pendingQty}m pendientes</strong>. El límite de corte se ajustó a ${finalMax.toFixed(2)}m.`;
+            } else {
+                document.getElementById('productionPendingLimit').innerHTML = '';
+            }
+            
+            document.getElementById('maxLength').textContent = finalMax.toFixed(2);
+            document.getElementById('cutLength').max = finalMax;
         }
     });
 
     // Validar longitud de corte en tiempo real
     document.getElementById('cutLength').addEventListener('input', function () {
-        const maxLength = parseFloat(document.getElementById('maxLength').textContent);
+        const maxLength = parseFloat(document.getElementById('maxLength').textContent || currentRollRemainingLength);
         const cutLength = parseFloat(this.value);
 
         if (cutLength > maxLength) {
@@ -716,16 +814,11 @@
             const data = await res.json();
             if (!data.success) throw new Error(data.message || 'No se pudieron obtener defaults');
 
-            if (!rollInput.value) {
-                rollInput.value = data.suggested_roll_number || rollInput.value;
+            if (!rollInput.value && data.suggested_roll_number) {
+                rollInput.value = data.suggested_roll_number;
             }
-            widthInput.value = (data.default_width != null) ? data.default_width : '';
-            widthInput.readOnly = true;
         } catch (err) {
             console.error(err);
-            // Fallback: 150 cm
-            widthInput.value = 150;
-            widthInput.readOnly = true;
         }
     });
 

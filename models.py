@@ -109,6 +109,8 @@ class FabricRoll(db.Model):
     remaining_length = db.Column(db.Float, nullable=False)
     width = db.Column(db.Float)
     status = db.Column(db.String(50), default='disponible')
+    location = db.Column(db.String(100), default='Almacén de Telas')
+    provisioned_by_client = db.Column(db.String(200))
     material = db.relationship('Material', backref='fabric_rolls')
 
 

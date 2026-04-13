@@ -3677,7 +3677,24 @@ def get_project_info(fp_code):
 @app.route('/fabric-rolls')
 @login_required
 def fabric_rolls():
-    rolls = FabricRoll.query.join(Material).all()
+    search = request.args.get('search', '', type=str)
+    location_filter = request.args.get('location', '', type=str)
+
+    query = FabricRoll.query.join(Material).filter(FabricRoll.remaining_length > 0)
+
+    if search:
+        query = query.filter(
+            db.or_(
+                FabricRoll.roll_number.contains(search),
+                Material.name.contains(search),
+                Material.code.contains(search)
+            )
+        )
+
+    if location_filter:
+        query = query.filter(FabricRoll.location == location_filter)
+
+    rolls = query.all()
     # Obtener solo materiales cuya categoría sea 'Telas'
     materials = Material.query.filter(Material.category.ilike('%tela%')).all()
     return render_template('fabric_rolls.html', rolls=rolls, materials=materials)
@@ -6658,6 +6675,8 @@ def api_create_fabric_roll():
         roll_number   = (request.form.get('roll_number') or '').strip()
         total_length  = request.form.get('total_length', type=float)
         notes         = (request.form.get('notes') or '').strip()
+        location      = (request.form.get('location') or 'Almacén de Telas').strip()
+        provisioned_by_client = (request.form.get('provisioned_by_client') or '').strip() or None
 
         # Validaciones básicas
         if not material_id or not roll_number or not total_length or total_length <= 0:
@@ -6683,7 +6702,9 @@ def api_create_fabric_roll():
             total_length=total_length,
             remaining_length=total_length,
             width=width,
-            status=_roll_status(total_length, total_length)
+            status=_roll_status(total_length, total_length),
+            location=location,
+            provisioned_by_client=provisioned_by_client
         )
         db.session.add(roll)
 
@@ -6724,18 +6745,44 @@ def api_cut_fabric_roll():
         roll_id     = request.form.get('roll_id', type=int)
         cut_length  = request.form.get('cut_length', type=float)
         reason      = (request.form.get('reason') or '').strip()
-        req_number  = (request.form.get('requisition_number') or '').strip()
+        fp_code     = (request.form.get('fp_code') or '').strip()
+        area        = (request.form.get('area') or '').strip()
         notes       = (request.form.get('notes') or '').strip()
 
         if not roll_id or not cut_length or cut_length <= 0:
             return jsonify({'success': False, 'message': 'Datos inválidos'}), 400
 
+        if not reason:
+            return jsonify({'success': False, 'message': 'Debe seleccionar un motivo de corte'}), 400
+
+        # Ajuste de inventario solo para admins
+        if reason == 'ajuste' and current_user.role != 'admin':
+            return jsonify({'success': False, 'message': 'Solo los administradores pueden hacer ajustes de inventario'}), 403
+
         roll = FabricRoll.query.get(roll_id)
         if not roll:
             return jsonify({'success': False, 'message': 'Rollo no encontrado'}), 404
 
-        if cut_length > (roll.remaining_length or 0):
-            return jsonify({'success': False, 'message': 'La longitud de corte excede la disponible'}), 400
+        # Calcular límite según motivo
+        max_allowed = roll.remaining_length or 0
+
+        if reason == 'produccion' and fp_code:
+            # Para producción: límite = min(pendiente de entrega, longitud restante)
+            material = roll.material
+            pending_items = RequestItem.query.join(Request).filter(
+                Request.project.has(Project.fp_code == fp_code),
+                RequestItem.material_id == material.id,
+                RequestItem.item_status.in_(['pendiente', 'pendiente_compra'])
+            ).all()
+            total_pending = sum(
+                max((item.quantity_requested or 0) - (item.quantity_delivered or 0), 0)
+                for item in pending_items
+            )
+            if total_pending > 0:
+                max_allowed = min(total_pending, roll.remaining_length or 0)
+
+        if cut_length > max_allowed:
+            return jsonify({'success': False, 'message': f'La longitud de corte excede el máximo permitido ({max_allowed:.2f} m)'}), 400
 
         # Actualizar longitudes / estado
         roll.remaining_length = (roll.remaining_length or 0) - cut_length
@@ -6749,9 +6796,18 @@ def api_cut_fabric_roll():
         # Movimiento de SALIDA por corte de rollo
         mot = f'Corte rollo {roll.roll_number}'
         if reason:
-            mot += f' · Motivo: {reason}'
-        if req_number:
-            mot += f' · Req: {req_number}'
+            reason_labels = {
+                'produccion': 'Producción',
+                'muestra': 'Muestra',
+                'desperdicio': 'Desperdicio',
+                'defecto': 'Material Defectuoso',
+                'ajuste': 'Ajuste de Inventario'
+            }
+            mot += f' · Motivo: {reason_labels.get(reason, reason)}'
+        if fp_code:
+            mot += f' · FP: {fp_code}'
+        if area:
+            mot += f' · Área: {area}'
         if notes:
             mot += f' · {notes}'
 
@@ -6760,10 +6816,11 @@ def api_cut_fabric_roll():
             movement_type='salida',
             quantity=cut_length,
             rollos=0,
+            fp_code=fp_code if fp_code else None,
             reference_type='corte_rollo',
             user_id=current_user.id,
             personal=current_user.username,
-            area='Producción',
+            area=area if area else 'Producción',
             fecha=datetime.utcnow().date(),
             hora=datetime.utcnow().time(),
             notes=mot
@@ -6792,32 +6849,26 @@ def api_update_fabric_roll():
         if not roll:
             return jsonify({'success': False, 'message': 'Rollo no encontrado'}), 404
 
-        # Actualizables
+        # Solo se puede editar roll_number y location
         new_number = (request.form.get('roll_number') or '').strip()
         if new_number and new_number != roll.roll_number:
             if FabricRoll.query.filter(FabricRoll.roll_number == new_number, FabricRoll.id != roll.id).first():
                 return jsonify({'success': False, 'message': 'El número de rollo ya existe'}), 400
+
+            old_number = roll.roll_number
             roll.roll_number = new_number
 
-        # total_length lo dejamos bloqueado si ya hubo cortes
-        if (request.form.get('total_length') is not None and
-            float(request.form.get('total_length') or 0) >= (roll.remaining_length or 0) and
-            (roll.remaining_length == roll.total_length)):  # sólo si no hubo cortes
-            roll.total_length = float(request.form.get('total_length'))
+            # Actualizar notas de StockMovements que referencian el rollo viejo
+            related_movements = StockMovement.query.filter(
+                StockMovement.material_id == roll.material_id,
+                StockMovement.notes.contains(old_number)
+            ).all()
+            for mv in related_movements:
+                mv.notes = mv.notes.replace(old_number, new_number)
 
-        # El ancho puede ajustarse puntualmente (edición)
-        if request.form.get('width') is not None:
-            try:
-                roll.width = float(request.form.get('width'))
-            except:
-                pass
-
-        status = (request.form.get('status') or '').strip()
-        if status in ('disponible','en_uso','critico','agotado'):
-            roll.status = status
-        notes = (request.form.get('notes') or '').strip()
-        if notes is not None:
-            roll.notes = notes
+        new_location = (request.form.get('location') or '').strip()
+        if new_location:
+            roll.location = new_location
 
         db.session.commit()
         return jsonify({'success': True, 'message': 'Rollo actualizado'})
@@ -6866,6 +6917,51 @@ def api_delete_fabric_roll(roll_id):
         return jsonify({'success': False, 'message': f'Error al eliminar rollo: {str(e)}'}), 500
 
 
+
+# ======== API: INFORMACIÓN DE PRODUCCIÓN ========
+
+@app.route('/api/fabric-rolls/production-info')
+@login_required
+def api_fabric_roll_production_info():
+    fp_code = request.args.get('fp_code')
+    material_id = request.args.get('material_id', type=int)
+
+    if not fp_code or not material_id:
+        return jsonify({'success': False, 'message': 'Se requiere fp_code y material_id'}), 400
+
+    from sqlalchemy import func
+
+    # Find the project
+    project = Project.query.filter_by(fp_code=fp_code).first()
+    if not project:
+        return jsonify({'success': False, 'message': 'Proyecto no encontrado', 'areas': []}), 404
+
+    # Find pending requests for this project and material
+    pending_items = RequestItem.query.join(Request).filter(
+        Request.project_id == project.id,
+        RequestItem.material_id == material_id,
+        RequestItem.item_status.in_(['pendiente', 'pendiente_compra'])
+    ).all()
+
+    areas_with_pending = {}
+    total_pending = 0
+
+    for item in pending_items:
+        qty = max((item.quantity_requested or 0) - (item.quantity_delivered or 0), 0)
+        if qty > 0:
+            area = item.request.area or item.request.department or 'Sin Área'
+            areas_with_pending[area] = areas_with_pending.get(area, 0) + qty
+            total_pending += qty
+
+    areas_list = [{'area': area, 'pending': pending} for area, pending in areas_with_pending.items()]
+
+    return jsonify({
+        'success': True,
+        'project_name': project.name,
+        'client': project.client,
+        'total_pending': total_pending,
+        'areas': areas_list
+    })
 
 # --- ADMIN: Usuarios + Códigos fijos ---
 
