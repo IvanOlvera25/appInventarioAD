@@ -2083,30 +2083,107 @@ def requests():
     else: # created_at_desc
         query = query.order_by(Request.created_at.desc())
 
-    requests = query.paginate(page=page, per_page=20, error_out=False)
-
-    # Datos para la vista "Por Proyectos" y "Todos los Proyectos"
-    # Proyectos Activos: Aquellos con al menos una requisición NO completada ni cancelada
-    active_projects = Project.query.options(
-        selectinload(Project.requests).selectinload(Request.items)
-    ).join(Request).filter(
-        Request.status.notin_(['completada', 'cancelada'])
-    ).distinct().order_by(Project.fp_code.desc()).all()
-
-    # Todos los proyectos (para la nueva sección)
-    all_projects = Project.query.order_by(Project.fp_code.desc()).limit(100).all()
+    requests_paginated = query.paginate(page=page, per_page=20, error_out=False)
 
     return render_template('requests.html',
-                         requests=requests,
+                         requests=requests_paginated,
                          status_filter=status_filter,
                          department_filter=department_filter,
                          client_filter=client_filter,
                          incident_filter=incident_filter,
                          search_filter=search_filter,
                          sort_by=sort_by,
-                         unique_clients=unique_clients,
-                         active_projects=active_projects,
-                         all_projects=all_projects)
+                         unique_clients=unique_clients)
+
+
+@app.route('/api/projects/active-with-requests')
+@login_required
+def api_active_projects():
+    """Devuelve proyectos activos con requisiciones pendientes (carga lazy para tab Proyectos Activos)"""
+    try:
+        projects = Project.query.options(
+            selectinload(Project.requests).selectinload(Request.items).joinedload(RequestItem.material)
+        ).join(Request).filter(
+            Request.status.notin_(['completada', 'cancelada'])
+        ).distinct().order_by(Project.fp_code.desc()).all()
+
+        result = []
+        for p in projects:
+            active_reqs = [r for r in p.requests if r.status not in ('completada', 'cancelada')]
+            # Consolidar materiales
+            materials_map = {}
+            for r in active_reqs:
+                for item in r.items:
+                    mat_key = item.material.code if item.material else (item.new_material_code or 'unknown')
+                    mat_name = item.material.name if item.material else (item.new_material_name or 'Desconocido')
+                    mat_unit = item.material.unit if item.material else (item.new_material_unit or 'uds')
+                    if mat_key not in materials_map:
+                        materials_map[mat_key] = {'name': mat_name, 'unit': mat_unit, 'total_requested': 0, 'total_delivered': 0, 'will_return': False}
+                    materials_map[mat_key]['total_requested'] += item.quantity_requested
+                    materials_map[mat_key]['total_delivered'] += (item.quantity_delivered or 0)
+                    if item.will_return:
+                        materials_map[mat_key]['will_return'] = True
+
+            pending = sum(1 for r in active_reqs if r.status == 'pendiente')
+            pending_buy = sum(1 for r in active_reqs if r.status == 'pendiente_compra')
+            supplied = sum(1 for r in active_reqs if r.status == 'abastecido')
+
+            result.append({
+                'id': p.id,
+                'fp_code': p.fp_code,
+                'name': p.name,
+                'client': p.client or '',
+                'delivery_date': p.delivery_date.strftime('%d/%m/%Y') if p.delivery_date else '-',
+                'stats': {'pending': pending, 'pending_buy': pending_buy, 'supplied': supplied},
+                'requests': [{
+                    'id': r.id,
+                    'request_number': r.request_number,
+                    'department': r.department,
+                    'area': r.area or '',
+                    'status': r.status,
+                    'is_incident': r.is_incident,
+                    'username': r.user.username if r.user else '',
+                    'created_at': r.created_at.strftime('%d/%m/%Y') if r.created_at else '-',
+                    'acquisition_deadline': r.acquisition_deadline.strftime('%d/%m/%Y') if r.acquisition_deadline else None,
+                } for r in active_reqs],
+                'materials': [{'code': k, **v} for k, v in materials_map.items()]
+            })
+
+        return jsonify({'success': True, 'projects': result})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/projects/all-list')
+@login_required
+def api_all_projects():
+    """Devuelve todos los proyectos con conteo de requisiciones (carga lazy para tab Todos los Proyectos)"""
+    try:
+        projects = db.session.query(
+            Project.id,
+            Project.fp_code,
+            Project.name,
+            Project.client,
+            Project.delivery_date,
+            Project.production_start,
+            Project.assembly_date,
+            func.count(Request.id).label('req_count')
+        ).outerjoin(Request).group_by(Project.id).order_by(Project.fp_code.desc()).limit(100).all()
+
+        result = [{
+            'id': p.id,
+            'fp_code': p.fp_code,
+            'name': p.name,
+            'client': p.client or '-',
+            'delivery_date': p.delivery_date.strftime('%d/%m/%Y') if p.delivery_date else '-',
+            'production_start': p.production_start.strftime('%d/%m/%Y') if p.production_start else '-',
+            'assembly_date': p.assembly_date.strftime('%d/%m/%Y') if p.assembly_date else '-',
+            'req_count': p.req_count or 0
+        } for p in projects]
+
+        return jsonify({'success': True, 'projects': result})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 # Agregar estas rutas a tu app.py existente
 # Asegúrate de tener estos imports al inicio de tu app.py:
 # from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, current_app

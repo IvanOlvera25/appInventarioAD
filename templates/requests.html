@@ -401,228 +401,10 @@
                     <h5 class="mb-0"><i class="fas fa-hammer me-2"></i>Proyectos Activos (Con Requisiciones Pendientes)
                     </h5>
                 </div>
-                <div class="card-body">
-                    <div id="projectsAccordion" class="accordion">
-                        {% for project in active_projects %}
-                        {% set project_requests = project.requests|selectattr('status', 'ne',
-                        'completada')|selectattr('status', 'ne', 'cancelada')|list %}
-
-                        <div class="accordion-item">
-                            <h2 class="accordion-header" id="heading{{ project.id }}">
-                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse"
-                                    data-bs-target="#collapse{{ project.id }}">
-                                    <div class="d-flex justify-content-between w-100 me-3">
-                                        <div>
-                                            <strong>{{ project.fp_code }}</strong> - {{ project.client or 'Sin Cliente'
-                                            }} - {{ project.name }}
-                                            <br><small class="text-muted">Entrega: {{
-                                                project.delivery_date.strftime('%d/%m/%Y') }}</small>
-                                        </div>
-                                        <div class="text-end">
-                                            <span class="badge bg-warning text-dark">{{ project_requests|length }}
-                                                pendientes</span>
-                                        </div>
-                                    </div>
-                                </button>
-                            </h2>
-                            <div id="collapse{{ project.id }}" class="accordion-collapse collapse"
-                                data-bs-parent="#projectsAccordion">
-                                <div class="accordion-body">
-                                    <!-- Resumen del proyecto -->
-                                    <div class="row mb-3">
-                                        <div class="col-md-8">
-                                            <h6 class="text-primary">Información del Proyecto</h6>
-                                            <table class="table table-sm table-borderless">
-                                                <tr>
-                                                    <td style="width: 150px;"><strong>FP:</strong></td>
-                                                    <td>{{ project.fp_code }}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td><strong>Proyecto:</strong></td>
-                                                    <td>{{ project.name }}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td><strong>Cliente:</strong></td>
-                                                    <td>{{ project.client or '-' }}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td><strong>Entrega:</strong></td>
-                                                    <td>{{ project.delivery_date.strftime('%d/%m/%Y') }}</td>
-                                                </tr>
-                                            </table>
-                                        </div>
-                                        <div class="col-md-4">
-                                            <h6 class="text-primary">Estadísticas</h6>
-                                            {% set pending = project_requests|selectattr('status', 'equalto',
-                                            'pendiente')|list|length %}
-                                            {% set pending_buy = project_requests|selectattr('status', 'equalto',
-                                            'pendiente_compra')|list|length %}
-                                            {% set supplied = project_requests|selectattr('status', 'equalto',
-                                            'abastecido')|list|length %}
-
-                                            <div class="d-flex flex-column gap-1">
-                                                <span class="badge bg-warning text-dark d-flex justify-content-between">
-                                                    <span>Pendientes</span> <span>{{ pending }}</span>
-                                                </span>
-                                                <span class="badge bg-secondary d-flex justify-content-between">
-                                                    <span>Pend. Compra</span> <span>{{ pending_buy }}</span>
-                                                </span>
-                                                <span class="badge bg-info d-flex justify-content-between">
-                                                    <span>Abastecidas</span> <span>{{ supplied }}</span>
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Lista de requisiciones del proyecto -->
-                                    <h6>Requisiciones Activas</h6>
-                                    <div class="table-responsive">
-                                        <table class="table table-sm table-bordered table-hover">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th>No. Requisición</th>
-                                                    <th>Depto / Área</th>
-                                                    <th>Estado</th>
-                                                    <th>Fecha Solicitud</th>
-                                                    <th>Límite Adquisición</th>
-                                                    <th>Acciones</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {% for req in project_requests %}
-                                                <tr class="{% if req.is_incident %}table-warning{% endif %}">
-                                                    <td>
-                                                        <strong>{{ req.request_number }}</strong>
-                                                        {% if req.is_incident %}
-                                                        <br><span class="badge bg-danger badge-sm">INCIDENCIA</span>
-                                                        {% endif %}
-                                                        <br><small class="text-muted">{{ req.user.username }}</small>
-                                                    </td>
-                                                    <td>
-                                                        {{ req.department }}
-                                                        {% if req.area %}<br><small class="text-muted">{{ req.area
-                                                            }}</small>{% endif %}
-                                                    </td>
-                                                    <td>
-                                                        <span
-                                                            class="badge bg-{{ status_colors.get(req.status, 'secondary') }}">
-                                                            {{ req.status|replace('_', ' ')|title }}
-                                                        </span>
-                                                    </td>
-                                                    <td>{{ req.created_at.strftime('%d/%m/%Y') }}</td>
-                                                    <td>
-                                                        {% if req.acquisition_deadline %}
-                                                        <span class="text-danger">{{
-                                                            req.acquisition_deadline.strftime('%d/%m/%Y') }}</span>
-                                                        {% else %} - {% endif %}
-                                                    </td>
-                                                    <td>
-                                                        <button class="btn btn-sm btn-outline-primary"
-                                                            onclick="viewRequest({{ req.id }})" data-bs-toggle="modal"
-                                                            data-bs-target="#requestDetailModal">
-                                                            <i class="fas fa-eye"></i>
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                                {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    <!-- Consolidado de materiales del proyecto -->
-                                    <h6 class="mt-4">Consolidado de Materiales (Activos)</h6>
-                                    {% set project_materials = {} %}
-                                    {% for req in project_requests %}
-                                    {% for item in req.items %}
-                                    {% set mat_key = item.material.code if item.material else item.new_material_code %}
-                                    {% set mat_name = item.material.name if item.material else item.new_material_name %}
-                                    {% set mat_unit = item.material.unit if item.material else item.new_material_unit %}
-
-                                    {% if mat_key not in project_materials %}
-                                    {% set _ = project_materials.update({mat_key: {
-                                    'name': mat_name,
-                                    'unit': mat_unit,
-                                    'total_requested': 0,
-                                    'total_delivered': 0,
-                                    'will_return': False
-                                    }}) %}
-                                    {% endif %}
-
-                                    {% set _ = project_materials[mat_key].update({
-                                    'total_requested': project_materials[mat_key]['total_requested'] +
-                                    item.quantity_requested,
-                                    'total_delivered': project_materials[mat_key]['total_delivered'] +
-                                    item.quantity_delivered
-                                    }) %}
-
-                                    {% if item.will_return %}
-                                    {% set _ = project_materials[mat_key].update({'will_return': True}) %}
-                                    {% endif %}
-
-                                    {% endfor %}
-                                    {% endfor %}
-
-                                    <div class="table-responsive">
-                                        <table class="table table-sm table-striped">
-                                            <thead class="table-dark">
-                                                <tr>
-                                                    <th>Material / Descripción</th>
-                                                    <th>Código</th>
-                                                    <th>Cant. Solicitada</th>
-                                                    <th>Cant. Entregada</th>
-                                                    <th>Pendiente</th>
-                                                    <th>Estado</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {% for code, data in project_materials.items() %}
-                                                <tr>
-                                                    <td>
-                                                        <strong>{{ data.name }}</strong>
-                                                    </td>
-                                                    <td><small class="text-muted">{{ code }}</small></td>
-                                                    <td>{{ data.total_requested }} {{ data.unit }}</td>
-                                                    <td>{{ data.total_delivered }} {{ data.unit }}</td>
-                                                    <td>
-                                                        {% set pending_qty = data.total_requested - data.total_delivered
-                                                        %}
-                                                        <strong>{{ pending_qty }} {{ data.unit }}</strong>
-                                                    </td>
-                                                    <td>
-                                                        {% if data.total_delivered == 0 %}
-                                                        <span class="badge bg-secondary">Sin entregar</span>
-                                                        {% elif data.total_delivered < data.total_requested %} <span
-                                                            class="badge bg-warning">Parcial</span>
-                                                            {% else %}
-                                                            <span class="badge bg-success">Completo</span>
-                                                            {% endif %}
-                                                    </td>
-                                                </tr>
-                                                {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    <!-- Botones de acción del proyecto -->
-                                    <div class="mt-3">
-                                        <button class="btn btn-sm btn-outline-primary"
-                                            onclick="exportProjectReport('{{ project.fp_code }}')">
-                                            <i class="fas fa-download me-1"></i>Exportar Reporte
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-success"
-                                            onclick="generateProjectSummary('{{ project.id }}')">
-                                            <i class="fas fa-chart-bar me-1"></i>Generar Resumen
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        {% else %}
-                        <div class="text-center py-5">
-                            <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
-                            <h5>No hay proyectos activos con pendientes</h5>
-                        </div>
-                        {% endfor %}
+                <div class="card-body" id="activeProjectsContent">
+                    <div class="text-center py-5 text-muted" id="activeProjectsLoading">
+                        <i class="fas fa-spinner fa-spin fa-2x mb-3 d-block"></i>
+                        <p>Cargando proyectos activos...</p>
                     </div>
                 </div>
             </div>
@@ -634,41 +416,10 @@
                 <div class="card-header">
                     <h5 class="mb-0"><i class="fas fa-folder me-2"></i>Todos los Proyectos</h5>
                 </div>
-                <div class="card-body">
-                    <div class="table-responsive">
-                        <table class="table table-hover table-bordered">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>FP</th>
-                                    <th>Proyecto</th>
-                                    <th>Cliente</th>
-                                    <th>Entrega</th>
-                                    <th>Producción</th>
-                                    <th>Montaje</th>
-                                    <th>Requisiciones</th>
-                                    <th>Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for project in all_projects %}
-                                <tr>
-                                    <td><strong>{{ project.fp_code }}</strong></td>
-                                    <td>{{ project.name }}</td>
-                                    <td>{{ project.client or '-' }}</td>
-                                    <td>{{ project.delivery_date.strftime('%d/%m/%Y') }}</td>
-                                    <td>{{ project.production_start.strftime('%d/%m/%Y') }}</td>
-                                    <td>{{ project.assembly_date.strftime('%d/%m/%Y') }}</td>
-                                    <td><span class="badge bg-info">{{ project.requests|length }}</span></td>
-                                    <td>
-                                        <button class="btn btn-sm btn-outline-primary"
-                                            onclick="exportProjectReport('{{ project.fp_code }}')">
-                                            <i class="fas fa-download"></i>
-                                        </button>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+                <div class="card-body" id="allProjectsContent">
+                    <div class="text-center py-5 text-muted" id="allProjectsLoading">
+                        <i class="fas fa-spinner fa-spin fa-2x mb-3 d-block"></i>
+                        <p>Cargando proyectos...</p>
                     </div>
                 </div>
             </div>
@@ -1135,6 +886,136 @@
                 alert('Error al generar resumen del proyecto');
             });
     }
+
+    // ===== CARGA LAZY DE TABS DE PROYECTOS =====
+    let activeProjectsLoaded = false;
+    let allProjectsLoaded = false;
+
+    const statusColors = {
+        'pendiente': 'warning', 'abastecido': 'info', 'pendiente_compra': 'secondary',
+        'en_entrega': 'primary', 'completada': 'success', 'cancelada': 'danger'
+    };
+
+    // Cargar Proyectos Activos al hacer clic en la pestaña
+    document.getElementById('projects-tab').addEventListener('shown.bs.tab', function () {
+        if (activeProjectsLoaded) return;
+        activeProjectsLoaded = true;
+        fetch('/api/projects/active-with-requests')
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('activeProjectsContent');
+                if (!data.success || !data.projects || data.projects.length === 0) {
+                    container.innerHTML = '<div class="text-center py-5"><i class="fas fa-check-circle fa-3x text-success mb-3"></i><h5>No hay proyectos activos con pendientes</h5></div>';
+                    return;
+                }
+                let html = '<div id="projectsAccordion" class="accordion">';
+                data.projects.forEach((p, idx) => {
+                    const s = p.stats;
+                    // Requisiciones rows
+                    let reqRows = p.requests.map(r => {
+                        const sc = statusColors[r.status] || 'secondary';
+                        return `<tr class="${r.is_incident ? 'table-warning' : ''}">
+                            <td><strong>${r.request_number}</strong>${r.is_incident ? '<br><span class="badge bg-danger badge-sm">INCIDENCIA</span>' : ''}<br><small class="text-muted">${r.username}</small></td>
+                            <td>${r.department}${r.area ? '<br><small class="text-muted">' + r.area + '</small>' : ''}</td>
+                            <td><span class="badge bg-${sc}">${r.status.replace('_', ' ')}</span></td>
+                            <td>${r.created_at}</td>
+                            <td>${r.acquisition_deadline ? '<span class="text-danger">' + r.acquisition_deadline + '</span>' : '-'}</td>
+                            <td><button class="btn btn-sm btn-outline-primary" onclick="viewRequest(${r.id})" data-bs-toggle="modal" data-bs-target="#requestDetailModal"><i class="fas fa-eye"></i></button></td>
+                        </tr>`;
+                    }).join('');
+
+                    // Materials rows
+                    let matRows = p.materials.map(m => {
+                        const pending = m.total_requested - m.total_delivered;
+                        const st = m.total_delivered === 0 ? '<span class="badge bg-secondary">Sin entregar</span>' :
+                                   m.total_delivered < m.total_requested ? '<span class="badge bg-warning">Parcial</span>' :
+                                   '<span class="badge bg-success">Completo</span>';
+                        return `<tr><td><strong>${m.name}</strong></td><td><small class="text-muted">${m.code}</small></td>
+                            <td>${m.total_requested} ${m.unit}</td><td>${m.total_delivered} ${m.unit}</td>
+                            <td><strong>${pending} ${m.unit}</strong></td><td>${st}</td></tr>`;
+                    }).join('');
+
+                    html += `
+                    <div class="accordion-item">
+                        <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseP${idx}">
+                            <div class="d-flex justify-content-between w-100 me-3">
+                                <div><strong>${p.fp_code}</strong> - ${p.client || 'Sin Cliente'} - ${p.name}<br><small class="text-muted">Entrega: ${p.delivery_date}</small></div>
+                                <div class="text-end"><span class="badge bg-warning text-dark">${p.requests.length} pendientes</span></div>
+                            </div>
+                        </button></h2>
+                        <div id="collapseP${idx}" class="accordion-collapse collapse" data-bs-parent="#projectsAccordion">
+                            <div class="accordion-body">
+                                <div class="row mb-3">
+                                    <div class="col-md-8">
+                                        <h6 class="text-primary">Información del Proyecto</h6>
+                                        <table class="table table-sm table-borderless">
+                                            <tr><td style="width:150px"><strong>FP:</strong></td><td>${p.fp_code}</td></tr>
+                                            <tr><td><strong>Proyecto:</strong></td><td>${p.name}</td></tr>
+                                            <tr><td><strong>Cliente:</strong></td><td>${p.client || '-'}</td></tr>
+                                            <tr><td><strong>Entrega:</strong></td><td>${p.delivery_date}</td></tr>
+                                        </table>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <h6 class="text-primary">Estadísticas</h6>
+                                        <div class="d-flex flex-column gap-1">
+                                            <span class="badge bg-warning text-dark d-flex justify-content-between"><span>Pendientes</span><span>${s.pending}</span></span>
+                                            <span class="badge bg-secondary d-flex justify-content-between"><span>Pend. Compra</span><span>${s.pending_buy}</span></span>
+                                            <span class="badge bg-info d-flex justify-content-between"><span>Abastecidas</span><span>${s.supplied}</span></span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <h6>Requisiciones Activas</h6>
+                                <div class="table-responsive"><table class="table table-sm table-bordered table-hover">
+                                    <thead class="table-light"><tr><th>No. Requisición</th><th>Depto / Área</th><th>Estado</th><th>Fecha Solicitud</th><th>Límite Adquisición</th><th>Acciones</th></tr></thead>
+                                    <tbody>${reqRows}</tbody>
+                                </table></div>
+                                <h6 class="mt-4">Consolidado de Materiales (Activos)</h6>
+                                <div class="table-responsive"><table class="table table-sm table-striped">
+                                    <thead class="table-dark"><tr><th>Material</th><th>Código</th><th>Cant. Solicitada</th><th>Cant. Entregada</th><th>Pendiente</th><th>Estado</th></tr></thead>
+                                    <tbody>${matRows}</tbody>
+                                </table></div>
+                                <div class="mt-3">
+                                    <button class="btn btn-sm btn-outline-primary" onclick="exportProjectReport('${p.fp_code}')"><i class="fas fa-download me-1"></i>Exportar Reporte</button>
+                                    <button class="btn btn-sm btn-outline-success" onclick="generateProjectSummary('${p.id}')"><i class="fas fa-chart-bar me-1"></i>Generar Resumen</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>`;
+                });
+                html += '</div>';
+                container.innerHTML = html;
+            })
+            .catch(err => {
+                document.getElementById('activeProjectsContent').innerHTML = '<div class="alert alert-danger">Error al cargar proyectos: ' + err.message + '</div>';
+            });
+    });
+
+    // Cargar Todos los Proyectos al hacer clic en la pestaña
+    document.getElementById('all-projects-tab').addEventListener('shown.bs.tab', function () {
+        if (allProjectsLoaded) return;
+        allProjectsLoaded = true;
+        fetch('/api/projects/all-list')
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('allProjectsContent');
+                if (!data.success || !data.projects || data.projects.length === 0) {
+                    container.innerHTML = '<div class="text-center py-5 text-muted"><h5>No hay proyectos registrados</h5></div>';
+                    return;
+                }
+                let rows = data.projects.map(p => `<tr>
+                    <td><strong>${p.fp_code}</strong></td><td>${p.name}</td><td>${p.client}</td>
+                    <td>${p.delivery_date}</td><td>${p.production_start}</td><td>${p.assembly_date}</td>
+                    <td><span class="badge bg-info">${p.req_count}</span></td>
+                    <td><button class="btn btn-sm btn-outline-primary" onclick="exportProjectReport('${p.fp_code}')"><i class="fas fa-download"></i></button></td>
+                </tr>`).join('');
+                container.innerHTML = `<div class="table-responsive"><table class="table table-hover table-bordered">
+                    <thead class="table-light"><tr><th>FP</th><th>Proyecto</th><th>Cliente</th><th>Entrega</th><th>Producción</th><th>Montaje</th><th>Requisiciones</th><th>Acciones</th></tr></thead>
+                    <tbody>${rows}</tbody></table></div>`;
+            })
+            .catch(err => {
+                document.getElementById('allProjectsContent').innerHTML = '<div class="alert alert-danger">Error al cargar proyectos: ' + err.message + '</div>';
+            });
+    });
 
     // Estilos para timeline
     const timelineStyles = `
