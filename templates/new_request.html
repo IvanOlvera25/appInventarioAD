@@ -345,10 +345,10 @@
               <label class="form-label">Unidad <span class="text-danger">*</span></label>
               <select class="form-select" id="newMaterialUnit" required>
                 <option value="">Seleccionar...</option>
-                {% for u in units %}
+                {% for u in remote_units %}
                 <option value="{{ u.unidad }}">{{ u.unidad }}{% if u.singular %} ({{ u.singular }}){% endif %}</option>
                 {% endfor %}
-                {% if not units %}
+                {% if not remote_units %}
                 <option value="pza">pza</option>
                 <option value="m">m</option>
                 <option value="kg">kg</option>
@@ -360,10 +360,10 @@
               <label class="form-label">Categoría</label>
               <select class="form-select" id="newMaterialCategory">
                 <option value="">Seleccionar...</option>
-                {% for c in categories %}
+                {% for c in remote_categories %}
                 <option value="{{ c.categoria }}">{{ c.categoria }}</option>
                 {% endfor %}
-                {% if not categories %}
+                {% if not remote_categories %}
                 <option value="General">General</option>
                 {% endif %}
               </select>

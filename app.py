@@ -2677,7 +2677,11 @@ def new_request():
             }), 500
 
     # GET request - mostrar formulario
-    return render_template('new_request.html')
+    remote_units = remote_db.get_unidades_habilitadas()
+    remote_categories = remote_db.get_categorias_habilitadas()
+    return render_template('new_request.html',
+                         remote_units=remote_units,
+                         remote_categories=remote_categories)
 
 # 2. NUEVA RUTA: Obtener departamentos únicos que han hecho requisiciones para un FP
 @app.route('/api/stock/departments-by-fp')
