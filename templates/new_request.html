@@ -125,6 +125,36 @@
             <textarea class="form-control" name="notes" rows="3" placeholder="Comentarios adicionales..."></textarea>
           </div>
 
+          <!-- ===== Incidencia ===== -->
+          <div class="card bg-light mb-4">
+            <div class="card-header">
+              <h6 class="mb-0"><i class="fas fa-exclamation-circle me-2"></i>Incidencia</h6>
+            </div>
+            <div class="card-body">
+              <div class="row g-3 align-items-center">
+                <div class="col-md-4">
+                  <label class="form-label fw-bold">¿Es requisición por incidencia?</label>
+                  <div class="form-check form-switch mt-1">
+                    <input class="form-check-input" type="checkbox" name="is_incident" id="isIncidentCheck"
+                           onchange="toggleIncidentId()">
+                    <label class="form-check-label" for="isIncidentCheck">Sí, es por incidencia</label>
+                  </div>
+                </div>
+                <div class="col-md-4" id="incidentIdContainer" style="display:none;">
+                  <label class="form-label fw-bold">ID de Incidencia <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" name="incident_id" id="incidentIdInput"
+                         placeholder="Ej: INC-2025-001">
+                </div>
+                <div class="col-md-4" id="incidentWarning" style="display:none;">
+                  <div class="alert alert-warning mb-0 py-2">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    <small>Esta requisición será marcada como <strong>incidencia</strong>.</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- ===== Materiales ===== -->
           <div class="card mb-4">
             <div class="card-header">
@@ -777,6 +807,18 @@
     if (container) {
       container.style.display = willReturn ? 'block' : 'none';
       if (!willReturn) document.getElementById('materialReturnDate').value = '';
+    }
+  }
+
+  function toggleIncidentId() {
+    const isIncident = document.getElementById('isIncidentCheck').checked;
+    const container = document.getElementById('incidentIdContainer');
+    const warning = document.getElementById('incidentWarning');
+    if (container) container.style.display = isIncident ? '' : 'none';
+    if (warning) warning.style.display = isIncident ? '' : 'none';
+    if (!isIncident) {
+      const input = document.getElementById('incidentIdInput');
+      if (input) input.value = '';
     }
   }
 

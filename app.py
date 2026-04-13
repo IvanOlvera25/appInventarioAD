@@ -2435,6 +2435,9 @@ def new_request():
                     print(f"⚠️ Advertencia: Fecha fin montaje inválida: {e}")
 
             # Crear objeto Request con nuevos campos
+            is_incident = request.form.get('is_incident') == 'on'
+            incident_id_val = request.form.get('incident_id', '').strip() if is_incident else None
+
             new_req = Request(
                 request_number=req_number,
                 project_id=project.id,
@@ -2443,8 +2446,8 @@ def new_request():
                 # Campos para compatibilidad con BD existente (NOT NULL constraints)
                 area=department,
                 request_type='interno',  # Valor por defecto ya que se eliminó del UI
-                is_incident=False,
-                incident_id=None,
+                is_incident=is_incident,
+                incident_id=incident_id_val or None,
                 # Nuevos campos
                 acquisition_deadline=acquisition_deadline,
                 production_start_date=production_start,
