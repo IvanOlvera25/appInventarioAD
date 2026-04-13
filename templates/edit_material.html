@@ -100,7 +100,7 @@
                         <!-- Ancho de Tela (condicional) -->
                         <div class="row" id="fabricWidthRow" style="display:none;">
                             <div class="col-md-6 mb-3">
-                                <label for="fabric_width" class="form-label">Ancho de Tela (cm)</label>
+                                <label for="fabric_width" class="form-label">Ancho de Tela (m)</label>
                                 <input type="number" class="form-control" id="fabric_width" name="fabric_width"
                                     value="{{ material.fabric_width or '' }}" step="0.1" min="0" placeholder="Ej: 150">
                             </div>
@@ -433,8 +433,25 @@
             option.value.toLowerCase().includes('tela') ||
             option.value.toLowerCase().includes('fabric');
         const fabricRow = document.getElementById('fabricWidthRow');
+        const unitSelect = document.getElementById('unit');
+
         if (fabricRow) {
             fabricRow.style.display = isFabric ? 'block' : 'none';
+        }
+
+        if (isFabric) {
+            // Auto-set unit to metros and lock
+            for (let i = 0; i < unitSelect.options.length; i++) {
+                const val = unitSelect.options[i].value.toLowerCase();
+                if (val === 'm' || val === 'metros' || val === 'metro') {
+                    unitSelect.selectedIndex = i;
+                    break;
+                }
+            }
+            unitSelect.disabled = true;
+            updateUnitSuffixes();
+        } else {
+            unitSelect.disabled = false;
         }
     }
 
@@ -544,6 +561,9 @@
             this.reportValidity();
             return;
         }
+
+        // Re-enable unit select before submit so the value is sent
+        document.getElementById('unit').disabled = false;
 
         const formData = new FormData(this);
 

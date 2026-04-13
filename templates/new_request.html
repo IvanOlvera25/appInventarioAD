@@ -346,13 +346,13 @@
               <select class="form-select" id="newMaterialUnit" required>
                 <option value="">Seleccionar...</option>
                 {% for u in remote_units %}
-                <option value="{{ u.unidad }}">{{ u.unidad }}{% if u.singular %} ({{ u.singular }}){% endif %}</option>
+                <option value="{{ u.unidad }}">{{ u.singular or u.unidad }}</option>
                 {% endfor %}
                 {% if not remote_units %}
-                <option value="pza">pza</option>
-                <option value="m">m</option>
-                <option value="kg">kg</option>
-                <option value="l">l</option>
+                <option value="pza">Pieza</option>
+                <option value="m">Metro</option>
+                <option value="kg">Kilogramo</option>
+                <option value="l">Litro</option>
                 {% endif %}
               </select>
             </div>

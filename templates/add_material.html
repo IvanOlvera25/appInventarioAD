@@ -33,8 +33,7 @@
                                 <option value="">Seleccionar...</option>
                                 {% for unit in remote_units %}
                                 <option value="{{ unit.name or unit.unidad or unit }}">
-                                    {{ unit.name or unit.unidad or unit }}
-                                    {% if unit.abbreviation %} ({{ unit.abbreviation }}){% endif %}
+                                    {{ unit.singular or unit.name or unit.unidad or unit }}
                                 </option>
                                 {% endfor %}
                             </select>
@@ -94,7 +93,7 @@
                         <div class="card-body">
                             <div class="row">
                                 <div class="col-md-6">
-                                    <label class="form-label">Ancho de Tela (cm)</label>
+                                    <label class="form-label">Ancho de Tela (m)</label>
                                     <input type="number" class="form-control" name="fabric_width" step="0.1" min="0"
                                         placeholder="Ej: 150">
                                 </div>
@@ -280,8 +279,23 @@
             option.value.toLowerCase().includes('tela') ||
             option.value.toLowerCase().includes('fabric');
         const fabricOptions = document.getElementById('fabricOptions');
+        const unitSelect = document.getElementById('unitSelect');
 
         fabricOptions.style.display = isFabric ? 'block' : 'none';
+
+        if (isFabric) {
+            // Auto-set unit to metros and lock
+            for (let i = 0; i < unitSelect.options.length; i++) {
+                const val = unitSelect.options[i].value.toLowerCase();
+                if (val === 'm' || val === 'metros' || val === 'metro') {
+                    unitSelect.selectedIndex = i;
+                    break;
+                }
+            }
+            unitSelect.disabled = true;
+        } else {
+            unitSelect.disabled = false;
+        }
     }
 
     // Manejar opciones de reciclaje mutuamente exclusivas
@@ -312,6 +326,9 @@
             alert('Por favor complete los campos obligatorios (nombre, unidad, categoría)');
             return;
         }
+
+        // Re-enable unit select before submit so the value is sent
+        document.getElementById('unitSelect').disabled = false;
 
         // Si es reciclado, verificar que tenga material origen
         const isRecycled = document.getElementById('is_recycled').checked;
