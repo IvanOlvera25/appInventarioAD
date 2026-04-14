@@ -261,7 +261,8 @@
                                                 onclick="toggleSelectAll()"></th>
                                         <th>No. Requisición</th>
                                         <th>Solicitante</th>
-                                        <th>Proyecto / Cliente</th>
+                                        <th>Cliente</th>
+                                        <th>Proyecto</th>
                                         <th>Depto.</th>
                                         <th>Estado</th>
                                         <th>Incidencia</th>
@@ -286,12 +287,15 @@
                                             <strong>{{ req.user.username }}</strong>
                                         </td>
                                         <td>
+                                            {% if req.project.client %}
+                                            <strong><i class="fas fa-building me-1 text-info"></i>{{ req.project.client }}</strong>
+                                            {% else %}
+                                            <span class="text-muted fst-italic">No especificado</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
                                             <strong>{{ req.project.name }}</strong><br>
                                             <small class="text-muted">{{ req.project.fp_code }}</small>
-                                            {% if req.project.client %}
-                                            <br><small class="text-info"><i class="fas fa-building me-1"></i>{{
-                                                req.project.client }}</small>
-                                            {% endif %}
                                         </td>
                                         <td>
                                             {% set dept_colors = {
