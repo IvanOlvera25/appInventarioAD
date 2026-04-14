@@ -2231,7 +2231,7 @@ def search_fp():
                 'id': project.id,
                 'fp_code': project.fp_code,
                 'nombre': project.name,
-                'cliente': 'Cliente Local',
+                'cliente': project.client or 'Sin cliente',
                 'source': 'local'
             })
 
@@ -2282,6 +2282,7 @@ def search_fp():
                     new_project = Project(
                         fp_code=fp_value,
                         name=project_name,
+                        client=client_name,
                         delivery_date=today + timedelta(days=365),
                         production_start=today,
                         assembly_date=today + timedelta(days=300),
@@ -2298,6 +2299,16 @@ def search_fp():
             else:
                 project_id = existing_project.id
                 project_name = existing_project.name
+                
+                # Actualizar el cliente si no lo tenía internamente
+                if existing_project.client is None or existing_project.client.strip() == '':
+                    try:
+                        existing_project.client = client_name
+                        db.session.commit()
+                        app.logger.debug(f"search_fp: Cliente actualizado localmente para el FP {fp_value}")
+                    except Exception as e:
+                        db.session.rollback()
+                        app.logger.error("search_fp: Error actualizando cliente de proyecto: %s", str(e))
                 app.logger.debug("search_fp: Proyecto ya existía con ID %d", project_id)
 
             final_results.append({
