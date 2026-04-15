@@ -29,14 +29,22 @@
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Unidad de Medida <span class="text-danger">*</span></label>
-                            <select class="form-select" name="unit" id="unitSelect" required>
-                                <option value="">Seleccionar...</option>
-                                {% for unit in remote_units %}
-                                <option value="{{ unit.name or unit.unidad or unit }}">
-                                    {{ unit.singular or unit.name or unit.unidad or unit }}
-                                </option>
-                                {% endfor %}
-                            </select>
+                            <div class="position-relative">
+                                <select class="form-select" name="unit" id="unitSelect" required>
+                                    <option value="">Seleccionar...</option>
+                                    {% for unit in remote_units %}
+                                    <option value="{{ unit.name or unit.unidad or unit }}"
+                                            data-singular="{{ unit.singular or unit.name or unit.unidad or unit }}">
+                                        {{ unit.singular or unit.name or unit.unidad or unit }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                                <div id="unitLockedBadge" style="display:none;" class="mt-1">
+                                    <span class="badge bg-info text-dark">
+                                        <i class="fas fa-lock me-1"></i>Fijo para categoría Telas
+                                    </span>
+                                </div>
+                            </div>
                         </div>
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Categoría <span class="text-danger">*</span></label>
@@ -271,30 +279,71 @@
         }
     });
 
+    // Palabras clave para detectar categoría de telas
+    const FABRIC_KEYWORDS = ['tela', 'telas', 'fabric', 'fabrics', 'textil', 'textiles'];
+    // Palabras clave para encontrar la opción "metros" en el select de unidades
+    const METER_KEYWORDS  = ['metros', 'metro', 'mts', 'mtr', ' m '];
+
+    function isFabricCategory(value) {
+        const v = (value || '').toLowerCase().trim();
+        return FABRIC_KEYWORDS.some(k => v.includes(k));
+    }
+
+    function selectUnitMetros(unitSelect) {
+        // Prioridad 1: valor exacto
+        for (let i = 0; i < unitSelect.options.length; i++) {
+            const v = (unitSelect.options[i].value || '').toLowerCase().trim();
+            if (v === 'm' || v === 'metro' || v === 'metros') {
+                unitSelect.selectedIndex = i;
+                return true;
+            }
+        }
+        // Prioridad 2: contiene alguna palabra clave
+        for (let i = 0; i < unitSelect.options.length; i++) {
+            const v = (unitSelect.options[i].value || '').toLowerCase();
+            if (METER_KEYWORDS.some(k => v.includes(k))) {
+                unitSelect.selectedIndex = i;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function lockUnitForFabric(unitSelect) {
+        const found = selectUnitMetros(unitSelect);
+        // Bloquear visualmente (pointer-events + estilo, pero NO disabled para que el valor se envíe)
+        unitSelect.style.pointerEvents = 'none';
+        unitSelect.style.backgroundColor = '#e9ecef';
+        unitSelect.style.opacity = '0.9';
+        unitSelect.setAttribute('tabindex', '-1');
+        document.getElementById('unitLockedBadge').style.display = 'block';
+        if (!found) {
+            console.warn('No se encontró una opción de "metros" en el select de unidades.');
+        }
+    }
+
+    function unlockUnit(unitSelect) {
+        unitSelect.style.pointerEvents = '';
+        unitSelect.style.backgroundColor = '';
+        unitSelect.style.opacity = '';
+        unitSelect.removeAttribute('tabindex');
+        document.getElementById('unitLockedBadge').style.display = 'none';
+    }
+
     // Cambiar opciones según categoría (mostrar opciones de tela)
     function onCategoryChange() {
-        const select = document.getElementById('categorySelect');
-        const option = select.options[select.selectedIndex];
-        const isFabric = option.dataset.isFabric === 'true' ||
-            option.value.toLowerCase().includes('tela') ||
-            option.value.toLowerCase().includes('fabric');
+        const select   = document.getElementById('categorySelect');
+        const option   = select.options[select.selectedIndex];
+        const isFabric = option.dataset.isFabric === 'true' || isFabricCategory(option.value);
         const fabricOptions = document.getElementById('fabricOptions');
-        const unitSelect = document.getElementById('unitSelect');
+        const unitSelect    = document.getElementById('unitSelect');
 
         fabricOptions.style.display = isFabric ? 'block' : 'none';
 
         if (isFabric) {
-            // Auto-set unit to metros and lock
-            for (let i = 0; i < unitSelect.options.length; i++) {
-                const val = unitSelect.options[i].value.toLowerCase();
-                if (val === 'm' || val === 'metros' || val === 'metro') {
-                    unitSelect.selectedIndex = i;
-                    break;
-                }
-            }
-            unitSelect.disabled = true;
+            lockUnitForFabric(unitSelect);
         } else {
-            unitSelect.disabled = false;
+            unlockUnit(unitSelect);
         }
     }
 
@@ -317,8 +366,9 @@
 
     // Validación del formulario
     document.getElementById('materialForm').addEventListener('submit', function (e) {
-        const name = document.querySelector('input[name="name"]').value.trim();
-        const unit = document.querySelector('select[name="unit"]').value;
+        const name     = document.querySelector('input[name="name"]').value.trim();
+        const unitSel  = document.getElementById('unitSelect');
+        const unit     = unitSel.value;
         const category = document.querySelector('select[name="category"]').value;
 
         if (!name || !unit || !category) {
@@ -327,11 +377,8 @@
             return;
         }
 
-        // Re-enable unit select before submit so the value is sent
-        document.getElementById('unitSelect').disabled = false;
-
         // Si es reciclado, verificar que tenga material origen
-        const isRecycled = document.getElementById('is_recycled').checked;
+        const isRecycled  = document.getElementById('is_recycled').checked;
         const recycledFrom = document.getElementById('recycled_from_id').value;
 
         if (isRecycled && !recycledFrom) {
@@ -339,6 +386,7 @@
             alert('Debe seleccionar el material de origen para materiales reciclados');
             return;
         }
+        // El select de unidad NO está disabled (usamos pointer-events), así que el valor se envía normalmente
     });
 </script>
 {% endblock %}

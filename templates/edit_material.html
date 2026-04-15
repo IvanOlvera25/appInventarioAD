@@ -73,27 +73,34 @@
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label for="unit" class="form-label">Unidad <span class="text-danger">*</span></label>
-                                <select class="form-select" id="unit" name="unit" required
-                                    onchange="updateUnitSuffixes()">
-                                    <option value="">Seleccionar unidad...</option>
-                                    {% for unit in remote_units %}
-                                    <option value="{{ unit.symbol }}" {% if unit.symbol==material.unit %}selected{%
-                                        endif %}>{{ unit.singular }} ({{ unit.symbol }})</option>
-                                    {% endfor %}
-                                    <!-- Unidades locales si no hay remotas -->
-                                    {% if not remote_units %}
-                                    <option value="kg" {% if material.unit=='kg' %}selected{% endif %}>Kilogramos (kg)
-                                    </option>
-                                    <option value="m" {% if material.unit=='m' or material.unit=='metros' %}selected{%
-                                        endif %}>Metros (m)</option>
-                                    <option value="L" {% if material.unit=='L' or material.unit=='litros' %}selected{%
-                                        endif %}>Litros (L)</option>
-                                    <option value="pza" {% if material.unit=='pza' or material.unit=='piezas'
-                                        %}selected{% endif %}>Pieza (pza)</option>
-                                    <option value="m²" {% if material.unit=='m²' or material.unit=='metros²'
-                                        %}selected{% endif %}>Metros cuadrados (m²)</option>
-                                    {% endif %}
-                                </select>
+                                <div class="position-relative">
+                                    <select class="form-select" id="unit" name="unit" required
+                                        onchange="updateUnitSuffixes()">
+                                        <option value="">Seleccionar unidad...</option>
+                                        {% for unit in remote_units %}
+                                        <option value="{{ unit.symbol }}" {% if unit.symbol==material.unit %}selected{%
+                                            endif %}>{{ unit.singular }} ({{ unit.symbol }})</option>
+                                        {% endfor %}
+                                        <!-- Unidades locales si no hay remotas -->
+                                        {% if not remote_units %}
+                                        <option value="kg" {% if material.unit=='kg' %}selected{% endif %}>Kilogramos (kg)
+                                        </option>
+                                        <option value="m" {% if material.unit=='m' or material.unit=='metros' %}selected{%
+                                            endif %}>Metros (m)</option>
+                                        <option value="L" {% if material.unit=='L' or material.unit=='litros' %}selected{%
+                                            endif %}>Litros (L)</option>
+                                        <option value="pza" {% if material.unit=='pza' or material.unit=='piezas'
+                                            %}selected{% endif %}>Pieza (pza)</option>
+                                        <option value="m²" {% if material.unit=='m²' or material.unit=='metros²'
+                                            %}selected{% endif %}>Metros cuadrados (m²)</option>
+                                        {% endif %}
+                                    </select>
+                                    <div id="unitLockedBadge" style="display:none;" class="mt-1">
+                                        <span class="badge bg-info text-dark">
+                                            <i class="fas fa-lock me-1"></i>Fijo para categoría Telas
+                                        </span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -425,33 +432,69 @@
         });
     }
 
+    // Palabras clave para detectar categoría de telas y para encontrar metros
+    const FABRIC_KEYWORDS = ['tela', 'telas', 'fabric', 'fabrics', 'textil', 'textiles'];
+    const METER_KEYWORDS  = ['metros', 'metro', 'mts', 'mtr'];
+
+    function isFabricCategory(value) {
+        const v = (value || '').toLowerCase().trim();
+        return FABRIC_KEYWORDS.some(k => v.includes(k));
+    }
+
+    function selectUnitMetros(unitSel) {
+        // Prioridad 1: valor exacto
+        for (let i = 0; i < unitSel.options.length; i++) {
+            const v = (unitSel.options[i].value || '').toLowerCase().trim();
+            if (v === 'm' || v === 'metro' || v === 'metros') {
+                unitSel.selectedIndex = i;
+                return;
+            }
+        }
+        // Prioridad 2: contiene palabra clave o texto del label
+        for (let i = 0; i < unitSel.options.length; i++) {
+            const v = (unitSel.options[i].value || '').toLowerCase();
+            const t = (unitSel.options[i].textContent || '').toLowerCase();
+            if (METER_KEYWORDS.some(k => v.includes(k) || t.includes(k))) {
+                unitSel.selectedIndex = i;
+                return;
+            }
+        }
+    }
+
+    function lockUnitForFabric(unitSel) {
+        selectUnitMetros(unitSel);
+        unitSel.style.pointerEvents = 'none';
+        unitSel.style.backgroundColor = '#e9ecef';
+        unitSel.style.opacity = '0.9';
+        unitSel.setAttribute('tabindex', '-1');
+        const badge = document.getElementById('unitLockedBadge');
+        if (badge) badge.style.display = 'block';
+    }
+
+    function unlockUnit(unitSel) {
+        unitSel.style.pointerEvents = '';
+        unitSel.style.backgroundColor = '';
+        unitSel.style.opacity = '';
+        unitSel.removeAttribute('tabindex');
+        const badge = document.getElementById('unitLockedBadge');
+        if (badge) badge.style.display = 'none';
+    }
+
     // ---- Cambiar opciones según categoría ----
     function onCategoryChange() {
-        const select = document.getElementById('category');
-        const option = select.options[select.selectedIndex];
-        const isFabric = option.dataset.isFabric === 'true' ||
-            option.value.toLowerCase().includes('tela') ||
-            option.value.toLowerCase().includes('fabric');
+        const select    = document.getElementById('category');
+        const option    = select.options[select.selectedIndex];
+        const isFabric  = option.dataset.isFabric === 'true' || isFabricCategory(option.value);
         const fabricRow = document.getElementById('fabricWidthRow');
-        const unitSelect = document.getElementById('unit');
+        const unitSel   = document.getElementById('unit');
 
-        if (fabricRow) {
-            fabricRow.style.display = isFabric ? 'block' : 'none';
-        }
+        if (fabricRow) fabricRow.style.display = isFabric ? 'block' : 'none';
 
         if (isFabric) {
-            // Auto-set unit to metros and lock
-            for (let i = 0; i < unitSelect.options.length; i++) {
-                const val = unitSelect.options[i].value.toLowerCase();
-                if (val === 'm' || val === 'metros' || val === 'metro') {
-                    unitSelect.selectedIndex = i;
-                    break;
-                }
-            }
-            unitSelect.disabled = true;
+            lockUnitForFabric(unitSel);
             updateUnitSuffixes();
         } else {
-            unitSelect.disabled = false;
+            unlockUnit(unitSel);
         }
     }
 
@@ -562,8 +605,7 @@
             return;
         }
 
-        // Re-enable unit select before submit so the value is sent
-        document.getElementById('unit').disabled = false;
+        // El select de unidad usa pointer-events (no disabled), el valor se envía automáticamente
 
         const formData = new FormData(this);
 
