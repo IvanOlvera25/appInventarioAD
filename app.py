@@ -1727,14 +1727,23 @@ def dashboard():
     # Paginación de alertas del sistema
     alerts_page = request.args.get('alerts_page', 1, type=int)
 
-    # Consultar alertas del sistema: las globales (target_user_id IS NULL) y las del usuario actual
+    # Tipos de alerta que pertenecen solo al contexto de stock/almacén (no relevantes para requisitadores)
+    STOCK_ALERT_TYPES = ['stock_bajo', 'sin_movimiento', 'stock_critico', 'material_nuevo']
+
     try:
-        system_alerts_query = SystemAlert.query.filter(
-            db.or_(
-                SystemAlert.target_user_id.is_(None),
+        # Requisitadores: solo ven alertas dirigidas a ellos (estado de sus propias requisiciones)
+        if current_user.role == 'requisitador':
+            system_alerts_query = SystemAlert.query.filter(
                 SystemAlert.target_user_id == current_user.id
-            )
-        ).order_by(SystemAlert.created_at.desc())
+            ).order_by(SystemAlert.created_at.desc())
+        else:
+            # Admin y almacenistas: ven todo (globales + las suyas)
+            system_alerts_query = SystemAlert.query.filter(
+                db.or_(
+                    SystemAlert.target_user_id.is_(None),
+                    SystemAlert.target_user_id == current_user.id
+                )
+            ).order_by(SystemAlert.created_at.desc())
 
         system_alerts_paginated = system_alerts_query.paginate(
             page=alerts_page, per_page=100, error_out=False
@@ -1742,12 +1751,17 @@ def dashboard():
     except Exception:
         # Si la tabla no existe, crearla y reintentar
         db.create_all()
-        system_alerts_query = SystemAlert.query.filter(
-            db.or_(
-                SystemAlert.target_user_id.is_(None),
+        if current_user.role == 'requisitador':
+            system_alerts_query = SystemAlert.query.filter(
                 SystemAlert.target_user_id == current_user.id
-            )
-        ).order_by(SystemAlert.created_at.desc())
+            ).order_by(SystemAlert.created_at.desc())
+        else:
+            system_alerts_query = SystemAlert.query.filter(
+                db.or_(
+                    SystemAlert.target_user_id.is_(None),
+                    SystemAlert.target_user_id == current_user.id
+                )
+            ).order_by(SystemAlert.created_at.desc())
 
         system_alerts_paginated = system_alerts_query.paginate(
             page=alerts_page, per_page=100, error_out=False

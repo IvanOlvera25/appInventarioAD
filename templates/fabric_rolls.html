@@ -264,7 +264,8 @@
 
                 <hr>
 
-                <!-- Valor total -->
+                {% if current_user.role == 'admin' %}
+                <!-- Valor total (solo admin) -->
                 <div class="d-flex justify-content-between">
                     <span><i class="fas fa-dollar-sign me-1 text-success"></i>Valor Total:</span>
                     {% set total_value = namespace(value=0) %}
@@ -275,6 +276,7 @@
                     {% endfor %}
                     <strong class="text-success">${{ "%.2f"|format(total_value.value) }}</strong>
                 </div>
+                {% endif %}
             </div>
         </div>
 
