@@ -7149,43 +7149,61 @@ def api_delete_fabric_roll(roll_id):
 @app.route('/api/fabric-rolls/production-info')
 @login_required
 def api_fabric_roll_production_info():
-    fp_code = request.args.get('fp_code')
+    fp_code    = request.args.get('fp_code')
     material_id = request.args.get('material_id', type=int)
 
     if not fp_code or not material_id:
         return jsonify({'success': False, 'message': 'Se requiere fp_code y material_id'}), 400
 
-    from sqlalchemy import func
-
-    # Find the project
+    # Buscar el proyecto
     project = Project.query.filter_by(fp_code=fp_code).first()
     if not project:
-        return jsonify({'success': False, 'message': 'Proyecto no encontrado', 'areas': []}), 404
+        return jsonify({'success': False, 'message': 'Proyecto no encontrado'}), 404
 
-    # Find pending requests for this project and material
+    # ¿Existe ALGUNA requisición de este material para este proyecto?
+    any_req = RequestItem.query.join(Request).filter(
+        Request.project_id == project.id,
+        RequestItem.material_id == material_id
+    ).first()
+
+    if not any_req:
+        # No hay ninguna requisición de este material en este FP
+        return jsonify({
+            'success': True,
+            'project_name': project.name,
+            'client': project.client,
+            'has_requisition': False,   # ← clave para el frontend
+            'total_pending': 0,
+            'areas': []
+        })
+
+    # Buscar ítems pendientes de entrega (abastecidos pero no entregados)
     pending_items = RequestItem.query.join(Request).filter(
         Request.project_id == project.id,
         RequestItem.material_id == material_id,
-        RequestItem.item_status.in_(['pendiente', 'pendiente_compra'])
+        RequestItem.item_status.in_(['abastecido', 'pendiente', 'pendiente_compra'])
     ).all()
 
     areas_with_pending = {}
     total_pending = 0
 
     for item in pending_items:
+        # Cantidad pendiente de entrega física = solicitado - entregado
         qty = max((item.quantity_requested or 0) - (item.quantity_delivered or 0), 0)
         if qty > 0:
             area = item.request.area or item.request.department or 'Sin Área'
             areas_with_pending[area] = areas_with_pending.get(area, 0) + qty
             total_pending += qty
 
-    areas_list = [{'area': area, 'pending': pending} for area, pending in areas_with_pending.items()]
+    areas_list = [{'area': area, 'pending': round(pending, 4)}
+                  for area, pending in areas_with_pending.items()]
 
     return jsonify({
         'success': True,
         'project_name': project.name,
         'client': project.client,
-        'total_pending': total_pending,
+        'has_requisition': True,
+        'total_pending': round(total_pending, 4),
         'areas': areas_list
     })
 

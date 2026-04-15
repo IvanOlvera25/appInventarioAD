@@ -439,13 +439,23 @@
                         <div class="mb-3">
                             <label class="form-label">FP</label>
                             <div class="input-group">
-                                <input type="text" class="form-control" id="cutFpCode" name="fp_code" placeholder="Ej: FP-2025-001">
-                                <button class="btn btn-outline-secondary" type="button" onclick="searchFpInfo()">Buscar</button>
+                                <input type="text" class="form-control" id="cutFpCode" name="fp_code"
+                                    placeholder="Ej: FP-2025-001"
+                                    oninput="resetFpSearch()">
+                                <button class="btn btn-outline-secondary" type="button"
+                                    onclick="searchFpInfo()">Buscar</button>
                             </div>
                             <div id="fpProjectInfo" class="form-text mt-1 text-primary"></div>
                         </div>
-                        
-                        <div class="mb-3">
+
+                        <!-- Aviso: sin requisición para este material en este FP -->
+                        <div id="noRequisitionAlert" class="alert alert-warning py-2 small" style="display:none;">
+                            <i class="fas fa-exclamation-triangle me-1"></i>
+                            <strong>No se ha requisitado este material para este proyecto.</strong><br>
+                            <span class="text-muted">El límite de corte será la longitud actual del rollo.</span>
+                        </div>
+
+                        <div class="mb-3" id="areaContainer">
                             <label class="form-label">Área</label>
                             <select class="form-select" id="cutArea" name="area">
                                 <option value="">Seleccione un FP primero...</option>
@@ -551,6 +561,8 @@
         document.getElementById('fpProjectInfo').innerHTML = '';
         document.getElementById('cutArea').innerHTML = '<option value="">Seleccione un FP primero...</option>';
         document.getElementById('productionPendingLimit').innerHTML = '';
+        document.getElementById('noRequisitionAlert').style.display = 'none';
+        _fpPendingTotal = 0;   // reset
         handleCutReasonChange();
     }
 
@@ -701,87 +713,154 @@
         alert('Funcionalidad de corte masivo en desarrollo');
     }
 
+    // Variable interna: total pendiente del FP buscado
+    let _fpPendingTotal = 0;
+    let _fpHasRequisition = true;
+
+    function resetFpSearch() {
+        // Limpiar resultado anterior al tipear nuevo FP
+        _fpPendingTotal = 0;
+        _fpHasRequisition = true;
+        document.getElementById('fpProjectInfo').innerHTML = '';
+        document.getElementById('noRequisitionAlert').style.display = 'none';
+        document.getElementById('cutArea').innerHTML = '<option value="">Seleccione un FP primero...</option>';
+        document.getElementById('productionPendingLimit').innerHTML = '';
+        applyMaxLimit();
+    }
+
+    /** Aplica el límite correcto al input de corte según razón y datos del FP */
+    function applyMaxLimit() {
+        const reason = document.getElementById('cutReason').value;
+        let limit = currentRollRemainingLength;
+
+        if (reason === 'produccion' && _fpPendingTotal > 0) {
+            limit = Math.min(_fpPendingTotal, currentRollRemainingLength);
+        }
+
+        document.getElementById('maxLength').textContent = limit.toFixed(2);
+        document.getElementById('cutLength').max = limit;
+
+        // Limpiar invalidez si ahora cabe
+        const cutInput = document.getElementById('cutLength');
+        if (parseFloat(cutInput.value || 0) <= limit) {
+            cutInput.setCustomValidity('');
+            cutInput.classList.remove('is-invalid');
+        }
+    }
+
     // Lógica dinámica para modal de corte
     function handleCutReasonChange() {
-        const reason = document.getElementById('cutReason').value;
+        const reason    = document.getElementById('cutReason').value;
         const prodFields = document.getElementById('productionFields');
-        const cutLengthInput = document.getElementById('cutLength');
-        
+
         if (reason === 'produccion') {
             prodFields.style.display = 'block';
             document.getElementById('cutFpCode').required = true;
-            document.getElementById('cutArea').required = true;
+            document.getElementById('cutArea').required = false; // Área ya no es obligatoria
         } else {
             prodFields.style.display = 'none';
             document.getElementById('cutFpCode').required = false;
             document.getElementById('cutArea').required = false;
-            
-            // Reset to roll limit
-            document.getElementById('maxLength').textContent = currentRollRemainingLength;
-            cutLengthInput.max = currentRollRemainingLength;
+
+            // Para cualquier otra razón el límite es la longitud del rollo
+            _fpPendingTotal = 0;
             document.getElementById('productionPendingLimit').innerHTML = '';
         }
+        applyMaxLimit();
     }
     
     async function searchFpInfo() {
-        const fpCode = document.getElementById('cutFpCode').value.trim();
+        const fpCode    = document.getElementById('cutFpCode').value.trim();
         const materialId = document.getElementById('cutMaterialId').value;
-        const infoDiv = document.getElementById('fpProjectInfo');
+        const infoDiv   = document.getElementById('fpProjectInfo');
         const areaSelect = document.getElementById('cutArea');
-        const limitDiv = document.getElementById('productionPendingLimit');
-        
+        const limitDiv  = document.getElementById('productionPendingLimit');
+        const noReqAlert = document.getElementById('noRequisitionAlert');
+
         if (!fpCode) return;
-        
+
         infoDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando...';
-        
+        noReqAlert.style.display = 'none';
+
         try {
             const res = await fetch(`/api/fabric-rolls/production-info?fp_code=${encodeURIComponent(fpCode)}&material_id=${materialId || ''}`);
             const data = await res.json();
-            
-            if (data.success) {
-                // Set project info
-                infoDiv.innerHTML = `<strong>${data.project_name}</strong>` + (data.client ? ` · Cliente: ${data.client}` : '');
-                
-                // Clear and populate areas
-                areaSelect.innerHTML = '';
-                
-                if (data.areas && data.areas.length > 0) {
-                    areaSelect.innerHTML = '<option value="">Seleccionar área...</option>';
-                    data.areas.forEach(a => {
-                        const opt = document.createElement('option');
-                        opt.value = a.area;
-                        opt.text = `${a.area} (Pendiente: ${a.pending}m)`;
-                        opt.dataset.pending = a.pending;
-                        areaSelect.appendChild(opt);
-                    });
-                } else {
-                    areaSelect.innerHTML = '<option value="">Sin material pendiente de entregar</option>';
-                    limitDiv.innerHTML = '⚠️ No hay material pendiente registrado para entrega.';
-                }
-            } else {
+
+            if (!data.success) {
                 infoDiv.innerHTML = `<span class="text-danger">${data.message}</span>`;
                 areaSelect.innerHTML = '<option value="">Seleccione un FP válido...</option>';
+                _fpPendingTotal = 0;
+                _fpHasRequisition = true;
+                applyMaxLimit();
+                return;
             }
+
+            // Mostrar nombre del proyecto
+            infoDiv.innerHTML = `<strong>${data.project_name}</strong>` +
+                (data.client ? ` · Cliente: ${data.client}` : '');
+
+            // ¿Existe alguna requisición de este material?
+            if (!data.has_requisition) {
+                noReqAlert.style.display = 'block';
+                areaSelect.innerHTML = '<option value="">Sin requisiciones</option>';
+                limitDiv.innerHTML = '';
+                _fpPendingTotal = 0;
+                _fpHasRequisition = false;
+                applyMaxLimit();
+                return;
+            }
+
+            _fpHasRequisition = true;
+            _fpPendingTotal   = data.total_pending || 0;
+
+            // Poblar select de áreas
+            areaSelect.innerHTML = '';
+            if (data.areas && data.areas.length > 0) {
+                areaSelect.innerHTML = '<option value="">Seleccionar área (opcional)...</option>';
+                data.areas.forEach(a => {
+                    const opt = document.createElement('option');
+                    opt.value = a.area;
+                    opt.text  = `${a.area} (Pendiente: ${a.pending}m)`;
+                    opt.dataset.pending = a.pending;
+                    areaSelect.appendChild(opt);
+                });
+
+                // Mostrar límite global aún si no seleccionan área
+                const globalLimit = Math.min(_fpPendingTotal, currentRollRemainingLength);
+                limitDiv.innerHTML = `Total pendiente: <strong>${_fpPendingTotal}m</strong>.
+                    Límite de corte ajustado a <strong>${globalLimit.toFixed(2)}m</strong>.`;
+            } else {
+                areaSelect.innerHTML = '<option value="">Todo el material ya fue entregado</option>';
+                limitDiv.innerHTML = '<span class="text-muted">No hay material pendiente de entrega en este proyecto.</span>';
+                _fpPendingTotal = 0;
+            }
+
+            applyMaxLimit();
+
         } catch (err) {
             infoDiv.innerHTML = `<span class="text-danger">Error de red</span>`;
         }
     }
     
-    document.getElementById('cutArea').addEventListener('change', function() {
+    // Al seleccionar un área: ajustar límite al pendiente de esa área específica
+    document.getElementById('cutArea').addEventListener('change', function () {
         if (this.selectedIndex > 0) {
             const opt = this.options[this.selectedIndex];
-            const pendingQty = parseFloat(opt.dataset.pending || 0);
-            
-            let finalMax = currentRollRemainingLength;
-            if (pendingQty > 0) {
-                finalMax = Math.min(pendingQty, currentRollRemainingLength);
-                document.getElementById('productionPendingLimit').innerHTML = `Se detectó <strong>${pendingQty}m pendientes</strong>. El límite de corte se ajustó a ${finalMax.toFixed(2)}m.`;
+            const areaPending = parseFloat(opt.dataset.pending || 0);
+            if (areaPending > 0) {
+                // Para esta área específica: min(area_pending, rol_remaining)
+                const areaLimit = Math.min(areaPending, currentRollRemainingLength);
+                document.getElementById('productionPendingLimit').innerHTML =
+                    `Área: <strong>${areaPending}m pendientes</strong> → Límite ajustado a <strong>${areaLimit.toFixed(2)}m</strong>.`;
+                document.getElementById('maxLength').textContent = areaLimit.toFixed(2);
+                document.getElementById('cutLength').max = areaLimit;
             } else {
-                document.getElementById('productionPendingLimit').innerHTML = '';
+                // Sin pendiente en esta área, volver al total del FP
+                applyMaxLimit();
             }
-            
-            document.getElementById('maxLength').textContent = finalMax.toFixed(2);
-            document.getElementById('cutLength').max = finalMax;
+        } else {
+            // Volver al total del FP
+            applyMaxLimit();
         }
     });
 
