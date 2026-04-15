@@ -1,0 +1,223 @@
+<!-- templates/audit_log.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Historial de Cambios{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card bg-dark text-white">
+      <div class="card-body py-3">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <h4 class="mb-1"><i class="fas fa-history me-2"></i>Historial de Cambios (Audit Log)</h4>
+            <small class="opacity-75">Registro inmutable de todas las modificaciones al sistema.</small>
+          </div>
+          <span class="badge bg-danger fs-6">Solo Administradores</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Filtros -->
+<div class="card mb-4">
+  <div class="card-header d-flex align-items-center">
+    <i class="fas fa-filter me-2"></i><h6 class="mb-0">Filtros</h6>
+  </div>
+  <div class="card-body">
+    <form method="GET" class="row g-2 align-items-end">
+      <div class="col-md-2">
+        <label class="form-label small">Tabla</label>
+        <select name="table" class="form-select form-select-sm">
+          <option value="">Todas</option>
+          {% for key, label in table_labels.items() %}
+          <option value="{{ key }}" {% if filter_table == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">Acción</label>
+        <select name="action" class="form-select form-select-sm">
+          <option value="">Todas</option>
+          <option value="CREATE" {% if filter_action == 'CREATE' %}selected{% endif %}>CREATE</option>
+          <option value="UPDATE" {% if filter_action == 'UPDATE' %}selected{% endif %}>UPDATE</option>
+          <option value="DELETE" {% if filter_action == 'DELETE' %}selected{% endif %}>DELETE</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">Usuario</label>
+        <select name="user" class="form-select form-select-sm">
+          <option value="">Todos</option>
+          {% for u in users %}
+          <option value="{{ u.id }}" {% if filter_user == u.id %}selected{% endif %}>{{ u.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small">ID Registro</label>
+        <input type="number" name="record_id" class="form-control form-control-sm"
+               value="{{ filter_record or '' }}" placeholder="Ej: 42">
+      </div>
+      <div class="col-md-1">
+        <label class="form-label small">Desde</label>
+        <input type="date" name="date_from" class="form-control form-control-sm" value="{{ filter_date_from }}">
+      </div>
+      <div class="col-md-1">
+        <label class="form-label small">Hasta</label>
+        <input type="date" name="date_to" class="form-control form-control-sm" value="{{ filter_date_to }}">
+      </div>
+      <div class="col-md-2 d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm flex-fill">
+          <i class="fas fa-search me-1"></i>Filtrar
+        </button>
+        <a href="{{ url_for('audit_log_view') }}" class="btn btn-outline-secondary btn-sm flex-fill">
+          <i class="fas fa-times"></i>
+        </a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Tabla de resultados -->
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <h6 class="mb-0"><i class="fas fa-table me-2"></i>Registros</h6>
+    <span class="badge bg-secondary">{{ logs.total }} entradas</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-sm align-middle mb-0 small">
+        <thead class="table-dark">
+          <tr>
+            <th class="px-3">Fecha / Hora</th>
+            <th>Tabla</th>
+            <th>ID</th>
+            <th>Acción</th>
+            <th>Campo</th>
+            <th>Valor Anterior</th>
+            <th>Valor Nuevo</th>
+            <th>Usuario</th>
+            <th>IP</th>
+            <th>Nota</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for entry in logs.items %}
+          <tr>
+            <td class="px-3 text-nowrap text-muted">
+              {{ entry.changed_at.strftime('%d/%m/%Y %H:%M:%S') if entry.changed_at else '—' }}
+            </td>
+            <td>
+              <span class="badge bg-secondary">
+                {{ table_labels.get(entry.table_name, entry.table_name) }}
+              </span>
+            </td>
+            <td>
+              <code>{{ entry.record_id }}</code>
+            </td>
+            <td>
+              {% if entry.action == 'CREATE' %}
+                <span class="badge bg-success">CREATE</span>
+              {% elif entry.action == 'UPDATE' %}
+                <span class="badge bg-warning text-dark">UPDATE</span>
+              {% elif entry.action == 'DELETE' %}
+                <span class="badge bg-danger">DELETE</span>
+              {% else %}
+                <span class="badge bg-secondary">{{ entry.action }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if entry.field_name %}
+                <code class="text-info">{{ entry.field_name }}</code>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td class="text-danger" style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                title="{{ entry.old_value or '' }}">
+              {% if entry.old_value %}
+                {{ entry.old_value[:60] }}{% if entry.old_value|length > 60 %}…{% endif %}
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td class="text-success" style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                title="{{ entry.new_value or '' }}">
+              {% if entry.new_value %}
+                {{ entry.new_value[:60] }}{% if entry.new_value|length > 60 %}…{% endif %}
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if entry.author %}
+                <span class="fw-bold">{{ entry.author.username }}</span>
+                <br><small class="text-muted">{{ entry.author.role }}</small>
+              {% else %}
+                <span class="text-muted">Sistema</span>
+              {% endif %}
+            </td>
+            <td class="text-muted"><small>{{ entry.ip_address or '—' }}</small></td>
+            <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                title="{{ entry.notes or '' }}">
+              <small class="text-muted">{{ (entry.notes or '')[:60] }}{% if entry.notes and entry.notes|length > 60 %}…{% endif %}</small>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="10" class="text-center text-muted py-5">
+              <i class="fas fa-inbox fa-2x mb-2 d-block"></i>
+              No se encontraron registros con los filtros actuales.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Paginación -->
+  {% if logs.pages and logs.pages > 1 %}
+  <div class="card-footer">
+    <nav>
+      <ul class="pagination pagination-sm justify-content-center mb-0">
+        {% if logs.has_prev %}
+        <li class="page-item">
+          <a class="page-link" href="{{ url_for('audit_log_view', page=logs.prev_num,
+              table=filter_table, user=filter_user, action=filter_action,
+              date_from=filter_date_from, date_to=filter_date_to, record_id=filter_record) }}">
+            <i class="fas fa-chevron-left"></i>
+          </a>
+        </li>
+        {% endif %}
+
+        {% for p in logs.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+          {% if p %}
+            <li class="page-item {% if p == logs.page %}active{% endif %}">
+              <a class="page-link" href="{{ url_for('audit_log_view', page=p,
+                  table=filter_table, user=filter_user, action=filter_action,
+                  date_from=filter_date_from, date_to=filter_date_to, record_id=filter_record) }}">
+                {{ p }}
+              </a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+          {% endif %}
+        {% endfor %}
+
+        {% if logs.has_next %}
+        <li class="page-item">
+          <a class="page-link" href="{{ url_for('audit_log_view', page=logs.next_num,
+              table=filter_table, user=filter_user, action=filter_action,
+              date_from=filter_date_from, date_to=filter_date_to, record_id=filter_record) }}">
+            <i class="fas fa-chevron-right"></i>
+          </a>
+        </li>
+        {% endif %}
+      </ul>
+    </nav>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

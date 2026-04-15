@@ -15,7 +15,7 @@ import tempfile
 import pymysql
 import pymysql.cursors
 from contextlib import contextmanager
-from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert
+from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog
 from functools import wraps
 import secrets  # <- si estás generando códigos de verificación
 from sqlalchemy import text
@@ -358,6 +358,28 @@ def safe_init_db():
                     conn.execute(text('ALTER TABLE `user` MODIFY COLUMN password_hash VARCHAR(256) NOT NULL'))
                     print("  ✅ Columna 'password_hash' ampliada a VARCHAR(256)")
 
+            # ===== CREAR TABLA audit_log SI NO EXISTE =====
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS `audit_log` (
+                    `id`         INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `table_name` VARCHAR(100) NOT NULL,
+                    `record_id`  INT NOT NULL,
+                    `action`     VARCHAR(20) NOT NULL,
+                    `field_name` VARCHAR(100),
+                    `old_value`  TEXT,
+                    `new_value`  TEXT,
+                    `changed_by` INT,
+                    `changed_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `ip_address` VARCHAR(45),
+                    `notes`      TEXT,
+                    INDEX idx_audit_table_record (`table_name`, `record_id`),
+                    INDEX idx_audit_user (`changed_by`),
+                    INDEX idx_audit_date (`changed_at`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """))
+            print("  ✅ Tabla 'audit_log' verificada/creada")
+            # ===== FIN audit_log =====
+
             conn.commit()
 
         # ===== FIN MIGRACIÓN AUTOMÁTICA =====
@@ -390,6 +412,65 @@ def create_system_alert(alert_type, message, severity='info', target_user_id=Non
     except Exception as e:
         db.session.rollback()
         print(f"⚠️ Error creando alerta del sistema: {e}")
+
+
+def log_change(table_name, record_id, action, changed_fields=None, notes=None):
+    """Registra cambios en audit_log (append-only, nunca se edita).
+
+    Args:
+        table_name:     Nombre de la tabla afectada ('request', 'material', etc.)
+        record_id:      ID del registro modificado.
+        action:         'CREATE' | 'UPDATE' | 'DELETE'
+        changed_fields: dict { field_name: (old_value, new_value) }
+                        Solo para action='UPDATE'. Se omiten campos donde
+                        old_value == new_value.
+        notes:          Texto libre de contexto (ej: número de requisición).
+    """
+    try:
+        user_id = current_user.id if current_user and current_user.is_authenticated else None
+        try:
+            ip = request.remote_addr
+        except RuntimeError:
+            ip = None
+
+        if action in ('CREATE', 'DELETE') or not changed_fields:
+            entry = AuditLog(
+                table_name=table_name,
+                record_id=record_id,
+                action=action,
+                changed_by=user_id,
+                ip_address=ip,
+                notes=notes
+            )
+            db.session.add(entry)
+        else:
+            any_added = False
+            for field, values in changed_fields.items():
+                old_val, new_val = values
+                # Solo registrar si el valor realmente cambió
+                if str(old_val if old_val is not None else '') != str(new_val if new_val is not None else ''):
+                    entry = AuditLog(
+                        table_name=table_name,
+                        record_id=record_id,
+                        action='UPDATE',
+                        field_name=field,
+                        old_value=str(old_val) if old_val is not None else None,
+                        new_value=str(new_val) if new_val is not None else None,
+                        changed_by=user_id,
+                        ip_address=ip,
+                        notes=notes
+                    )
+                    db.session.add(entry)
+                    any_added = True
+            # Si ningún campo cambió, no escribir nada
+            if not any_added:
+                return
+
+        # Flush sin commit: el commit lo hará el endpoint principal
+        db.session.flush()
+
+    except Exception as e:
+        app.logger.error(f"⚠️ Error registrando audit_log [{table_name}#{record_id}]: {e}")
 
 
 class RemoteDatabase:
@@ -2698,6 +2779,10 @@ def new_request():
                 request_id=new_req.id
             )
 
+            # === AUDIT LOG: CREATE ===
+            log_change('request', new_req.id, 'CREATE',
+                       notes=f'Nueva requisición {req_number} — FP: {fp_code}')
+
             # ===== 10. RESPUESTA =====
             return jsonify({
                 'success': True,
@@ -3566,6 +3651,10 @@ def api_analyze_item_stock(id):
         if quantity_to_purchase > requested:
             return jsonify({'success': False, 'message': 'Cantidad a comprar no puede exceder lo solicitado'})
 
+        old_status = item.item_status
+        old_qty_purchase = item.quantity_to_purchase
+        old_qty_supplied = item.quantity_supplied
+
         item.quantity_to_purchase = quantity_to_purchase
         item.quantity_supplied = supplied
 
@@ -3586,6 +3675,14 @@ def api_analyze_item_stock(id):
 
         # Recalcular estado de requisición
         recalculate_request_status(item.request)
+
+        # === AUDIT LOG ===
+        req_num = item.request.request_number if item.request else ''
+        log_change('request_item', item.id, 'UPDATE', {
+            'item_status':         (old_status, item.item_status),
+            'quantity_to_purchase': (old_qty_purchase, item.quantity_to_purchase),
+            'quantity_supplied':    (old_qty_supplied, item.quantity_supplied),
+        }, notes=f'Análisis VS Stock — RQ{req_num}')
 
         db.session.commit()
         return jsonify({
@@ -3638,6 +3735,7 @@ def api_mark_item_supplied(id):
         if item.item_status != 'pendiente_compra':
             return jsonify({'success': False, 'message': 'Esta acción solo aplica a items pendientes de compra'})
 
+        old_status = item.item_status
         item.item_status = 'abastecido'
         item.quantity_supplied = item.quantity_requested
 
@@ -3652,6 +3750,13 @@ def api_mark_item_supplied(id):
         )
 
         recalculate_request_status(item.request)
+
+        # === AUDIT LOG ===
+        req_num = item.request.request_number if item.request else ''
+        log_change('request_item', item.id, 'UPDATE', {
+            'item_status': (old_status, 'abastecido'),
+        }, notes=f'Marcar abastecido tras compra — RQ{req_num}')
+
         db.session.commit()
         return jsonify({'success': True, 'message': 'Material marcado como abastecido'})
     except Exception as e:
@@ -3839,6 +3944,67 @@ def approve_reject_request():
         db.session.rollback()
         return jsonify({'success': False, 'message': f'Error al procesar solicitud: {str(e)}'})
 
+
+
+# ===== AUDIT LOG — SOLO ADMIN =====
+@app.route('/audit-log')
+@login_required
+def audit_log_view():
+    if current_user.role != 'admin':
+        flash('Acceso restringido a administradores.', 'danger')
+        return redirect(url_for('dashboard'))
+
+    page       = request.args.get('page', 1, type=int)
+    table_f    = request.args.get('table', '')
+    user_f     = request.args.get('user', type=int)
+    action_f   = request.args.get('action', '')
+    date_from  = request.args.get('date_from', '')
+    date_to    = request.args.get('date_to', '')
+    record_f   = request.args.get('record_id', type=int)
+
+    q = AuditLog.query
+
+    if table_f:
+        q = q.filter(AuditLog.table_name == table_f)
+    if user_f:
+        q = q.filter(AuditLog.changed_by == user_f)
+    if action_f:
+        q = q.filter(AuditLog.action == action_f)
+    if date_from:
+        try:
+            q = q.filter(AuditLog.changed_at >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            from datetime import timedelta
+            q = q.filter(AuditLog.changed_at < datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1))
+        except ValueError:
+            pass
+    if record_f:
+        q = q.filter(AuditLog.record_id == record_f)
+
+    logs = q.order_by(AuditLog.changed_at.desc()).paginate(page=page, per_page=50, error_out=False)
+    users = User.query.order_by(User.username).all()
+
+    TABLE_LABELS = {
+        'request':      'Requisición',
+        'request_item': 'Item de Requisición',
+        'material':     'Material',
+        'fabric_roll':  'Rollo de Tela',
+        'project':      'Proyecto',
+    }
+
+    return render_template('audit_log.html',
+                           logs=logs,
+                           users=users,
+                           table_labels=TABLE_LABELS,
+                           filter_table=table_f,
+                           filter_user=user_f,
+                           filter_action=action_f,
+                           filter_date_from=date_from,
+                           filter_date_to=date_to,
+                           filter_record=record_f)
 
 
 @app.route('/reports')
@@ -4301,6 +4467,18 @@ def edit_material(material_id):
                     'message': 'El stock máximo debe ser mayor al stock mínimo'
                 })
 
+            # === CAPTURAR VALORES ACTUALES ANTES DE SOBRESCRIBIR ===
+            old_name       = material.name
+            old_unit       = material.unit
+            old_category   = material.category
+            old_min_stock  = material.min_stock
+            old_max_stock  = material.max_stock
+            old_unit_cost  = material.unit_cost
+            old_can_recycle = material.can_recycle
+            old_can_reuse  = material.can_reuse
+            old_is_recycled = material.is_recycled
+            old_is_consumible = material.is_consumible
+
             # Actualizar campos básicos
             material.name = request.form['name']
             material.description = request.form.get('description', '')
@@ -4344,6 +4522,20 @@ def edit_material(material_id):
 
             # Actualizar timestamp de modificación
             material.updated_at = datetime.utcnow()
+
+            # === AUDIT LOG ===
+            log_change('material', material.id, 'UPDATE', {
+                'name':         (old_name, material.name),
+                'unit':         (old_unit, material.unit),
+                'category':     (old_category, material.category),
+                'min_stock':    (old_min_stock, material.min_stock),
+                'max_stock':    (old_max_stock, material.max_stock),
+                'unit_cost':    (old_unit_cost, material.unit_cost),
+                'can_recycle':  (old_can_recycle, material.can_recycle),
+                'can_reuse':    (old_can_reuse, material.can_reuse),
+                'is_recycled':  (old_is_recycled, material.is_recycled),
+                'is_consumible':(old_is_consumible, material.is_consumible),
+            }, notes=f'Edición de material — {material.code}')
 
             db.session.commit()
 
@@ -6809,6 +7001,9 @@ def api_cut_fabric_roll():
         if cut_length > max_allowed:
             return jsonify({'success': False, 'message': f'La longitud de corte excede el máximo permitido ({max_allowed:.2f} m)'}), 400
 
+        # === CAPTURAR VALOR ANTES DEL CORTE ===
+        old_remaining = roll.remaining_length
+
         # Actualizar longitudes / estado
         roll.remaining_length = (roll.remaining_length or 0) - cut_length
         roll.status = _roll_status(roll.total_length, roll.remaining_length)
@@ -6851,6 +7046,12 @@ def api_cut_fabric_roll():
             notes=mot
         )
         db.session.add(mv)
+
+        # === AUDIT LOG ===
+        log_change('fabric_roll', roll.id, 'UPDATE', {
+            'remaining_length': (old_remaining, roll.remaining_length),
+            'status':           (None, roll.status),
+        }, notes=f'Corte {cut_length}m — Rollo {roll.roll_number} · {mot}')
 
         db.session.commit()
         return jsonify({'success': True, 'message': 'Corte registrado', 'remaining': roll.remaining_length, 'status': roll.status})

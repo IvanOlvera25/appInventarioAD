@@ -261,3 +261,26 @@ class VerificationCode(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user = db.relationship('User', foreign_keys=[used_by])
+
+
+# --- Auditoría de cambios (append-only, nunca se modifica) ---
+class AuditLog(db.Model):
+    """Registro inmutable de cambios en la base de datos.
+    Cada UPDATE genera una fila por campo modificado.
+    CREATE y DELETE generan una fila sin field_name.
+    """
+    __tablename__ = 'audit_log'
+
+    id          = db.Column(db.Integer, primary_key=True)
+    table_name  = db.Column(db.String(100), nullable=False)   # 'request', 'material', etc.
+    record_id   = db.Column(db.Integer, nullable=False)        # ID del registro afectado
+    action      = db.Column(db.String(20), nullable=False)     # CREATE | UPDATE | DELETE
+    field_name  = db.Column(db.String(100))                    # Campo modificado (solo UPDATE)
+    old_value   = db.Column(db.Text)                           # Valor anterior (str)
+    new_value   = db.Column(db.Text)                           # Valor nuevo (str)
+    changed_by  = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    changed_at  = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    ip_address  = db.Column(db.String(45))                     # IPv4 / IPv6
+    notes       = db.Column(db.Text)                           # Contexto adicional (número req, etc.)
+
+    author = db.relationship('User', foreign_keys=[changed_by])

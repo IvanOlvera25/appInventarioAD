@@ -324,6 +324,10 @@
                 href="{{ url_for('admin_users_and_codes') }}" title="Usuarios & Códigos">
                 <i class="fas fa-user-shield"></i><span>Usuarios & Códigos</span>
             </a>
+            <a class="nav-link {{ 'active' if request.path == '/audit-log' else '' }}"
+                href="{{ url_for('audit_log_view') }}" title="Historial de Cambios">
+                <i class="fas fa-history"></i><span>Historial Cambios</span>
+            </a>
             {% endif %}
         </div>
 
