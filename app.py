@@ -357,6 +357,14 @@ def safe_init_db():
                 if col_info and int(col_info) < 256:
                     conn.execute(text('ALTER TABLE `user` MODIFY COLUMN password_hash VARCHAR(256) NOT NULL'))
                     print("  ✅ Columna 'password_hash' ampliada a VARCHAR(256)")
+                # Asociación con empleados de AD17_RH
+                if not _mysql_column_exists(conn, 'user', 'employee_id'):
+                    conn.execute(text('ALTER TABLE `user` ADD COLUMN employee_id INT DEFAULT NULL'))
+                    print("  ✅ Columna 'employee_id' agregada a user")
+                if not _mysql_column_exists(conn, 'user', 'employee_name'):
+                    conn.execute(text('ALTER TABLE `user` ADD COLUMN employee_name VARCHAR(200) DEFAULT NULL'))
+                    print("  ✅ Columna 'employee_name' agregada a user")
+
 
             # ===== CREAR TABLA audit_log SI NO EXISTE =====
             conn.execute(text("""
@@ -6084,6 +6092,21 @@ def init_remote_sync():
         print(f"❌ Error en sincronización inicial: {e}")
         return False
 
+
+# ===== API: LISTA DE EMPLEADOS ACTIVOS (para registro) =====
+@app.route('/api/employees')
+def api_employees():
+    """Devuelve la lista de empleados activos de AD17_RH para el formulario de registro."""
+    employees = remote_db.get_empleados_activos()
+    # Filtrar empleados que ya tienen cuenta en el sistema
+    linked_ids = {u.employee_id for u in User.query.filter(User.employee_id.isnot(None)).all()}
+    result = [
+        {'id': e['id'], 'nombre': e['nombre'], 'linked': e['id'] in linked_ids}
+        for e in employees
+    ]
+    return jsonify({'success': True, 'employees': result})
+
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -6092,10 +6115,15 @@ def register():
         password      = request.form.get('password', '').strip()
         selected_role = request.form.get('selected_role', '').strip().lower()
         code_input    = request.form.get('code', '').strip()
+        employee_id   = request.form.get('employee_id', type=int)
 
         # Validaciones base
         if not username or not email or not password or not code_input:
             flash('Todos los campos son obligatorios.', 'danger')
+            return redirect(url_for('register'))
+
+        if not employee_id:
+            flash('Debes seleccionar tu nombre de la lista de empleados activos.', 'danger')
             return redirect(url_for('register'))
 
         # Reconstruir código completo
@@ -6103,7 +6131,7 @@ def register():
 
         # 1) Intentar validar contra los códigos fijos (permanentes)
         role_from_code = VALID_CODES.get(full_code)
-        db_code_record = None  # referencia al registro de BD si se usa
+        db_code_record = None
 
         # 2) Si no es código fijo, buscar en la tabla verification_code de la BD
         if not role_from_code:
@@ -6113,7 +6141,6 @@ def register():
             ).first()
 
             if db_code_record:
-                # Verificar que no haya expirado
                 if db_code_record.expires_at and db_code_record.expires_at < datetime.utcnow():
                     flash('El código de verificación ha expirado. Solicita uno nuevo al administrador.', 'danger')
                     return redirect(url_for('register'))
@@ -6123,22 +6150,33 @@ def register():
             flash('Código de verificación inválido.', 'danger')
             return redirect(url_for('register'))
 
-        # Prevenir duplicados
+        # Prevenir duplicados de username/email
         if User.query.filter((User.username == username) | (User.email == email)).first():
             flash('El usuario o correo ya existe.', 'warning')
             return redirect(url_for('register'))
 
-        # Crear usuario (el rol mandatorio es el que deriva del CÓDIGO)
+        # Verificar que el empleado no esté ya asociado a otra cuenta
+        if User.query.filter_by(employee_id=employee_id).first():
+            flash('Este empleado ya tiene una cuenta registrada en el sistema.', 'danger')
+            return redirect(url_for('register'))
+
+        # Obtener nombre del empleado desde BD remota
+        empleado = remote_db.get_empleado_by_id(employee_id)
+        employee_name = empleado['nombre'] if empleado else None
+
+        # Crear usuario
         new_user = User(
             username=username,
             email=email,
             password_hash=generate_password_hash(password),
             role=role_from_code,
             department="General",
-            is_leader=True if role_from_code == 'admin' else False
+            is_leader=True if role_from_code == 'admin' else False,
+            employee_id=employee_id,
+            employee_name=employee_name
         )
         db.session.add(new_user)
-        db.session.flush()  # obtener new_user.id antes del commit
+        db.session.flush()
 
         # Marcar el código de BD como usado (los fijos permanecen activos)
         if db_code_record:
@@ -6147,21 +6185,21 @@ def register():
 
         db.session.commit()
 
-        # Feedback
+        emp_display = f' ({employee_name})' if employee_name else ''
         if selected_role and selected_role != role_from_code:
-            # Si el usuario eligió un rol pero el código es de otro, avisamos (se prioriza el código)
             flash(
-                f'Usuario "{username}" creado como {role_from_code}. '
+                f'Usuario "{username}"{emp_display} creado como {role_from_code}. '
                 f'(El código no corresponde al rol seleccionado).',
                 'warning'
             )
         else:
-            flash(f'Usuario "{username}" creado exitosamente como {role_from_code}.', 'success')
+            flash(f'Usuario "{username}"{emp_display} creado exitosamente como {role_from_code}.', 'success')
 
         return redirect(url_for('login'))
 
     # GET: mostrar formulario
     return render_template('register.html')
+
 VALID_CODES = {
     "REQ-AB12CD": "requisitador",
     "ALM-34EF56": "almacenista",

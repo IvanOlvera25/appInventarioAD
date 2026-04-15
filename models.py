@@ -19,11 +19,14 @@ class User(UserMixin, db.Model):
     is_verified = db.Column(db.Boolean, default=False)
     verified_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # Asociación con empleado de AD17_RH
+    employee_id   = db.Column(db.Integer, nullable=True)   # id en AD17_RH.empleados_activos
+    employee_name = db.Column(db.String(200), nullable=True)  # caché del nombre del empleado
 
     @property
     def full_name(self):
-        """Returns the username as the full name display"""
-        return self.username
+        """Returns the employee name if linked, otherwise the username"""
+        return self.employee_name or self.username
 
 class Department(db.Model):
     id = db.Column(db.Integer, primary_key=True)
