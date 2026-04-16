@@ -110,12 +110,14 @@ with app.app_context():
     except Exception as _e:
         print(f"  ⚠️ Migración password_hash: {_e}")
 
-# ===== MIGRACIÓN CRÍTICA: material.is_active / disabled_at =====
-# Debe correr ANTES de cualquier query con el modelo Material
+# ===== MIGRACIONES CRÍTICAS TEMPRANAS =====
+# Corren ANTES de cualquier request para garantizar que columnas/tablas existen.
 with app.app_context():
     try:
         from sqlalchemy import text as _text2
         with db.engine.connect() as _conn2:
+
+            # -- material.is_active --
             _has_is_active = _conn2.execute(_text2(
                 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
                 "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'material' AND COLUMN_NAME = 'is_active'"
@@ -124,9 +126,9 @@ with app.app_context():
                 _conn2.execute(_text2(
                     'ALTER TABLE `material` ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1'
                 ))
-                _conn2.commit()
                 print("  ✅ Columna 'is_active' agregada a material")
 
+            # -- material.disabled_at --
             _has_disabled_at = _conn2.execute(_text2(
                 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
                 "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'material' AND COLUMN_NAME = 'disabled_at'"
@@ -135,11 +137,33 @@ with app.app_context():
                 _conn2.execute(_text2(
                     'ALTER TABLE `material` ADD COLUMN disabled_at DATETIME DEFAULT NULL'
                 ))
-                _conn2.commit()
                 print("  ✅ Columna 'disabled_at' agregada a material")
+
+            # -- Tabla audit_log --
+            _conn2.execute(_text2("""
+                CREATE TABLE IF NOT EXISTS `audit_log` (
+                    `id`         INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `table_name` VARCHAR(100) NOT NULL,
+                    `record_id`  INT NOT NULL,
+                    `action`     VARCHAR(20) NOT NULL,
+                    `field_name` VARCHAR(100),
+                    `old_value`  TEXT,
+                    `new_value`  TEXT,
+                    `changed_by` INT,
+                    `changed_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    `ip_address` VARCHAR(45),
+                    `notes`      TEXT,
+                    INDEX idx_audit_table_record (`table_name`, `record_id`),
+                    INDEX idx_audit_user (`changed_by`),
+                    INDEX idx_audit_date (`changed_at`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            print("  ✅ Tabla 'audit_log' verificada/creada")
+
+            _conn2.commit()
     except Exception as _e2:
-        print(f"  ⚠️ Migración material is_active/disabled_at: {_e2}")
-# ===== FIN MIGRACIÓN CRÍTICA material =====
+        print(f"  ⚠️ Migraciones tempranas: {_e2}")
+# ===== FIN MIGRACIONES CRÍTICAS TEMPRANAS =====
 
 Compress(app)   # Compresión automática de respuestas HTML/JSON
 cache = Cache(app)  # Cache en memoria
