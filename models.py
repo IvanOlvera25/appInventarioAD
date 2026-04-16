@@ -97,6 +97,8 @@ class Material(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_movement = db.Column(db.DateTime)
     is_consumible = db.Column(db.Boolean, default=False)
+    is_active = db.Column(db.Boolean, default=True)   # False = deshabilitado (baja lógica)
+    disabled_at = db.Column(db.DateTime, nullable=True)  # Fecha de deshabilitación
 
     # Relaciones
     category_ref = db.relationship('Category', backref='materials', foreign_keys=[category_id])

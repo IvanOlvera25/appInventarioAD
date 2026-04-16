@@ -365,6 +365,14 @@ def safe_init_db():
                     conn.execute(text('ALTER TABLE `user` ADD COLUMN employee_name VARCHAR(200) DEFAULT NULL'))
                     print("  ✅ Columna 'employee_name' agregada a user")
 
+            if 'material' in tables:
+                if not _mysql_column_exists(conn, 'material', 'is_active'):
+                    conn.execute(text('ALTER TABLE `material` ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1'))
+                    print("  ✅ Columna 'is_active' agregada a material")
+                if not _mysql_column_exists(conn, 'material', 'disabled_at'):
+                    conn.execute(text('ALTER TABLE `material` ADD COLUMN disabled_at DATETIME DEFAULT NULL'))
+                    print("  ✅ Columna 'disabled_at' agregada a material")
+
 
             # ===== CREAR TABLA audit_log SI NO EXISTE =====
             conn.execute(text("""
@@ -1949,7 +1957,7 @@ def materials():
     reciclados_filter = request.args.get('reciclados', '', type=str)
     error_stock_filter = request.args.get('error_stock', '', type=str)
 
-    query = Material.query
+    query = Material.query.filter(Material.is_active == True)
 
     # Filtro de búsqueda
     if search:
@@ -1992,8 +2000,8 @@ def materials():
 
     materials_paginated = query.order_by(Material.name).paginate(page=page, per_page=20, error_out=False)
 
-    # Contar consumibles para badge
-    consumibles_count = Material.query.filter_by(is_consumible=True).count()
+    # Contar consumibles para badge (solo activos)
+    consumibles_count = Material.query.filter_by(is_consumible=True, is_active=True).count()
 
     # Obtener categorías
     try:
@@ -2864,6 +2872,7 @@ def search_materials():
         return jsonify({'materials': []})
 
     materials = Material.query.filter(
+        Material.is_active == True,
         db.or_(
             Material.name.contains(query),
             Material.code.contains(query)
@@ -4227,11 +4236,13 @@ def leader_dashboard():
 @app.route('/api/materials/list')
 @login_required
 def get_materials_list():
-    # Obtener materiales que no sean rollos de tela y cuya categoría no incluya 'tela'
+    # Obtener materiales activos que no sean rollos de tela y cuya categoría no incluya 'tela'
     materials = Material.query.filter(
+        Material.is_active == True,
         Material.is_fabric_roll == False,
         ~Material.category.ilike('%tela%')
     ).all()
+
     materials_data = []
 
     for material in materials:
@@ -4458,6 +4469,87 @@ def download_movements_template():
 
 
 # Agregar estas rutas a tu app.py después de la ruta add_material
+
+@app.route('/api/materials/<int:material_id>/disable', methods=['POST'])
+@login_required
+def disable_material(material_id):
+    """
+    Deshabilita (baja lógica) un material – solo admins.
+    Si tiene stock: requiere transfer_to_id para mover el stock al material destino.
+    Si stock=0: lo deshabilita directamente.
+    """
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'message': 'Solo los administradores pueden deshabilitar materiales.'}), 403
+
+    material = Material.query.get_or_404(material_id)
+
+    if not material.is_active:
+        return jsonify({'success': False, 'message': 'El material ya está deshabilitado.'}), 400
+
+    data = request.get_json() or {}
+    transfer_to_id = data.get('transfer_to_id')
+
+    try:
+        if material.current_stock > 0:
+            if not transfer_to_id:
+                return jsonify({
+                    'success': False,
+                    'needs_transfer': True,
+                    'stock': material.current_stock,
+                    'unit': material.unit,
+                    'message': f'El material tiene {material.current_stock} {material.unit} en stock. Seleccione un material destino.'
+                }), 422
+
+            dest = Material.query.get(int(transfer_to_id))
+            if not dest or not dest.is_active:
+                return jsonify({'success': False, 'message': 'Material destino no válido o inactivo.'}), 400
+            if dest.id == material.id:
+                return jsonify({'success': False, 'message': 'No puede transferir al mismo material.'}), 400
+
+            qty_to_transfer = material.current_stock
+
+            # Registrar ajuste negativo en el material origen (sale del inventario)
+            mov_out = StockMovement(
+                material_id=material.id,
+                movement_type='ajuste',
+                quantity=-qty_to_transfer,
+                notes=f'Transferencia por deshabilitar material → {dest.name} ({dest.code})',
+                user_id=current_user.id,
+                fecha=datetime.utcnow().date(),
+                hora=datetime.utcnow().time(),
+            )
+            db.session.add(mov_out)
+
+            # Registrar entrada en el material destino
+            mov_in = StockMovement(
+                material_id=dest.id,
+                movement_type='ajuste',
+                quantity=qty_to_transfer,
+                notes=f'Transferencia recibida de material deshabilitado: {material.name} ({material.code})',
+                user_id=current_user.id,
+                fecha=datetime.utcnow().date(),
+                hora=datetime.utcnow().time(),
+            )
+            db.session.add(mov_in)
+
+            # Actualizar stocks
+            dest.current_stock += qty_to_transfer
+            material.current_stock = 0
+
+        # Deshabilitar material
+        material.is_active = False
+        material.disabled_at = datetime.utcnow()
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f'Material "{material.name}" deshabilitado correctamente.'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
 
 @app.route('/materials/<int:material_id>/edit', methods=['GET', 'POST'])
 @login_required
@@ -5138,6 +5230,7 @@ def get_consumables_list():
     """Lista de materiales consumibles con stock disponible, excluyendo Telas."""
     materials = Material.query.filter(
         Material.is_consumible == True,
+        Material.is_active == True,
         ~Material.category.ilike('%tela%'),
         Material.is_fabric_roll == False,
         Material.current_stock > 0
