@@ -7190,21 +7190,21 @@ def api_cut_fabric_roll():
         max_allowed = roll.remaining_length or 0
 
         if reason == 'produccion' and fp_code:
-            # Para producción: límite = min(pendiente de entrega, longitud restante)
-            material = roll.material
-            pending_items = RequestItem.query.join(Request).filter(
+            # Para producción: límite = min(abastecido pendiente de entrega, longitud restante)
+            material_check = roll.material
+            supplied_items = RequestItem.query.join(Request).filter(
                 Request.project.has(Project.fp_code == fp_code),
-                RequestItem.material_id == material.id,
-                RequestItem.item_status.in_(['pendiente', 'pendiente_compra'])
+                RequestItem.material_id == material_check.id,
+                RequestItem.item_status == 'abastecido'   # solo abastecidos
             ).all()
-            total_pending = sum(
-                max((item.quantity_requested or 0) - (item.quantity_delivered or 0), 0)
-                for item in pending_items
+            total_supplied_pending = sum(
+                max((item.quantity_supplied or 0) - (item.quantity_delivered or 0), 0)
+                for item in supplied_items
             )
-            if total_pending > 0:
-                max_allowed = min(total_pending, roll.remaining_length or 0)
+            if total_supplied_pending > 0:
+                max_allowed = min(total_supplied_pending, roll.remaining_length or 0)
 
-        if cut_length > max_allowed:
+        if cut_length > max_allowed + 0.001:  # tolerancia de redondeo
             return jsonify({'success': False, 'message': f'La longitud de corte excede el máximo permitido ({max_allowed:.2f} m)'}), 400
 
         # === CAPTURAR VALOR ANTES DEL CORTE ===
@@ -7218,6 +7218,37 @@ def api_cut_fabric_roll():
         material = roll.material
         material.current_stock = (material.current_stock or 0) - cut_length
         material.last_movement = datetime.utcnow()
+
+        # === ACTUALIZAR quantity_delivered EN LOS RequestItems (solo Producción) ===
+        if reason == 'produccion' and fp_code:
+            to_deliver = cut_length
+            abastecidos = RequestItem.query.join(Request).filter(
+                Request.project.has(Project.fp_code == fp_code),
+                RequestItem.material_id == material.id,
+                RequestItem.item_status == 'abastecido'
+            ).order_by(RequestItem.id.asc()).all()   # FIFO
+
+            for req_item in abastecidos:
+                if to_deliver <= 0:
+                    break
+                disponible = max((req_item.quantity_supplied or 0) - (req_item.quantity_delivered or 0), 0)
+                if disponible <= 0:
+                    continue
+                applying = min(disponible, to_deliver)
+                req_item.quantity_delivered = (req_item.quantity_delivered or 0) + applying
+                to_deliver -= applying
+
+                # Si ya se entregó todo lo abastecido de este ítem → entregado
+                if abs((req_item.quantity_delivered or 0) - (req_item.quantity_supplied or 0)) < 0.001:
+                    req_item.item_status = 'entregado'
+
+                # Recalcular status de la requisición padre
+                req = req_item.request
+                statuses = [i.item_status for i in req.items]
+                if all(s == 'entregado' for s in statuses):
+                    req.status = 'entregado'
+                elif any(s in ('abastecido', 'entregado') for s in statuses):
+                    req.status = 'en_progreso'
 
         # Movimiento de SALIDA por corte de rollo
         mot = f'Corte rollo {roll.roll_number}'
