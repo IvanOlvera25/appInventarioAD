@@ -534,20 +534,22 @@
         if (data.materials && data.materials.length > 0) {
           let html = '<div class="list-group">';
           data.materials.forEach(m => {
-            const itemType = m.can_recycle ? 'reciclado' : (m.can_reuse ? 'reutilizado' : 'nuevo');
-            const badgeColor = itemType === 'nuevo' ? 'primary' : (itemType === 'reutilizado' ? 'success' : 'warning');
+            // Sólo dos tipos: Reciclado (is_recycled=true) o Nuevo / Reutilizado (false)
+            const isRecycled = m.is_recycled === true;
+            const itemLabel  = isRecycled ? 'Reciclado' : 'Nuevo';
+            const badgeColor = isRecycled ? 'warning'   : 'primary';
             const stockClass = m.current_stock > 0 ? 'text-success' : 'text-danger';
             html += `<div class="list-group-item list-group-item-action"
                  data-mid="${m.id}" data-code="${m.code}" data-name="${m.name}"
                  data-unit="${m.unit}" data-category="${m.category || ''}" data-stock="${m.current_stock}"
-                 data-can-recycle="${m.can_recycle}" data-can-reuse="${m.can_reuse}" style="cursor:pointer">
+                 data-is-recycled="${isRecycled}" style="cursor:pointer">
               <div class="d-flex justify-content-between align-items-center">
                 <div>
                   <strong>${m.code}</strong> — ${m.name}
                   <br><small class="text-muted">${m.category || 'Sin categoría'} | ${m.unit}</small>
                 </div>
                 <div class="text-end">
-                  <span class="badge bg-${badgeColor} mb-1">${itemType}</span><br>
+                  <span class="badge bg-${badgeColor} mb-1">${itemLabel}</span><br>
                   <small class="${stockClass} fw-bold">Stock: ${m.current_stock} ${m.unit}</small>
                 </div>
               </div>
@@ -559,7 +561,7 @@
             el.addEventListener('click', () => selectMaterial(
               Number(el.dataset.mid), el.dataset.code, el.dataset.name,
               el.dataset.unit, el.dataset.category, Number(el.dataset.stock),
-              el.dataset.canRecycle === 'true', el.dataset.canReuse === 'true'
+              el.dataset.isRecycled === 'true'
             ));
           });
         } else {
@@ -569,11 +571,11 @@
       .catch(() => alert('Error al buscar materiales'));
   });
 
-  function selectMaterial(id, code, name, unit, category, stock, canRecycle, canReuse) {
-    // Determinar tipo de item automáticamente
-    const itemType = canRecycle ? 'reciclado' : (canReuse ? 'reutilizado' : 'nuevo');
-    const itemTypeLabel = itemType === 'nuevo' ? 'Nuevo' : (itemType === 'reutilizado' ? 'Reutilizado' : 'Reciclado');
-    const badgeColor = itemType === 'nuevo' ? 'primary' : (itemType === 'reutilizado' ? 'success' : 'warning');
+  function selectMaterial(id, code, name, unit, category, stock, isRecycled) {
+    // Solo dos tipos: Reciclado o Nuevo (Reutilizado)
+    const itemType      = isRecycled ? 'reciclado' : 'nuevo';
+    const itemTypeLabel = isRecycled ? 'Reciclado'  : 'Nuevo';
+    const badgeColor    = isRecycled ? 'warning'    : 'primary';
 
     document.getElementById('selectedMaterialId').value = String(id);
     document.getElementById('isNewMaterial').value = 'false';
@@ -640,9 +642,8 @@
                 <br><small class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>¿Es este el material que buscas? Selecciónalo para evitar duplicados</small>`;
               item.addEventListener('click', (e) => {
                 e.preventDefault();
-                // Cerrar modal y usar el material existente
                 bootstrap.Modal.getInstance(document.getElementById('newMaterialModal')).hide();
-                selectMaterial(m.id, m.code, m.name, m.unit, m.category, m.current_stock, m.can_recycle, m.can_reuse);
+                selectMaterial(m.id, m.code, m.name, m.unit, m.category, m.current_stock, m.is_recycled === true);
                 showSuccessMessage(`Material existente seleccionado: ${m.name}`);
               });
               suggestions.appendChild(item);
@@ -755,9 +756,11 @@
     section.style.display = 'block';
 
     tbody.innerHTML = materialsList.map(m => {
-      const badgeColor = m.item_type === 'nuevo' ? 'primary' : (m.item_type === 'reutilizado' ? 'success' : 'warning');
-      const itemLabel = m.item_type === 'nuevo' ? 'Nuevo' : (m.item_type === 'reutilizado' ? 'Reutilizado' : 'Reciclado');
-      const stockClass = m.is_new_material ? 'text-muted' : (m.stock && m.stock.startsWith('0') ? 'text-danger' : 'text-success');
+      // Solo dos tipos: reciclado (amarillo) o nuevo/reutilizado (azul)
+      const isRecycled = m.item_type === 'reciclado';
+      const badgeColor = isRecycled ? 'warning' : 'primary';
+      const itemLabel  = isRecycled ? 'Reciclado' : 'Nuevo';
+      const stockClass = m.is_new_material ? 'text-muted' : (m.stock && m.stock.toString().startsWith('0') ? 'text-danger' : 'text-success');
       return `
       <tr>
         <td><strong>${m.code}</strong></td>

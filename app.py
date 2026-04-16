@@ -2870,7 +2870,6 @@ def search_materials():
         )
     ).limit(25).all()
 
-    materials_data = []
     for material in materials:
         materials_data.append({
             'id': material.id,
@@ -2880,8 +2879,8 @@ def search_materials():
             'category': material.category,
             'current_stock': material.current_stock,
             'min_stock': material.min_stock,
-            'can_recycle': material.can_recycle,
-            'can_reuse': material.can_reuse
+            # is_recycled: True = material ES reciclado, False = material es Nuevo/Reutilizado
+            'is_recycled': bool(material.is_recycled),
         })
 
     return jsonify({'materials': materials_data})
