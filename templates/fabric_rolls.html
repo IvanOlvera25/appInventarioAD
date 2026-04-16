@@ -810,6 +810,22 @@
             }
 
             _fpHasRequisition = true;
+
+            // ¿La requisición existe pero está en status PENDIENTE (no abastecida aún)?
+            if (data.abastecido === false || data.total_pending === 0) {
+                areaSelect.innerHTML = '<option value="">Requisición pendiente de abastecer</option>';
+                limitDiv.innerHTML = `
+                    <div class="alert alert-warning py-1 px-2 mt-1 mb-0 small">
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        <strong>La requisición de este material aún está en status <em>pendiente</em>.</strong>
+                        Debe ser abastecida (analizada vs stock) antes de poder cortar para Producción.
+                        El límite de corte es la longitud actual del rollo.
+                    </div>`;
+                _fpPendingTotal = 0;   // sin límite de abastecido → trabaja como "otro motivo"
+                applyMaxLimit();
+                return;
+            }
+
             _fpPendingTotal   = data.total_pending || 0;
 
             // Poblar select de áreas
@@ -826,11 +842,11 @@
 
                 // Mostrar límite global aún si no seleccionan área
                 const globalLimit = Math.min(_fpPendingTotal, currentRollRemainingLength);
-                limitDiv.innerHTML = `Total pendiente: <strong>${_fpPendingTotal}m</strong>.
+                limitDiv.innerHTML = `Total abastecido pendiente: <strong>${_fpPendingTotal}m</strong>.
                     Límite de corte ajustado a <strong>${globalLimit.toFixed(2)}m</strong>.`;
             } else {
                 areaSelect.innerHTML = '<option value="">Todo el material ya fue entregado</option>';
-                limitDiv.innerHTML = '<span class="text-muted">No hay material pendiente de entrega en este proyecto.</span>';
+                limitDiv.innerHTML = '<span class="text-muted">No hay material abastecido pendiente de entrega en este proyecto.</span>';
                 _fpPendingTotal = 0;
             }
 

@@ -7384,23 +7384,36 @@ def api_fabric_roll_production_info():
             'areas': []
         })
 
-    # Buscar ítems pendientes de entrega (abastecidos pero no entregados)
+    # Buscar ítems listos para entrega — SOLO los que ya fueron ABASTECIDOS.
+    # 'pendiente' y 'pendiente_compra' no tienen material confirmado en almacén.
     pending_items = RequestItem.query.join(Request).filter(
         Request.project_id == project.id,
         RequestItem.material_id == material_id,
-        RequestItem.item_status.in_(['abastecido', 'pendiente', 'pendiente_compra'])
+        RequestItem.item_status == 'abastecido'   # ← solo abastecido
     ).all()
 
     areas_with_pending = {}
     total_pending = 0
 
     for item in pending_items:
-        # Cantidad pendiente de entrega física = solicitado - entregado
-        qty = max((item.quantity_requested or 0) - (item.quantity_delivered or 0), 0)
+        # Cantidad lista para entrega = abastecido - ya entregado
+        qty = max((item.quantity_supplied or 0) - (item.quantity_delivered or 0), 0)
         if qty > 0:
             area = item.request.area or item.request.department or 'Sin Área'
             areas_with_pending[area] = areas_with_pending.get(area, 0) + qty
             total_pending += qty
+
+    # Si no hay ningún ítem abastecido con cantidad pendiente, indicarlo
+    if total_pending == 0:
+        return jsonify({
+            'success': True,
+            'project_name': project.name,
+            'client': project.client,
+            'has_requisition': True,
+            'abastecido': False,   # hay requisición pero no está abastecida
+            'total_pending': 0,
+            'areas': []
+        })
 
     areas_list = [{'area': area, 'pending': round(pending, 4)}
                   for area, pending in areas_with_pending.items()]
@@ -7410,6 +7423,7 @@ def api_fabric_roll_production_info():
         'project_name': project.name,
         'client': project.client,
         'has_requisition': True,
+        'abastecido': True,
         'total_pending': round(total_pending, 4),
         'areas': areas_list
     })
