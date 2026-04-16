@@ -157,8 +157,8 @@
                                         </button>
                                         {% endif %}
                                         {% if current_user.role == 'admin' %}
-                                        <button class="btn btn-outline-danger" title="Eliminar" data-bs-toggle="tooltip"
-                                            onclick="deleteRoll({{ roll.id }})">
+                                        <button class="btn btn-outline-danger" title="Eliminar rollo"
+                                            onclick="deleteRoll({{ roll.id }}, '{{ roll.roll_number }}', {{ roll.remaining_length }})">
                                             <i class="fas fa-trash"></i>
                                         </button>
                                         {% endif %}
@@ -330,9 +330,7 @@
                 <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRollModal">
                     <i class="fas fa-plus me-1"></i>Nuevo Rollo
                 </button>
-                <button class="btn btn-info" onclick="exportRolls()">
-                    <i class="fas fa-download me-1"></i>Exportar Inventario
-                </button>
+                {# Exportar deshabilitado hasta completar comportamiento deseado #}
                 <button class="btn btn-warning" onclick="showCriticalRolls()">
                     <i class="fas fa-exclamation-triangle me-1"></i>Ver Críticos
                 </button>
@@ -670,15 +668,16 @@
         }
     }
 
-    function deleteRoll(rollId) {
-        if (confirm('¿Está seguro de eliminar este rollo? Esta acción no se puede deshacer.')) {
-            fetch(`/api/fabric-rolls/${rollId}`, {
-                method: 'DELETE'
-            })
+    function deleteRoll(rollId, rollNumber, remaining) {
+        const metrosMsg = remaining > 0
+            ? `\n⚠️ Se registrará un ajuste de inventario por ${remaining} m.`
+            : '';
+        if (confirm(`¿Eliminar el rollo ${rollNumber}? Esta acción no se puede deshacer.${metrosMsg}`)) {
+            fetch(`/api/fabric-rolls/${rollId}`, { method: 'DELETE' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        alert('Rollo eliminado exitosamente');
+                        alert('Rollo eliminado. El ajuste de inventario fue registrado.');
                         location.reload();
                     } else {
                         alert('Error: ' + (data.message || 'No se pudo eliminar'));

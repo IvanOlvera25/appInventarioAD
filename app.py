@@ -7156,10 +7156,10 @@ def api_delete_fabric_roll(roll_id):
         if roll.remaining_length and roll.remaining_length > 0:
             material.current_stock = (material.current_stock or 0) - roll.remaining_length
             material.last_movement = datetime.utcnow()
-            # Registrar salida por ajuste
+            # Registrar como AJUSTE de inventario (no como salida operativa)
             mv = StockMovement(
                 material_id=material.id,
-                movement_type='salida',
+                movement_type='ajuste',
                 quantity=roll.remaining_length,
                 rollos=0,
                 reference_type='ajuste_eliminacion_rollo',
@@ -7168,9 +7168,10 @@ def api_delete_fabric_roll(roll_id):
                 area='Almacén',
                 fecha=datetime.utcnow().date(),
                 hora=datetime.utcnow().time(),
-                notes=f'Eliminación rollo {roll.roll_number}'
+                notes=f'Eliminación de rollo {roll.roll_number} — ajuste de inventario por {roll.remaining_length} m'
             )
             db.session.add(mv)
+
 
         db.session.delete(roll)
         db.session.commit()
