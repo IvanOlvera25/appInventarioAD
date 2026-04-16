@@ -1041,7 +1041,16 @@
                     updateAvailableMaterialsSelect();
                     exitMaterialSelect.disabled = false;
                 } else {
-                    exitMaterialSelect.innerHTML = '<option value="">No hay materiales pendientes</option>';
+                    exitMaterialSelect.innerHTML = '<option value="">Sin materiales abastecidos disponibles para entrega</option>';
+                    // Mostrar aviso informativo
+                    exitQuantityHelp.innerHTML = `
+                        <div class="alert alert-warning mt-2 py-2 small">
+                            <i class="fas fa-exclamation-triangle me-1"></i>
+                            <strong>No hay materiales listos para entregar.</strong>
+                            Los materiales de esta requisición aún están en estado
+                            <em>pendiente</em> — deben ser abastecidos (analizados vs stock)
+                            antes de poder registrar una salida.
+                        </div>`;
                 }
             } catch (error) {
                 console.error('Error cargando materiales:', error);

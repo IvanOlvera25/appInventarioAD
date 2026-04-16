@@ -5254,14 +5254,14 @@ def get_requisitioned_materials():
     materials_data = []
     for item in items:
         total_requested = item.total_requested or 0
-        total_supplied = item.total_supplied or 0  # Lo abastecido desde stock en análisis
-        total_delivered = item.total_delivered or 0  # Lo entregado físicamente
-        pending_quantity = total_requested - total_delivered  # Pendiente de entregar de la requisición
+        total_supplied  = item.total_supplied  or 0   # Abastecido en análisis vs stock
+        total_delivered = item.total_delivered or 0   # Entregado físicamente al departamento
+        pending_quantity     = total_requested - total_delivered   # Pendiente de la requisición
+        abastecida_pendiente = max(0, total_supplied - total_delivered)  # Listo para entregar
 
-        # Abastecida pendiente: lo que se confirmó disponible pero aún no se ha sacado del almacén
-        abastecida_pendiente = max(0, total_supplied - total_delivered)
-
-        if pending_quantity > 0:
+        # Solo se puede entregar si el material fue ABASTECIDO (abastecida_pendiente > 0).
+        # Si sigue en status "pendiente" (total_supplied == 0) NO debe aparecer.
+        if pending_quantity > 0 and abastecida_pendiente > 0:
             materials_data.append({
                 'id': item.id,
                 'code': item.code,
