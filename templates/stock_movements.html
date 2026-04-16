@@ -35,18 +35,31 @@
                         <label class="form-label">Tipo</label>
                         <select class="form-select" name="type">
                             <option value="">Todos</option>
-                            <option value="entrada" {% if request.args.get('type')=='entrada' %}selected{% endif %}>
-                                Entrada</option>
-                            <option value="salida" {% if request.args.get('type')=='salida' %}selected{% endif %}>Salida
-                            </option>
-                            <option value="retorno" {% if request.args.get('type')=='retorno' %}selected{% endif %}>
-                                Retorno</option>
+                            <option value="entrada" {% if request.args.get('type')=='entrada' %}selected{% endif %}>Entrada</option>
+                            <option value="salida" {% if request.args.get('type')=='salida' %}selected{% endif %}>Salida</option>
+                            <option value="retorno" {% if request.args.get('type')=='retorno' %}selected{% endif %}>Retorno</option>
+                            <option value="ajuste" {% if request.args.get('type')=='ajuste' %}selected{% endif %}>Ajuste</option>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <label class="form-label">Material</label>
                         <input type="text" class="form-control" name="material" placeholder="Buscar..."
                             value="{{ request.args.get('material', '') }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">FP</label>
+                        <input type="text" class="form-control" name="fp" placeholder="Ej: 2025001"
+                            value="{{ fp_filter }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Nombre del Proyecto</label>
+                        <input type="text" class="form-control" name="proyecto" placeholder="Nombre..."
+                            value="{{ proyecto_filter }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label">Cliente</label>
+                        <input type="text" class="form-control" name="cliente" placeholder="Cliente..."
+                            value="{{ cliente_filter }}">
                     </div>
                     <div class="col-md-2">
                         <label class="form-label">Área</label>
@@ -63,14 +76,22 @@
                         <input type="date" class="form-control" name="date_to"
                             value="{{ request.args.get('date_to', '') }}">
                     </div>
-                    <div class="col-md-1">
+                    <div class="col-md-2">
                         <label class="form-label">&nbsp;</label>
                         <div class="d-grid">
                             <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-search"></i>
+                                <i class="fas fa-search"></i> Filtrar
                             </button>
                         </div>
                     </div>
+                    {% if request.args.values() | list | select | list %}
+                    <div class="col-md-2">
+                        <label class="form-label">&nbsp;</label>
+                        <a href="{{ url_for('stock_movements') }}" class="btn btn-outline-secondary w-100">
+                            <i class="fas fa-times me-1"></i>Limpiar
+                        </a>
+                    </div>
+                    {% endif %}
                 </form>
 
                 {% if movements.items %}
@@ -98,8 +119,8 @@
                                 class="{% if movement.movement_type == 'entrada' %}table-success-subtle{% elif movement.movement_type == 'salida' %}table-danger-subtle{% elif movement.movement_type == 'retorno' %}table-warning-subtle{% endif %}">
                                 <td><strong>{{ movement.id }}</strong></td>
                                 <td>
-                                    <strong>{{ movement.material.code }}</strong><br>
-                                    <small class="text-muted">{{ movement.material.name[:30] }}...</small>
+                                    <strong>{{ movement.material.name }}</strong><br>
+                                    <small class="text-muted">#{{ movement.material.id }} &bull; {{ movement.material.code }}</small>
                                 </td>
                                 <td>
                                     {% if movement.movement_type == 'entrada' %}<span class="badge bg-success"><i
@@ -113,16 +134,26 @@
                                 <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>{{
                                         movement.quantity }}</strong> {{ movement.material.unit }}</td>
                                 <td>
-                                    {% if movement.fp_code %}<span class="badge bg-primary fp-tooltip"
-                                        style="cursor: pointer;" data-fp="{{ movement.fp_code }}">{{ movement.fp_code
-                                        }}</span>
+                                    {% if movement.fp_code %}
+                                    {%- set proj = projects_dict.get(movement.fp_code, {}) -%}
+                                    <span class="badge bg-primary fp-hover-badge"
+                                        style="cursor: pointer;"
+                                        data-fp="{{ movement.fp_code }}"
+                                        data-nombre="{{ proj.get('nombre', '') }}"
+                                        data-cliente="{{ proj.get('cliente', '') }}"
+                                        title="Cargando información...">{{ movement.fp_code }}</span>
                                     {% else %}<span class="text-muted d-inline-block px-2 py-1 rounded"
                                         style="background-color: rgba(0,0,0,0.05);">N/A</span>{% endif %}
                                 </td>
                                 <td>
-                                    {% if movement.fp_code and projects_dict is defined and
-                                    projects_dict.get(movement.fp_code) %}
-                                    <small>{{ projects_dict[movement.fp_code] }}</small>
+                                    {% if movement.fp_code %}
+                                    {%- set proj = projects_dict.get(movement.fp_code, {}) -%}
+                                    {% if proj.get('nombre') %}
+                                    <small>{{ proj.get('nombre') }}</small>
+                                    {% else %}
+                                    <span class="text-muted d-inline-block px-2 py-1 rounded"
+                                        style="background-color: rgba(0,0,0,0.05);">N/A</span>
+                                    {% endif %}
                                     {% else %}
                                     <span class="text-muted d-inline-block px-2 py-1 rounded"
                                         style="background-color: rgba(0,0,0,0.05);">N/A</span>
@@ -704,22 +735,22 @@
                     materialsDataMap = {};
                     const select = document.getElementById('entryMaterialSelect');
                     select.innerHTML = '<option value="">Seleccionar material...</option>';
-                    // Orden alfabetico ascendente
-                    data.materials.sort((a, b) => a.name.localeCompare(b.name));
+                    // Ordenar SOLO por nombre, sin concatenar ID al inicio
+                    data.materials.sort((a, b) => a.name.localeCompare(b.name, 'es', {sensitivity: 'base'}));
                     data.materials.forEach(mat => {
                         materialsDataMap[mat.id] = mat;
-                        // Mostrar el nombre primero y el código en gris/secundario en el template si fuera posible, o sin concatenar ID al inicio.
-                        const option = new Option(`${mat.name} (${mat.code})`, mat.id);
+                        // Mostrar: Nombre (Código) — sin anteponer el ID
+                        const option = new Option(`${mat.name}  [${mat.code}]`, mat.id);
                         select.add(option);
                     });
 
-                    if (entryTomSelect) {
-                        entryTomSelect.destroy();
-                    }
+                    if (entryTomSelect) { entryTomSelect.destroy(); }
                     entryTomSelect = new TomSelect("#entryMaterialSelect", {
                         create: false,
-                        maxOptions: null, // Quitar límite de opciones
-                        sortField: { field: "text", direction: "asc" }
+                        maxOptions: null,   // Sin límite: mostrar todos los materiales
+                        placeholder: 'Escriba para filtrar...',
+                        searchField: ['text'],
+                        sortField: false    // Ya vienen ordenados por nombre desde sort()
                     });
                 });
             });
@@ -1540,76 +1571,79 @@
             });
         }
 
-        // Tooltips para FP
-        const fpTooltips = document.querySelectorAll('.fp-tooltip');
+        // Tooltips para badge FP: hover (escritorio) y long-press (tablet)
+        const fpBadges = document.querySelectorAll('.fp-hover-badge');
         let activePopover = null;
 
-        fpTooltips.forEach(el => {
-            // Inicializar popover dummy
+        fpBadges.forEach(el => {
             const fp = el.dataset.fp;
+            // Pre-datos del servidor para respuesta instantánea
+            const nombre  = el.dataset.nombre  || '';
+            const cliente = el.dataset.cliente || '';
+
             const popover = new bootstrap.Popover(el, {
-                title: `Proyecto ${fp}`,
-                content: '<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>',
+                title: `<i class="fas fa-project-diagram me-1"></i> FP: ${fp}`,
+                content: nombre
+                    ? `<div class="small">
+                         <strong>Proyecto:</strong> ${nombre}<br>
+                         <strong>Cliente:</strong> ${cliente || 'N/A'}<br>
+                         <span class="text-muted"><i class="fas fa-spinner fa-spin me-1"></i>Cargando vendedora y líder...</span>
+                       </div>`
+                    : '<div class="text-center"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>',
                 html: true,
                 trigger: 'manual',
                 placement: 'right'
             });
 
-            const showTooltip = async (e) => {
+            const showPopover = async (e) => {
                 e.preventDefault();
-                if (activePopover && activePopover !== popover) {
-                    activePopover.hide();
-                }
+                if (activePopover && activePopover !== popover) { activePopover.hide(); }
                 activePopover = popover;
                 popover.show();
 
                 try {
-                    const res = await fetch(`/api/project_details/${encodeURIComponent(fp)}`);
+                    const res  = await fetch(`/api/project_details/${encodeURIComponent(fp)}`);
                     const data = await res.json();
-
-                    let contentHtml = '';
+                    let html = '';
                     if (data.success) {
-                        contentHtml = `
-                            <div class="small">
-                                <strong>Nombre:</strong> ${data.data.nombre}<br>
-                                <strong>Cliente:</strong> ${data.data.cliente}<br>
-                                <strong>Vendedora:</strong> ${data.data.vendedora}<br>
-                                <strong>Líder:</strong> ${data.data.lider}
-                            </div>
-                        `;
+                        html = `<div class="small">
+                            <strong>Proyecto:</strong> ${data.data.nombre}<br>
+                            <strong>Cliente:</strong> ${data.data.cliente}<br>
+                            <strong>Vendedora:</strong> ${data.data.vendedora}<br>
+                            <strong>Líder:</strong> ${data.data.lider}
+                        </div>`;
                     } else {
-                        contentHtml = `<div class="text-danger small"><i class="fas fa-exclamation-triangle"></i> Datos no disponibles</div>`;
+                        html = nombre
+                            ? `<div class="small"><strong>Proyecto:</strong> ${nombre}<br><strong>Cliente:</strong> ${cliente || 'N/A'}</div>`
+                            : `<div class="text-danger small"><i class="fas fa-exclamation-triangle"></i> Datos no disponibles</div>`;
                     }
-
-                    const tip = popover.getTipElement();
-                    if (tip) {
-                        tip.querySelector('.popover-body').innerHTML = contentHtml;
-                    }
-                    popover._config.content = contentHtml; // Update instance config
+                    const tip = popover.getTipElement ? popover.getTipElement() : null;
+                    if (tip) tip.querySelector('.popover-body').innerHTML = html;
                 } catch (err) {
-                    const tip = popover.getTipElement();
-                    if (tip) {
-                        tip.querySelector('.popover-body').innerHTML = `<div class="text-danger small">Error de conexión</div>`;
-                    }
+                    const tip = popover.getTipElement ? popover.getTipElement() : null;
+                    if (tip) tip.querySelector('.popover-body').innerHTML = `<div class="text-danger small">Error de conexión</div>`;
                 }
             };
 
-            const hideTooltip = () => {
+            const hidePopover = () => {
                 popover.hide();
                 if (activePopover === popover) activePopover = null;
             };
 
-            el.addEventListener('mouseenter', showTooltip);
-            el.addEventListener('mouseleave', hideTooltip);
+            el.addEventListener('mouseenter', showPopover);
+            el.addEventListener('mouseleave', hidePopover);
 
-            // Para tabletas
-            el.addEventListener('touchstart', showTooltip);
+            // Tablet: long-press (touchstart + touchend)
+            let longPressTimer;
+            el.addEventListener('touchstart', (e) => {
+                longPressTimer = setTimeout(() => showPopover(e), 500);
+            }, { passive: true });
+            el.addEventListener('touchend', () => clearTimeout(longPressTimer));
             document.addEventListener('touchstart', (e) => {
-                if (activePopover && !el.contains(e.target) && !activePopover.getTipElement().contains(e.target)) {
-                    hideTooltip();
-                }
-            });
+                if (activePopover && !el.contains(e.target)) { hidePopover(); }
+            }, { passive: true });
         });
+
 
     });
 

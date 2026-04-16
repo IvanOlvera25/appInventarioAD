@@ -3841,16 +3841,20 @@ def fabric_rolls():
 def stock_movements():
     page = request.args.get('page', 1, type=int)
 
-    # Filtros
-    movement_type = request.args.get('type', '', type=str)
+    # Filtros básicos
+    movement_type  = request.args.get('type', '', type=str)
     material_filter = request.args.get('material', '', type=str)
-    area_filter = request.args.get('area', '', type=str)
-    date_from = request.args.get('date_from', '', type=str)
-    date_to = request.args.get('date_to', '', type=str)
+    area_filter    = request.args.get('area', '', type=str)
+    date_from      = request.args.get('date_from', '', type=str)
+    date_to        = request.args.get('date_to', '', type=str)
+    # Filtros de proyecto
+    fp_filter      = request.args.get('fp', '', type=str).strip()
+    proyecto_filter = request.args.get('proyecto', '', type=str).strip()
+    cliente_filter = request.args.get('cliente', '', type=str).strip()
 
     query = StockMovement.query.join(Material)
 
-    # Aplicar filtros
+    # Filtros de movimiento
     if movement_type:
         query = query.filter(StockMovement.movement_type == movement_type)
 
@@ -3865,36 +3869,53 @@ def stock_movements():
 
     if date_from:
         try:
-            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
-            query = query.filter(StockMovement.created_at >= date_from_obj)
+            query = query.filter(StockMovement.fecha >= datetime.strptime(date_from, '%Y-%m-%d').date())
         except ValueError:
             pass
 
     if date_to:
         try:
-            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
-            # Agregar un día para incluir todo el día
-            date_to_obj = datetime.combine(date_to_obj, datetime.max.time())
-            query = query.filter(StockMovement.created_at <= date_to_obj)
+            query = query.filter(StockMovement.fecha <= datetime.strptime(date_to, '%Y-%m-%d').date())
         except ValueError:
             pass
+
+    # Filtros de proyecto: trabajar con los fp_codes que coinciden
+    if fp_filter or proyecto_filter or cliente_filter:
+        proj_query = Project.query
+        if fp_filter:
+            proj_query = proj_query.filter(Project.fp_code.contains(fp_filter))
+        if proyecto_filter:
+            proj_query = proj_query.filter(Project.name.contains(proyecto_filter))
+        if cliente_filter:
+            proj_query = proj_query.filter(Project.client.contains(cliente_filter))
+        matched_fps = [p.fp_code for p in proj_query.all()]
+        if matched_fps:
+            query = query.filter(StockMovement.fp_code.in_(matched_fps))
+        else:
+            # Sin resultados: forzar empty
+            query = query.filter(StockMovement.fp_code == '__NO_MATCH__')
 
     movements = query.order_by(StockMovement.created_at.desc()).paginate(
         page=page, per_page=30, error_out=False)
 
-    # Buscar información de cliente localmente para los FP en pantalla
-    fp_codes = set()
-    for m in movements.items:
-        if m.fp_code:
-            fp_codes.add(m.fp_code)
-    
-    projects_dict = {}
+    # Datos de proyecto para tooltip hover en columna FP
+    fp_codes = {m.fp_code for m in movements.items if m.fp_code}
+    projects_dict = {}   # fp_code -> dict con datos del proyecto
     if fp_codes:
         projs = Project.query.filter(Project.fp_code.in_(fp_codes)).all()
         for p in projs:
-            projects_dict[p.fp_code] = p.name or ''
+            projects_dict[p.fp_code] = {
+                'nombre':  p.name or '',
+                'cliente': p.client or '',
+            }
 
-    return render_template('stock_movements.html', movements=movements, projects_dict=projects_dict)
+    return render_template('stock_movements.html',
+                           movements=movements,
+                           projects_dict=projects_dict,
+                           fp_filter=fp_filter,
+                           proyecto_filter=proyecto_filter,
+                           cliente_filter=cliente_filter)
+
 
 
 @app.route('/api/requests/approval', methods=['POST'])
