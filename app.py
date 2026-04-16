@@ -109,7 +109,37 @@ with app.app_context():
                     print("  ✅ Columna 'password_hash' ampliada a VARCHAR(256)")
     except Exception as _e:
         print(f"  ⚠️ Migración password_hash: {_e}")
-# ===== FIN MIGRACIÓN CRÍTICA =====
+
+# ===== MIGRACIÓN CRÍTICA: material.is_active / disabled_at =====
+# Debe correr ANTES de cualquier query con el modelo Material
+with app.app_context():
+    try:
+        from sqlalchemy import text as _text2
+        with db.engine.connect() as _conn2:
+            _has_is_active = _conn2.execute(_text2(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'material' AND COLUMN_NAME = 'is_active'"
+            )).scalar()
+            if not _has_is_active:
+                _conn2.execute(_text2(
+                    'ALTER TABLE `material` ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1'
+                ))
+                _conn2.commit()
+                print("  ✅ Columna 'is_active' agregada a material")
+
+            _has_disabled_at = _conn2.execute(_text2(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'material' AND COLUMN_NAME = 'disabled_at'"
+            )).scalar()
+            if not _has_disabled_at:
+                _conn2.execute(_text2(
+                    'ALTER TABLE `material` ADD COLUMN disabled_at DATETIME DEFAULT NULL'
+                ))
+                _conn2.commit()
+                print("  ✅ Columna 'disabled_at' agregada a material")
+    except Exception as _e2:
+        print(f"  ⚠️ Migración material is_active/disabled_at: {_e2}")
+# ===== FIN MIGRACIÓN CRÍTICA material =====
 
 Compress(app)   # Compresión automática de respuestas HTML/JSON
 cache = Cache(app)  # Cache en memoria
