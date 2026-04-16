@@ -2870,6 +2870,7 @@ def search_materials():
         )
     ).limit(25).all()
 
+    materials_data = []
     for material in materials:
         materials_data.append({
             'id': material.id,
