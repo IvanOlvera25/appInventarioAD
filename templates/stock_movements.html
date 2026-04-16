@@ -350,19 +350,38 @@
                 <form id="exitForm">
                     <!-- Paso 1: Búsqueda de Proyecto -->
                     <div class="card mb-3">
-                        <div class="card-header bg-light">
-                            <strong><i class="fas fa-search me-2"></i>Paso 1: Buscar Proyecto</strong>
+                        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                            <strong><i class="fas fa-search me-2"></i>Paso 1: Tipo de Salida</strong>
                         </div>
                         <div class="card-body">
-                            <div class="row">
-                                <div class="col-12 mb-3">
-                                    <label class="form-label fw-bold">Código FP del Proyecto <span
-                                            class="text-danger">*</span></label>
+                            <div class="row g-3">
+                                <!-- Toggle consumible PRIMERO — define el flujo -->
+                                <div class="col-12">
+                                    <div class="d-flex gap-3">
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="radio" name="exitType" id="exitTypeProject" value="project" checked>
+                                            <label class="form-check-label fw-bold" for="exitTypeProject">
+                                                <i class="fas fa-project-diagram text-primary me-1"></i>Salida por Proyecto
+                                            </label>
+                                        </div>
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="radio" name="exitType" id="exitTypeConsumable" value="consumable">
+                                            <label class="form-check-label fw-bold" for="exitTypeConsumable">
+                                                <i class="fas fa-box-open text-success me-1"></i>Salida de Consumible
+                                                <small class="text-muted fw-normal">(sin requisición)</small>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Bloque búsqueda de proyecto -->
+                                <div class="col-12" id="exitProjectBlock">
+                                    <label class="form-label fw-bold">Código FP del Proyecto <span class="text-danger">*</span></label>
                                     <div class="position-relative">
                                         <input type="text" class="form-control" id="exitFpSearch"
                                             placeholder="Escriba al menos 2 caracteres para buscar..."
                                             autocomplete="off">
-                                        <input type="hidden" name="fp_code" id="exitFpCode" required>
+                                        <input type="hidden" name="fp_code" id="exitFpCode">
                                         <div id="exitFpResults" class="dropdown-menu w-100"
                                             style="max-height: 300px; overflow-y: auto;"></div>
                                         <div id="exitFpLoader"
@@ -377,17 +396,6 @@
                                             <strong>Proyecto Seleccionado:</strong>
                                             <span id="exitProjectDetails"></span>
                                         </div>
-                                    </div>
-                                </div>
-                                <!-- Toggle Consumible -->
-                                <div class="col-12 mt-2">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" id="exitConsumableToggle">
-                                        <label class="form-check-label" for="exitConsumableToggle">
-                                            <i class="fas fa-box-open text-info me-1"></i>
-                                            <strong>Salida de Consumible</strong>
-                                            <small class="text-muted">(sin necesidad de requisición)</small>
-                                        </label>
                                     </div>
                                 </div>
                             </div>
@@ -1082,55 +1090,69 @@
             }
 
             const selected = this.options[this.selectedIndex];
-            const pending = parseFloat(selected.dataset.pending);
-            const stock = parseFloat(selected.dataset.stock);
-            const unit = selected.dataset.unit;
-            const totalRequested = parseFloat(selected.dataset.totalRequested || 0);
-            const totalSupplied = parseFloat(selected.dataset.totalSupplied || 0);
-            const totalDelivered = parseFloat(selected.dataset.totalDelivered || 0);
-            const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
+            const stock               = parseFloat(selected.dataset.stock || 0);
+            const unit                = selected.dataset.unit;
+            const totalRequested      = parseFloat(selected.dataset.totalRequested || 0);
+            const totalSupplied       = parseFloat(selected.dataset.totalSupplied || 0);   // ← Verde
+            const totalDelivered      = parseFloat(selected.dataset.totalDelivered || 0);
+            const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0); // ← Amarillo
+            const isConsumable        = document.querySelector('input[name="exitType"]:checked')?.value === 'consumable';
 
-            // El máximo permitido es el menor entre stock disponible y abastecida pendiente
-            const maxAllowed = Math.min(stock, abastecidaPendiente);
+            // Máximo a entregar AHORA = min(stock disponible, abastecido pendiente)
+            // Para consumibles: solo el stock (no hay abastecido pendiente)
+            const maxAllowed = isConsumable ? stock : Math.min(stock, abastecidaPendiente);
 
             exitQuantityInput.max = maxAllowed;
             exitQuantityInput.value = '';
             exitQuantityInput.disabled = false;
             exitQuantityInput.focus();
 
-            exitPendingLabel.textContent = `/ ${pending.toFixed(2)} ${unit}`;
+            // Label del input muestra el máximo a entregar
+            exitPendingLabel.textContent = `/ ${maxAllowed.toFixed(2)} ${unit}`;
 
-            exitQuantityHelp.innerHTML = `
-            <div class="mt-2 p-2 rounded" style="background: rgba(0,0,0,0.04); font-size: 0.85em;">
-                <div class="row g-1">
-                    <div class="col-6">
-                        <span class="text-muted">Total Requisitado:</span>
-                        <strong class="text-dark ms-1">${totalRequested.toFixed(2)} ${unit}</strong>
+            exitQuantityHelp.innerHTML = isConsumable
+                ? `<div class="mt-2 p-2 rounded" style="background: rgba(0,0,0,0.04); font-size: 0.85em;">
+                    <div class="row g-1">
+                        <div class="col-6">
+                            <span class="text-muted">Stock Disponible:</span>
+                            <strong class="text-primary ms-1">${stock.toFixed(2)} ${unit}</strong>
+                        </div>
+                        <div class="col-6 border-top pt-1">
+                            <i class="fas fa-arrow-circle-right text-danger me-1"></i>
+                            <span class="text-muted">Máx. a entregar:</span>
+                            <strong class="text-danger ms-1">${maxAllowed.toFixed(2)} ${unit}</strong>
+                        </div>
                     </div>
-                    <div class="col-6">
-                        <span class="text-muted">Total Abastecido:</span>
-                        <strong class="text-success ms-1">${totalSupplied.toFixed(2)} ${unit}</strong>
+                   </div>`
+                : `<div class="mt-2 p-2 rounded" style="background: rgba(0,0,0,0.04); font-size: 0.85em;">
+                    <div class="row g-1">
+                        <div class="col-6">
+                            <span class="text-muted">Total Requisitado:</span>
+                            <strong class="text-dark ms-1">${totalRequested.toFixed(2)} ${unit}</strong>
+                        </div>
+                        <div class="col-6">
+                            <span class="text-muted">Total Abastecido:</span>
+                            <strong class="text-success ms-1">${totalSupplied.toFixed(2)} ${unit}</strong>
+                        </div>
+                        <div class="col-6">
+                            <span class="text-muted">Total Entregado:</span>
+                            <strong class="text-secondary ms-1">${totalDelivered.toFixed(2)} ${unit}</strong>
+                        </div>
+                        <div class="col-6">
+                            <span class="text-muted">Abastecido Pend. Entregar:</span>
+                            <strong class="fw-bold ms-1" style="color:#e67e00;">${abastecidaPendiente.toFixed(2)} ${unit}</strong>
+                        </div>
+                        <div class="col-6">
+                            <span class="text-muted">Stock Disponible:</span>
+                            <strong class="text-primary ms-1">${stock.toFixed(2)} ${unit}</strong>
+                        </div>
+                        <div class="col-6 border-top pt-1">
+                            <i class="fas fa-arrow-circle-right text-danger me-1"></i>
+                            <span class="text-muted">Máx. a entregar ahora:</span>
+                            <strong class="text-danger ms-1">${maxAllowed.toFixed(2)} ${unit}</strong>
+                        </div>
                     </div>
-                    <div class="col-6">
-                        <span class="text-muted">Total Entregado:</span>
-                        <strong class="text-secondary ms-1">${totalDelivered.toFixed(2)} ${unit}</strong>
-                    </div>
-                    <div class="col-6">
-                        <span class="text-muted">Abastecido Pend. Entregar:</span>
-                        <strong class="text-info ms-1">${abastecidaPendiente.toFixed(2)} ${unit}</strong>
-                    </div>
-                    <div class="col-6">
-                        <span class="text-muted">Stock Disponible:</span>
-                        <strong class="text-primary ms-1">${stock.toFixed(2)} ${unit}</strong>
-                    </div>
-                    <div class="col-6 border-top pt-1">
-                        <i class="fas fa-arrow-circle-right text-danger me-1"></i>
-                        <span class="text-muted">Máx. a entregar:</span>
-                        <strong class="text-danger ms-1">${maxAllowed.toFixed(2)} ${unit}</strong>
-                    </div>
-                </div>
-            </div>
-        `;
+                   </div>`;
 
             exitAddMaterialBtn.disabled = true;
         });
@@ -1267,7 +1289,7 @@
                 return;
             }
 
-            const isConsumable = document.getElementById('exitConsumableToggle').checked;
+            const isConsumable = document.querySelector('input[name="exitType"]:checked')?.value === 'consumable';
             const requestData = {
                 fp_code: fpCodeHidden.value,
                 department: isConsumable ? '' : exitDepartmentSelect.value,
@@ -1497,79 +1519,103 @@
             }
         }
 
+        // Referencia al bloque de búsqueda de proyecto (necesaria antes del event listener)
+        const exitProjectBlock = document.getElementById('exitProjectBlock');
+
         // ===================================================================
-        // CONSUMIBLE TOGGLE
+        // RADIO BUTTONS DE TIPO DE SALIDA (Proyecto vs Consumible)
         // ===================================================================
-        const consumableToggle = document.getElementById('exitConsumableToggle');
-        if (consumableToggle) {
-            consumableToggle.addEventListener('change', async function () {
-                const isConsumable = this.checked;
+        document.querySelectorAll('input[name="exitType"]').forEach(radio => {
+            radio.addEventListener('change', async function () {
+                const isConsumable = this.value === 'consumable';
+                const consumableToggle = document.getElementById('exitConsumableToggle'); // legacy compat
+
+                // Reiniciar materiales al cambiar modo
+                exitMaterialsData = [];
+                updateMaterialsList();
+                exitQuantityInput.value = '';
+                exitQuantityInput.disabled = true;
+                exitPendingLabel.textContent = '-';
+                exitQuantityHelp.textContent = '';
+                exitAddMaterialBtn.disabled = true;
+                exitSubmitBtn.disabled = true;
 
                 if (isConsumable) {
-                    // Hide department, show materials directly
+                    // MODO CONSUMIBLE: ocultar proyecto, departamento; mostrar materiales + personal
+                    exitProjectBlock.style.display = 'none';
                     exitDepartmentCard.style.display = 'none';
+                    exitPersonnelCard.style.display = 'block';
                     exitMaterialsCard.style.display = 'block';
                     exitNotesCard.style.display = 'block';
 
-                    // Load consumables
+                    // Limpiar FP (no aplica para consumibles directos)
+                    fpCodeHidden.value = '';
+
+                    // Cargar nombre del almacenista que entrega
+                    await loadCurrentUserFullname();
+                    // Cargar empleados para "persona que solicita"
+                    await loadActiveEmployees();
+
+                    // Cargar consumibles
                     exitMaterialLoader.style.display = 'block';
                     exitMaterialSelect.innerHTML = '<option value="" selected disabled>Cargando consumibles...</option>';
                     exitMaterialSelect.disabled = true;
 
                     try {
-                        const res = await fetch('/api/stock/consumables-list');
+                        const res  = await fetch('/api/stock/consumables-list');
                         const data = await res.json();
                         exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un consumible...</option>';
-
                         if (data.success && data.materials.length > 0) {
                             availableMaterials = data.materials.map(m => ({
                                 id: m.id, code: m.code, name: m.name, unit: m.unit,
-                                stock: m.stock, pending: m.stock, // max is stock for consumables
-                                total_requested: 0, total_supplied: 0, total_delivered: 0,
+                                stock: m.stock, pending: m.stock,
+                                total_requested: 0, total_supplied: m.stock, total_delivered: 0,
                                 abastecida_pendiente: m.stock
                             }));
-
                             availableMaterials.forEach(mat => {
-                                const text = `${mat.code} - ${mat.name} (Stock: ${mat.stock.toFixed(2)} ${mat.unit})`;
-                                const option = new Option(text, mat.id);
-                                option.dataset.pending = mat.stock;
-                                option.dataset.stock = mat.stock;
-                                option.dataset.unit = mat.unit;
-                                option.dataset.code = mat.code;
-                                option.dataset.name = mat.name;
-                                option.dataset.totalRequested = 0;
-                                option.dataset.totalSupplied = 0;
-                                option.dataset.totalDelivered = 0;
+                                const option = new Option(`${mat.name}  [${mat.code}]  — Stock: ${mat.stock.toFixed(2)} ${mat.unit}`, mat.id);
+                                option.dataset.pending           = mat.stock;
+                                option.dataset.stock             = mat.stock;
+                                option.dataset.unit              = mat.unit;
+                                option.dataset.code              = mat.code;
+                                option.dataset.name              = mat.name;
+                                option.dataset.totalRequested    = 0;
+                                option.dataset.totalSupplied     = mat.stock;
+                                option.dataset.totalDelivered    = 0;
                                 option.dataset.abastecidaPendiente = mat.stock;
                                 exitMaterialSelect.add(option);
                             });
                             exitMaterialSelect.disabled = false;
                         } else {
-                            exitMaterialSelect.innerHTML = '<option value="">No hay consumibles disponibles</option>';
+                            exitMaterialSelect.innerHTML = '<option value="">No hay consumibles con stock disponible</option>';
                         }
-                    } catch (error) {
-                        console.error('Error cargando consumibles:', error);
+                    } catch (err) {
                         exitMaterialSelect.innerHTML = '<option value="">Error al cargar consumibles</option>';
                     } finally {
                         exitMaterialLoader.style.display = 'none';
                     }
+
                 } else {
-                    // Restore normal flow: hide materials until department is selected
-                    exitDepartmentCard.style.display = fpCodeHidden.value ? 'block' : 'none';
+                    // MODO PROYECTO: restaurar flujo normal
+                    exitProjectBlock.style.display = 'block';
                     exitMaterialsCard.style.display = 'none';
                     exitNotesCard.style.display = 'none';
+                    if (fpCodeHidden.value) {
+                        exitDepartmentCard.style.display = 'block';
+                        exitPersonnelCard.style.display  = 'block';
+                    } else {
+                        exitDepartmentCard.style.display = 'none';
+                        exitPersonnelCard.style.display  = 'none';
+                    }
                     exitMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
                     exitMaterialSelect.disabled = true;
-                    exitQuantityInput.value = '';
-                    exitQuantityInput.disabled = true;
-                    exitPendingLabel.textContent = '-';
-                    exitQuantityHelp.textContent = '';
-                    exitAddMaterialBtn.disabled = true;
-                    exitMaterialsData = [];
-                    updateMaterialsList();
+                    availableMaterials = [];
                 }
             });
-        }
+        });
+
+        // Consumable toggle legacy (ya no se usa activamente)
+        const consumableToggle = document.getElementById('exitConsumableToggle');
 
         // Tooltips para badge FP: hover (escritorio) y long-press (tablet)
         const fpBadges = document.querySelectorAll('.fp-hover-badge');
