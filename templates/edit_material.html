@@ -766,9 +766,9 @@
                     </small>
                 </div>`;
 
-            // Cargar materiales activos (excluyendo el actual)
+            // Cargar materiales activos (excluyendo el actual) — incluyendo telas
             try {
-                const res  = await fetch('/api/materials/list');
+                const res  = await fetch('/api/materials/list-all');
                 const data = await res.json();
                 const select = document.getElementById('disableTransferSelect');
                 select.innerHTML = '';
@@ -778,7 +778,6 @@
 
                 data.materials
                     .filter(m => m.id != MATERIAL_ID)
-                    .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }))
                     .forEach(m => {
                         const opt = new Option(`${m.name}  [${m.code}]  — Stock: ${m.current_stock} ${m.unit}`, m.id);
                         select.add(opt);
@@ -787,10 +786,10 @@
                 if (disableTomSelect) disableTomSelect.destroy();
                 disableTomSelect = new TomSelect('#disableTransferSelect', {
                     create: false,
-                    maxOptions: null,
+                    maxOptions: false,
                     placeholder: 'Escriba para buscar material...',
                     searchField: ['text'],
-                    sortField: false,
+                    sortField: '$order',
                     onChange(value) {
                         selectedTransferId = value || null;
                         document.getElementById('disableConfirmBtn').disabled = !value;

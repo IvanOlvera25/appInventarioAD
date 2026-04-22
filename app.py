@@ -4311,6 +4311,32 @@ def get_materials_list():
 
     return jsonify({'materials': materials_data})
 
+
+# Ruta para obtener TODOS los materiales activos (incluyendo telas) — para transferencia de stock
+@app.route('/api/materials/list-all')
+@login_required
+def get_all_materials_list():
+    """Devuelve todos los materiales activos ordenados por nombre.
+    Se usa en el selector de destino al deshabilitar un material.
+    """
+    materials = Material.query.filter(
+        Material.is_active == True
+    ).order_by(Material.name).all()
+
+    materials_data = [
+        {
+            'id': m.id,
+            'code': m.code,
+            'name': m.name,
+            'current_stock': m.current_stock,
+            'unit': m.unit,
+            'category': m.category
+        }
+        for m in materials
+    ]
+
+    return jsonify({'materials': materials_data})
+
 @app.route('/api/empleados/list')
 @login_required
 def get_empleados_activos_list():
