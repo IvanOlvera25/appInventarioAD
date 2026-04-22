@@ -1077,24 +1077,27 @@
             exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
 
             availableMaterials.forEach(mat => {
-                let pendingForThisMaterial = mat.pending;
+                // El límite real es abastecida_pendiente (no pending_quantity que incluye lo que va a compras)
+                let entregableAhora = mat.abastecida_pendiente !== undefined ? mat.abastecida_pendiente : mat.pending;
                 const alreadyAdded = exitMaterialsData.find(m => m.material_id == mat.id);
                 if (alreadyAdded) {
-                    pendingForThisMaterial -= alreadyAdded.quantity;
+                    entregableAhora -= alreadyAdded.quantity;
                 }
 
-                if (pendingForThisMaterial > 0.001) {
-                    const text = `${mat.code} - ${mat.name} (Pendiente: ${pendingForThisMaterial.toFixed(2)} ${mat.unit})`;
+                if (entregableAhora > 0.001) {
+                    // Mostrar el límite real (min entre stock y abastecido pendiente)
+                    const maxNow = Math.min(mat.stock, entregableAhora);
+                    const text = `${mat.code} - ${mat.name} (Disponible: ${maxNow.toFixed(2)} ${mat.unit})`;
                     const option = new Option(text, mat.id);
-                    option.dataset.pending = pendingForThisMaterial;
-                    option.dataset.stock = mat.stock;
-                    option.dataset.unit = mat.unit;
-                    option.dataset.code = mat.code;
-                    option.dataset.name = mat.name;
-                    option.dataset.totalRequested = mat.total_requested || 0;
-                    option.dataset.totalSupplied = mat.total_supplied || 0;
-                    option.dataset.totalDelivered = mat.total_delivered || 0;
-                    option.dataset.abastecidaPendiente = mat.abastecida_pendiente || 0;
+                    option.dataset.pending             = entregableAhora;   // abastecida_pendiente restante
+                    option.dataset.stock               = mat.stock;
+                    option.dataset.unit                = mat.unit;
+                    option.dataset.code                = mat.code;
+                    option.dataset.name                = mat.name;
+                    option.dataset.totalRequested      = mat.total_requested || 0;
+                    option.dataset.totalSupplied       = mat.total_supplied || 0;
+                    option.dataset.totalDelivered      = mat.total_delivered || 0;
+                    option.dataset.abastecidaPendiente = entregableAhora;
                     exitMaterialSelect.add(option);
                 }
             });
@@ -1161,7 +1164,7 @@
                         </div>
                         <div class="col-6">
                             <span class="text-muted">Abastecido Pend. Entregar:</span>
-                            <strong class="fw-bold ms-1" style="color:#e67e00;">${abastecidaPendiente.toFixed(2)} ${unit}</strong>
+                            <strong class="fw-bold ms-1" style="color:#7c3f00; background:#ffe5b4; padding:1px 5px; border-radius:4px;">${abastecidaPendiente.toFixed(2)} ${unit}</strong>
                         </div>
                         <div class="col-6">
                             <span class="text-muted">Stock Disponible:</span>
@@ -1332,19 +1335,18 @@
             try {
                 const response = await fetch('/api/stock/exit-multiple', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestData)
                 });
-
                 const data = await response.json();
 
                 if (data.success) {
-                    alert(data.message);
-                    window.location.reload();
+                    const bsModal = bootstrap.Modal.getInstance(document.getElementById('exitModal'));
+                    if (bsModal) bsModal.hide();
+                    showToast(data.message);
+                    setTimeout(() => window.location.reload(), 1500);
                 } else {
-                    alert('Error: ' + data.message);
+                    showToast('Error: ' + data.message, true);
                     if (data.errors && data.errors.length > 0) {
                         console.error('Errores:', data.errors);
                     }
@@ -1353,7 +1355,7 @@
                 }
             } catch (error) {
                 console.error('Error:', error);
-                alert('Ocurrió un error de conexión.');
+                showToast('Error de conexión al registrar salida.', true);
                 exitSubmitBtn.disabled = false;
                 exitSubmitBtn.innerHTML = originalButtonText;
             }
