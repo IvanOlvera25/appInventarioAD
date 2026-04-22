@@ -7235,6 +7235,7 @@ def api_cut_fabric_roll():
             rollos=0,
             fp_code=fp_code if fp_code else None,
             reference_type='corte_rollo',
+            reference_id=roll.id,       # Vínculo directo al rollo para actualizaciones futuras
             user_id=current_user.id,
             personal=current_user.username,
             area=area if area else 'Producción',
@@ -7281,13 +7282,27 @@ def api_update_fabric_roll():
             old_number = roll.roll_number
             roll.roll_number = new_number
 
-            # Actualizar notas de StockMovements que referencian el rollo viejo
-            related_movements = StockMovement.query.filter(
+            # ── Actualizar notas de StockMovements vinculados a este rollo ──
+            # 1. Cortes con vínculo directo (reference_id = roll.id)
+            direct_cuts = StockMovement.query.filter(
+                StockMovement.reference_type == 'corte_rollo',
+                StockMovement.reference_id == roll.id
+            ).all()
+            for mv in direct_cuts:
+                if mv.notes:
+                    mv.notes = mv.notes.replace(old_number, new_number)
+
+            # 2. Cortes históricos sin reference_id (compatibilidad hacia atrás)
+            #    Filtramos por material + reference_type para evitar falsos positivos
+            legacy_cuts = StockMovement.query.filter(
+                StockMovement.reference_type == 'corte_rollo',
                 StockMovement.material_id == roll.material_id,
+                StockMovement.reference_id == None,
                 StockMovement.notes.contains(old_number)
             ).all()
-            for mv in related_movements:
-                mv.notes = mv.notes.replace(old_number, new_number)
+            for mv in legacy_cuts:
+                if mv.notes:
+                    mv.notes = mv.notes.replace(old_number, new_number)
 
         new_location = (request.form.get('location') or '').strip()
         if new_location:
