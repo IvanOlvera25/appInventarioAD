@@ -568,53 +568,49 @@
             </div>
             <div class="modal-body">
                 <form id="returnForm">
-                    <!-- Paso 1: Buscar Proyecto por FP -->
+                    <!-- Paso 1: FP como texto directo -->
                     <div class="mb-3">
-                        <label class="form-label fw-bold">Proyecto FP de Origen <span class="text-danger">*</span></label>
-                        <div class="position-relative">
-                            <input type="text" class="form-control" id="returnFpSearch"
-                                placeholder="Escriba el código FP del proyecto..." autocomplete="off">
-                            <input type="hidden" name="fp_code" id="returnFpCode" required>
-                            <div id="returnFpResults" class="dropdown-menu w-100"
-                                style="max-height: 300px; overflow-y: auto;"></div>
+                        <label class="form-label fw-bold">Código FP del Proyecto <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <input type="text" class="form-control text-uppercase" id="returnFpInput"
+                                name="fp_code" placeholder="Ej: FP-2025-001" autocomplete="off"
+                                style="text-transform:uppercase">
+                            <button type="button" class="btn btn-outline-secondary" id="returnFpSearchBtn">
+                                <i class="fas fa-search me-1"></i>Buscar
+                            </button>
                         </div>
-                        <div id="returnProjectInfo" class="mt-2" style="display: none;">
-                            <div class="alert alert-success mb-0 py-2">
-                                <i class="fas fa-check-circle me-2"></i>
-                                <strong>Proyecto:</strong> <span id="returnProjectDetails"></span>
-                            </div>
-                        </div>
+                        <div id="returnFpFeedback" class="mt-1 small"></div>
                     </div>
 
                     <!-- Paso 2: Material a devolver -->
                     <div class="alert alert-light p-2 text-center small" id="returnLoader" style="display: none;">
                         <i class="fas fa-spinner fa-spin me-2"></i>Buscando materiales...
                     </div>
-                    <div class="mb-3">
+                    <div class="mb-3" id="returnMaterialBlock" style="display:none;">
                         <label class="form-label fw-bold">Material a Devolver <span class="text-danger">*</span></label>
-                        <select class="form-select" name="material_id" id="returnMaterialSelect" required disabled>
-                            <option value="">Seleccione un proyecto primero</option>
+                        <select class="form-select" name="material_id" id="returnMaterialSelect" required>
+                            <option value="">Seleccione un material...</option>
                         </select>
                     </div>
 
                     <!-- Paso 3: Condición de retorno -->
-                    <div class="mb-3">
+                    <div class="mb-3" id="returnConditionBlock" style="display:none;">
                         <label class="form-label fw-bold">Condición de Retorno <span class="text-danger">*</span></label>
-                        <div class="d-flex gap-3">
+                        <div class="d-flex gap-3 flex-wrap">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="condition_reutilizable" id="condReutilizable" value="reutilizable">
+                                <input class="form-check-input" type="radio" name="return_condition" id="condReutilizable" value="reutilizable" required>
                                 <label class="form-check-label" for="condReutilizable">
-                                    <i class="fas fa-recycle text-success me-1"></i>Reutilizable
+                                    <i class="fas fa-star text-success me-1"></i>Reutilizable <small class="text-muted">(Como nuevo)</small>
                                 </label>
                             </div>
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="condition_reciclable" id="condReciclable" value="reciclable">
+                                <input class="form-check-input" type="radio" name="return_condition" id="condReciclable" value="reciclable">
                                 <label class="form-check-label" for="condReciclable">
                                     <i class="fas fa-sync text-info me-1"></i>Reciclable
                                 </label>
                             </div>
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="condition_desecho" id="condDesecho" value="desecho">
+                                <input class="form-check-input" type="radio" name="return_condition" id="condDesecho" value="desecho">
                                 <label class="form-check-label" for="condDesecho">
                                     <i class="fas fa-trash text-danger me-1"></i>Desecho
                                 </label>
@@ -625,19 +621,19 @@
                     <!-- Sección de reciclaje (visible si seleccionan Reciclable) -->
                     <div id="returnRecycleSection" class="card mb-3" style="display: none;">
                         <div class="card-header bg-info text-white py-2">
-                            <strong><i class="fas fa-sync me-2"></i>Materiales de Reciclaje</strong>
+                            <strong><i class="fas fa-sync me-2"></i>Medidas del Material Reciclado</strong>
                             <button type="button" class="btn btn-sm btn-light float-end" id="addRecycleLineBtn">
                                 <i class="fas fa-plus me-1"></i>Agregar línea
                             </button>
                         </div>
                         <div class="card-body" id="recycleLinesContainer">
                             <div class="recycle-line row g-2 mb-2" data-index="0">
-                                <div class="col-md-7">
+                                <div class="col-md-6">
                                     <select class="form-select form-select-sm" name="recycle_material_0">
-                                        <option value="">Seleccione material reciclado...</option>
+                                        <option value="">Seleccione medida reciclada...</option>
                                     </select>
                                 </div>
-                                <div class="col-md-4">
+                                <div class="col-md-5">
                                     <input type="number" class="form-control form-control-sm" name="recycle_qty_0"
                                         step="0.01" min="0.01" placeholder="Cantidad">
                                 </div>
@@ -650,12 +646,12 @@
                         </div>
                         <div class="card-footer small text-muted">
                             <i class="fas fa-info-circle me-1"></i>
-                            Seleccione los materiales reciclados que resultarán de este retorno
+                            Seleccione las medidas recicladas vinculadas al material original
                         </div>
                     </div>
 
                     <!-- Notas -->
-                    <div class="mb-3">
+                    <div class="mb-3" id="returnNotesBlock" style="display:none;">
                         <label class="form-label fw-bold">Notas del Retorno</label>
                         <textarea class="form-control" name="notes" rows="2" placeholder="Observaciones..."></textarea>
                     </div>
@@ -663,19 +659,20 @@
                     <div class="alert alert-info small mb-0">
                         <i class="fas fa-info-circle me-1"></i>
                         Al registrar el retorno, todos los items de este material en las requisiciones del proyecto
-                        se marcarán con estatus <strong>"Retornado"</strong>.
+                        donde se especificó retorno se marcarán como <strong>"Retornado"</strong>.
                     </div>
                 </form>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-warning" onclick="saveReturn()">
+                <button type="button" class="btn btn-warning" id="returnSubmitBtn" onclick="saveReturn()" disabled>
                     <i class="fas fa-save me-1"></i>Registrar Retorno
                 </button>
             </div>
         </div>
     </div>
 </div>
+
 
 <!-- Modal IMPORTAR -->
 <div class="modal fade" id="importModal" tabindex="-1">
@@ -1362,141 +1359,121 @@
         };
 
         // ===================================================================
-        // MODAL DE RETORNO (Mejorado)
+        // MODAL DE RETORNO — FP como texto directo
         // ===================================================================
         const returnModal = document.getElementById('returnModal');
         if (returnModal) {
-            const returnFpSearch = document.getElementById('returnFpSearch');
-            const returnFpCode = document.getElementById('returnFpCode');
-            const returnFpResults = document.getElementById('returnFpResults');
-            const returnProjectInfo = document.getElementById('returnProjectInfo');
-            const returnProjectDetails = document.getElementById('returnProjectDetails');
+            const returnFpInput       = document.getElementById('returnFpInput');
+            const returnFpSearchBtn   = document.getElementById('returnFpSearchBtn');
+            const returnFpFeedback    = document.getElementById('returnFpFeedback');
             const returnMaterialSelect = document.getElementById('returnMaterialSelect');
-            const returnLoader = document.getElementById('returnLoader');
+            const returnMaterialBlock = document.getElementById('returnMaterialBlock');
+            const returnConditionBlock = document.getElementById('returnConditionBlock');
+            const returnNotesBlock    = document.getElementById('returnNotesBlock');
+            const returnLoader        = document.getElementById('returnLoader');
             const returnRecycleSection = document.getElementById('returnRecycleSection');
             const recycleLinesContainer = document.getElementById('recycleLinesContainer');
-            const condReciclable = document.getElementById('condReciclable');
-            const addRecycleLineBtn = document.getElementById('addRecycleLineBtn');
+            const condReciclable      = document.getElementById('condReciclable');
+            const addRecycleLineBtn   = document.getElementById('addRecycleLineBtn');
+            const returnSubmitBtn     = document.getElementById('returnSubmitBtn');
 
-            let returnSearchTimeout;
             let returnRecycledOptions = [];
 
-            // Reset on open
+            // Reset al abrir modal
             returnModal.addEventListener('show.bs.modal', () => {
-                returnFpSearch.value = '';
-                returnFpCode.value = '';
-                returnFpResults.innerHTML = '';
-                returnFpResults.classList.remove('show');
-                returnProjectInfo.style.display = 'none';
-                returnMaterialSelect.innerHTML = '<option value="">Seleccione un proyecto primero</option>';
-                returnMaterialSelect.disabled = true;
+                returnFpInput.value = '';
+                returnFpFeedback.innerHTML = '';
+                returnMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
+                returnMaterialBlock.style.display = 'none';
+                returnConditionBlock.style.display = 'none';
+                returnNotesBlock.style.display = 'none';
                 returnRecycleSection.style.display = 'none';
-                document.getElementById('condReutilizable').checked = false;
-                document.getElementById('condReciclable').checked = false;
-                document.getElementById('condDesecho').checked = false;
+                returnSubmitBtn.disabled = true;
+                returnRecycledOptions = [];
+                document.querySelectorAll('input[name="return_condition"]').forEach(r => r.checked = false);
+                // Limpiar líneas de reciclado extra
+                const extraLines = recycleLinesContainer.querySelectorAll('.recycle-line:not(:first-child)');
+                extraLines.forEach(l => l.remove());
+                const firstSelect = recycleLinesContainer.querySelector('select');
+                if (firstSelect) firstSelect.innerHTML = '<option value="">Seleccione medida reciclada...</option>';
             });
 
-            // FP Search
-            returnFpSearch.addEventListener('input', function () {
-                const searchTerm = this.value.trim();
-                clearTimeout(returnSearchTimeout);
-                if (searchTerm.length < 2) {
-                    returnFpResults.classList.remove('show');
-                    return;
-                }
-                returnSearchTimeout = setTimeout(async function () {
-                    try {
-                        const response = await fetch(`/search_fp?fp=${encodeURIComponent(searchTerm)}`);
-                        const data = await response.json();
-                        if (data.success && data.data && data.data.length > 0) {
-                            returnFpResults.innerHTML = '';
-                            data.data.forEach(project => {
-                                const item = document.createElement('a');
-                                item.className = 'dropdown-item';
-                                item.href = '#';
-                                item.innerHTML = `
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <strong>${project.fp_code}</strong>
-                                        <div class="small text-muted">${project.nombre || 'Sin nombre'}</div>
-                                    </div>
-                                    ${project.cliente ? `<span class="badge bg-secondary">${project.cliente}</span>` : ''}
-                                </div>`;
-                                item.addEventListener('click', function (e) {
-                                    e.preventDefault();
-                                    selectReturnProject(project);
-                                });
-                                returnFpResults.appendChild(item);
-                            });
-                            returnFpResults.classList.add('show');
-                        } else {
-                            returnFpResults.innerHTML = '<div class="dropdown-item text-muted">No se encontraron proyectos</div>';
-                            returnFpResults.classList.add('show');
-                        }
-                    } catch (error) {
-                        console.error('Error buscando FP:', error);
-                    }
-                }, 300);
-            });
-
-            document.addEventListener('click', function (e) {
-                if (!returnFpSearch.contains(e.target) && !returnFpResults.contains(e.target)) {
-                    returnFpResults.classList.remove('show');
-                }
-            });
-
-            async function selectReturnProject(project) {
-                returnFpSearch.value = `${project.fp_code} - ${project.nombre || ''}`;
-                returnFpCode.value = project.fp_code;
-                returnProjectDetails.textContent = `${project.fp_code} - ${project.nombre || ''} ${project.cliente ? '(' + project.cliente + ')' : ''}`;
-                returnProjectInfo.style.display = 'block';
-                returnFpResults.classList.remove('show');
-
-                // Load materials for this project
+            // Función para cargar materiales por FP
+            async function loadReturnMaterials(fpCode) {
+                if (!fpCode.trim()) return;
                 returnLoader.style.display = 'block';
+                returnMaterialBlock.style.display = 'none';
+                returnConditionBlock.style.display = 'none';
+                returnNotesBlock.style.display = 'none';
+                returnSubmitBtn.disabled = true;
+                returnFpFeedback.innerHTML = '';
+
                 try {
-                    const res = await fetch(`/api/stock/pending-return-by-fp?fp_code=${encodeURIComponent(project.fp_code)}`);
+                    const res = await fetch(`/api/stock/pending-return-by-fp?fp_code=${encodeURIComponent(fpCode.trim())}`);
                     const data = await res.json();
-                    returnMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione material...</option>';
+
+                    returnMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
                     if (data.materials && data.materials.length > 0) {
                         data.materials.forEach(mat => {
-                            const text = `${mat.code} - ${mat.name} (${mat.pending_quantity.toFixed(2)} ${mat.unit})`;
+                            const text = `${mat.code} - ${mat.name}`;
                             const option = new Option(text, mat.id);
                             option.dataset.materialId = mat.id;
                             returnMaterialSelect.add(option);
                         });
-                        returnMaterialSelect.disabled = false;
+                        returnMaterialBlock.style.display = 'block';
+                        returnFpFeedback.innerHTML = `<span class="text-success"><i class="fas fa-check-circle me-1"></i>FP encontrado — ${data.materials.length} material(es) con salidas</span>`;
                     } else {
-                        returnMaterialSelect.innerHTML = '<option value="">No hay materiales con salidas para este proyecto</option>';
+                        returnFpFeedback.innerHTML = `<span class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>No se encontraron materiales con salidas pendientes de retorno para este FP.</span>`;
                     }
-                } catch (error) {
-                    console.error('Error cargando materiales:', error);
-                    returnMaterialSelect.innerHTML = '<option value="">Error al cargar materiales</option>';
+                } catch (err) {
+                    returnFpFeedback.innerHTML = `<span class="text-danger"><i class="fas fa-times-circle me-1"></i>Error al buscar el proyecto. Verifica el código FP.</span>`;
                 } finally {
                     returnLoader.style.display = 'none';
                 }
             }
 
-            // When material is selected, load recycled options
+            // Botón buscar
+            returnFpSearchBtn.addEventListener('click', () => loadReturnMaterials(returnFpInput.value));
+
+            // Enter en el input
+            returnFpInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); loadReturnMaterials(this.value); }
+            });
+
+            // Al seleccionar material: mostrar condiciones y cargar medidas recicladas
             returnMaterialSelect.addEventListener('change', async function () {
+                returnConditionBlock.style.display = 'none';
+                returnNotesBlock.style.display = 'none';
+                returnRecycleSection.style.display = 'none';
+                returnSubmitBtn.disabled = true;
+                document.querySelectorAll('input[name="return_condition"]').forEach(r => r.checked = false);
+                returnRecycledOptions = [];
+
                 if (!this.value) return;
+
+                // Cargar medidas recicladas vinculadas a este material
                 try {
                     const res = await fetch(`/api/materials/${this.value}/recycled-options`);
                     const data = await res.json();
                     returnRecycledOptions = data.materials || [];
                     updateRecycleSelects();
-                } catch (error) {
-                    console.error('Error cargando opciones de reciclaje:', error);
+                } catch (err) {
                     returnRecycledOptions = [];
                 }
+
+                returnConditionBlock.style.display = 'block';
+                returnNotesBlock.style.display = 'block';
+                returnSubmitBtn.disabled = false;
             });
 
-            // Toggle recycle section on checkbox change
-            condReciclable.addEventListener('change', function () {
-                returnRecycleSection.style.display = this.checked ? 'block' : 'none';
+            // Toggle sección reciclado al elegir la condición
+            document.querySelectorAll('input[name="return_condition"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    returnRecycleSection.style.display = (this.value === 'reciclable') ? 'block' : 'none';
+                });
             });
 
-            // Add recycle line
+            // Agregar línea de reciclado
             addRecycleLineBtn.addEventListener('click', function () {
                 const lines = recycleLinesContainer.querySelectorAll('.recycle-line');
                 const newIndex = lines.length;
@@ -1504,18 +1481,18 @@
                 newLine.className = 'recycle-line row g-2 mb-2';
                 newLine.dataset.index = newIndex;
 
-                let optionsHtml = '<option value="">Seleccione material reciclado...</option>';
+                let optionsHtml = '<option value="">Seleccione medida reciclada...</option>';
                 returnRecycledOptions.forEach(m => {
                     optionsHtml += `<option value="${m.id}">${m.code} - ${m.name} (${m.unit})</option>`;
                 });
 
                 newLine.innerHTML = `
-                    <div class="col-md-7">
+                    <div class="col-md-6">
                         <select class="form-select form-select-sm" name="recycle_material_${newIndex}">
                             ${optionsHtml}
                         </select>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-md-5">
                         <input type="number" class="form-control form-control-sm" name="recycle_qty_${newIndex}"
                             step="0.01" min="0.01" placeholder="Cantidad">
                     </div>
@@ -1525,22 +1502,20 @@
                         </button>
                     </div>`;
                 recycleLinesContainer.appendChild(newLine);
-
-                newLine.querySelector('.remove-recycle-line').addEventListener('click', function () {
-                    newLine.remove();
-                });
+                newLine.querySelector('.remove-recycle-line').addEventListener('click', () => newLine.remove());
             });
 
             function updateRecycleSelects() {
                 const selects = recycleLinesContainer.querySelectorAll('select');
                 selects.forEach(sel => {
-                    sel.innerHTML = '<option value="">Seleccione material reciclado...</option>';
+                    sel.innerHTML = '<option value="">Seleccione medida reciclada...</option>';
                     returnRecycledOptions.forEach(m => {
                         sel.add(new Option(`${m.code} - ${m.name} (${m.unit})`, m.id));
                     });
                 });
             }
         }
+
 
         // Referencia al bloque de búsqueda de proyecto (necesaria antes del event listener)
         const exitProjectBlock = document.getElementById('exitProjectBlock');
@@ -1792,56 +1767,52 @@
 
     window.saveEntry = () => submitForm('/api/stock/entry', 'entryForm');
 
-    // Custom saveReturn: collect checkbox conditions and add to form
+    // saveReturn: lee FP del input directo y condición del radio button
     window.saveReturn = async () => {
         const form = document.getElementById('returnForm');
-        const fpCode = document.getElementById('returnFpCode').value;
+        const fpCode = (document.getElementById('returnFpInput')?.value || '').trim().toUpperCase();
         const materialId = document.getElementById('returnMaterialSelect').value;
 
         if (!fpCode || !materialId) {
-            alert('Seleccione un proyecto y un material');
+            showToast('Seleccione un proyecto y un material', true);
             return;
         }
 
-        // Collect conditions
-        const conditions = [];
-        if (document.getElementById('condReutilizable').checked) conditions.push('reutilizable');
-        if (document.getElementById('condReciclable').checked) conditions.push('reciclable');
-        if (document.getElementById('condDesecho').checked) conditions.push('desecho');
-
-        if (conditions.length === 0) {
-            alert('Seleccione al menos una condición de retorno');
+        // Leer condición del radio button
+        const condRadio = document.querySelector('input[name="return_condition"]:checked');
+        if (!condRadio) {
+            showToast('Seleccione una condición de retorno', true);
             return;
         }
 
         const formData = new FormData(form);
-        formData.set('condition_on_return', conditions.join(','));
+        formData.set('fp_code', fpCode);
+        formData.set('condition_on_return', condRadio.value);
 
-        const modal = form.closest('.modal');
-        const button = modal.querySelector('.modal-footer button[onclick]');
-        const originalButtonText = button.innerHTML;
-        button.disabled = true;
-        button.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Guardando...`;
+        const btn = document.getElementById('returnSubmitBtn');
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Guardando...`;
 
         try {
             const response = await fetch('/api/stock/return', { method: 'POST', body: formData });
             const data = await response.json();
             if (data.success) {
-                const bsModal = bootstrap.Modal.getInstance(modal);
+                const bsModal = bootstrap.Modal.getInstance(document.getElementById('returnModal'));
                 if (bsModal) bsModal.hide();
                 form.reset();
                 showToast(data.message);
                 setTimeout(() => window.location.reload(), 1500);
             } else {
                 showToast('Error: ' + data.message, true);
-                button.disabled = false;
-                button.innerHTML = originalButtonText;
+                btn.disabled = false;
+                btn.innerHTML = originalText;
             }
         } catch (error) {
             console.error('Error:', error);
             showToast('Ocurrió un error de conexión.', true);
-            button.disabled = false;
-            button.innerHTML = originalButtonText;
+            btn.disabled = false;
+            btn.innerHTML = originalText;
         }
     };
 
