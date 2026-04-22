@@ -918,14 +918,7 @@
         }
     });
 
-    // Confirmar antes de acciones peligrosas (backup)
-    document.addEventListener('click', function (e) {
-        if (e.target.matches('.btn-danger') || e.target.closest('.btn-danger')) {
-            if (!confirm('¿Está seguro de realizar esta acción? No se puede deshacer.')) {
-                e.preventDefault();
-            }
-        }
-    });
+
 
     // Actualizar datos cada 5 minutos (placeholder)
     setInterval(function () {

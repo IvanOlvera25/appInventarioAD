@@ -5207,7 +5207,7 @@ def register_entry():
             movement_type='entrada',
             quantity=quantity,
             rollos=int(data.get('rollos', 0)),
-            area=data.get('area'),
+            area=data.get('location') or data.get('area'),
             unit_cost=material.unit_cost, # Costo automático del catálogo
             fecha=datetime.utcnow().date(), # Fecha automática
             hora=datetime.utcnow().time(), # Hora automática
@@ -7331,11 +7331,11 @@ def api_delete_fabric_roll(roll_id):
         if roll.remaining_length and roll.remaining_length > 0:
             material.current_stock = (material.current_stock or 0) - roll.remaining_length
             material.last_movement = datetime.utcnow()
-            # Registrar como AJUSTE de inventario (no como salida operativa)
+            # Registrar como AJUSTE de inventario (cantidad negativa = salida)
             mv = StockMovement(
                 material_id=material.id,
                 movement_type='ajuste',
-                quantity=roll.remaining_length,
+                quantity=-roll.remaining_length,   # Negativo = salida de inventario
                 rollos=0,
                 reference_type='ajuste_eliminacion_rollo',
                 user_id=current_user.id,

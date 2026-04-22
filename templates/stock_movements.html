@@ -319,6 +319,18 @@
                         </div>
                     </div>
                     <div class="mb-3">
+                        <label class="form-label fw-bold">Ubicación / Área</label>
+                        <select class="form-select" name="location">
+                            <option value="">Sin especificar</option>
+                            <option value="Almacén Principal">Almacén Principal</option>
+                            <option value="Almacén de Telas">Almacén de Telas</option>
+                            <option value='Área de Producción'>Área de Producción</option>
+                            <option value='Área de Impresión'>Área de Impresión</option>
+                            <option value='Área de Costura'>Área de Costura</option>
+                            <option value="Compras">Compras</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label fw-bold">Notas</label>
                         <textarea class="form-control" name="notes" rows="2"
                             placeholder="Observaciones adicionales..."></textarea>
@@ -1737,7 +1749,19 @@
 
         try {
             const response = await fetch(url, { method: 'POST', body: formData });
-            const data = await response.json();
+            // Leer texto primero para evitar falso error si la respuesta no es JSON válido
+            const text = await response.text();
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch {
+                // El servidor devuelvió algo que no es JSON (redirect, error 500, etc.)
+                showToast('Error en el servidor. Verifica que el registro fue guardado.', true);
+                button.disabled = false;
+                button.innerHTML = originalButtonText;
+                return;
+            }
+
             if (data.success) {
                 // Cerrar modal
                 const bsModal = bootstrap.Modal.getInstance(modal);
@@ -1747,10 +1771,8 @@
                 if (entryTomSelect && formId === 'entryForm') {
                     entryTomSelect.clear();
                 }
-                
                 showToast(data.message);
-                
-                // Recargar página silenciosamente después del toast para actualizar la lista
+                // Recargar página para mostrar el nuevo movimiento
                 setTimeout(() => window.location.reload(), 1500);
             } else {
                 showToast('Error: ' + data.message, true);
@@ -1758,8 +1780,9 @@
                 button.innerHTML = originalButtonText;
             }
         } catch (error) {
-            console.error('Error:', error);
-            showToast('Ocurrió un error de conexión.', true);
+            // Error real de red (sin conexión)
+            console.error('Error de red:', error);
+            showToast('Error de conexión. Verifica tu red e inténtalo de nuevo.', true);
             button.disabled = false;
             button.innerHTML = originalButtonText;
         }
