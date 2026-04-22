@@ -196,10 +196,6 @@
                                         <button class="btn btn-outline-info" title="Ver detalles"
                                             onclick="viewMovementDetail({{ movement.id }})" data-bs-toggle="modal"
                                             data-bs-target="#movementDetailModal"><i class="fas fa-eye"></i></button>
-                                        {% if current_user.role != 'requisitador' and movement.movement_type == 'salida'
-                                        and not movement.returned %}
-                                        <!-- Retorno rápido eliminado — usar Retorno Gral. -->
-                                        {% endif %}
                                         {% if current_user.role == 'admin' %}
                                         <button class="btn btn-outline-danger" title="Eliminar"
                                             onclick="deleteMovement({{ movement.id }})"><i
@@ -717,7 +713,7 @@
     </div>
 </div>
 
-<!-- Modal de Retorno Rápido ELIMINADO — se usa Retorno Gral. -->
+
 {% endblock %}
 
 {% block scripts %}
@@ -759,10 +755,10 @@
                     if (entryTomSelect) { entryTomSelect.destroy(); }
                     entryTomSelect = new TomSelect("#entryMaterialSelect", {
                         create: false,
-                        maxOptions: null,   // Sin límite: mostrar todos los materiales
+                        maxOptions: false,  // Sin límite: mostrar todos los materiales
                         placeholder: 'Escriba para filtrar...',
                         searchField: ['text'],
-                        sortField: false    // Ya vienen ordenados por nombre desde sort()
+                        sortField: '$order' // Respetar el orden del array (ya ordenado alfabéticamente)
                     });
                 });
             });
