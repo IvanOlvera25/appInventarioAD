@@ -5790,6 +5790,7 @@ def register_return():
         material_id = request.form.get('material_id')
         condition = request.form.get('condition_on_return')
         notes = request.form.get('notes', '')
+        return_quantity_str = request.form.get('return_quantity', '0')
 
         if not fp_code or not material_id:
             return jsonify({'success': False, 'message': 'Proyecto y material son obligatorios'})
@@ -5803,16 +5804,27 @@ def register_return():
         if not project:
             return jsonify({'success': False, 'message': f'Proyecto {fp_code} no encontrado'})
 
+        # Determinar cantidad del retorno según la condición
+        return_quantity = 0
+        if condition in ('reutilizable', 'desecho'):
+            try:
+                return_quantity = float(return_quantity_str)
+            except (ValueError, TypeError):
+                return jsonify({'success': False, 'message': 'Cantidad de retorno inválida'})
+
+            if return_quantity <= 0:
+                return jsonify({'success': False, 'message': 'La cantidad de retorno debe ser mayor a 0'})
+
         # Generar IDM para el retorno
         last_id = StockMovement.query.count()
         idm = f"RET-{datetime.utcnow().strftime('%y%m%d')}-{last_id + 1:04d}"
 
-        # Crear movimiento de retorno (sin cantidad, registro informativo)
+        # Crear movimiento de retorno con la cantidad correspondiente
         return_movement = StockMovement(
             idm=idm,
             material_id=material.id,
             movement_type='retorno',
-            quantity=0,  # Se actualizará cuando se reciba físicamente
+            quantity=return_quantity,
             fp_code=fp_code,
             fecha=datetime.now().date(),
             hora=datetime.now().time(),
@@ -5822,6 +5834,10 @@ def register_return():
             user_id=current_user.id,
             notes=f"Condición: {condition}. {notes}"
         )
+
+        # Si es reutilizable, devolver al stock
+        if condition == 'reutilizable' and return_quantity > 0:
+            material.current_stock += return_quantity
 
         db.session.add(return_movement)
 

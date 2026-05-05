@@ -172,7 +172,13 @@
                                     <small class="text-muted">{{ movement.hora.strftime('%H:%M') if movement.hora else
                                         '--:--' }}</small>
                                 </td>
-                                <td>{{ movement.personal or movement.user.username }}</td>
+                                <td>
+                                    {% if movement.movement_type == 'salida' and movement.notes and 'Solicitante:' in movement.notes %}
+                                        {{ movement.notes.split('Solicitante:')[1].split('.')[0] | trim }}
+                                    {% else %}
+                                        {{ movement.personal or movement.user.username }}
+                                    {% endif %}
+                                </td>
                                 <td>
                                     {% if movement.area %}
                                     {{ movement.area }}
@@ -616,6 +622,17 @@
                                 </label>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Cantidad de retorno (visible para Reutilizable y Desecho) -->
+                    <div class="mb-3" id="returnQuantityBlock" style="display:none;">
+                        <label class="form-label fw-bold">Cantidad a Retornar <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <input type="number" class="form-control" id="returnQuantityInput" name="return_quantity"
+                                step="0.01" min="0.01" placeholder="0.00" required>
+                            <span class="input-group-text" id="returnQuantityUnit">-</span>
+                        </div>
+                        <small class="form-text text-muted" id="returnQuantityHelp"></small>
                     </div>
 
                     <!-- Sección de reciclaje (visible si seleccionan Reciclable) -->
@@ -1369,6 +1386,10 @@
             const returnMaterialSelect = document.getElementById('returnMaterialSelect');
             const returnMaterialBlock = document.getElementById('returnMaterialBlock');
             const returnConditionBlock = document.getElementById('returnConditionBlock');
+            const returnQuantityBlock  = document.getElementById('returnQuantityBlock');
+            const returnQuantityInput  = document.getElementById('returnQuantityInput');
+            const returnQuantityUnit   = document.getElementById('returnQuantityUnit');
+            const returnQuantityHelp   = document.getElementById('returnQuantityHelp');
             const returnNotesBlock    = document.getElementById('returnNotesBlock');
             const returnLoader        = document.getElementById('returnLoader');
             const returnRecycleSection = document.getElementById('returnRecycleSection');
@@ -1378,6 +1399,7 @@
             const returnSubmitBtn     = document.getElementById('returnSubmitBtn');
 
             let returnRecycledOptions = [];
+            let returnMaterialsMap = {};  // Mapa de material_id -> {pending_quantity, unit}
 
             // Reset al abrir modal
             returnModal.addEventListener('show.bs.modal', () => {
@@ -1386,10 +1408,15 @@
                 returnMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
                 returnMaterialBlock.style.display = 'none';
                 returnConditionBlock.style.display = 'none';
+                returnQuantityBlock.style.display = 'none';
                 returnNotesBlock.style.display = 'none';
                 returnRecycleSection.style.display = 'none';
                 returnSubmitBtn.disabled = true;
                 returnRecycledOptions = [];
+                returnMaterialsMap = {};
+                returnQuantityInput.value = '';
+                returnQuantityUnit.textContent = '-';
+                returnQuantityHelp.textContent = '';
                 document.querySelectorAll('input[name="return_condition"]').forEach(r => r.checked = false);
                 // Limpiar líneas de reciclado extra
                 const extraLines = recycleLinesContainer.querySelectorAll('.recycle-line:not(:first-child)');
@@ -1413,9 +1440,14 @@
                     const data = await res.json();
 
                     returnMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
+                    returnMaterialsMap = {};
                     if (data.materials && data.materials.length > 0) {
                         data.materials.forEach(mat => {
-                            const text = `${mat.code} - ${mat.name}`;
+                            returnMaterialsMap[mat.id] = {
+                                pending_quantity: mat.pending_quantity,
+                                unit: mat.unit
+                            };
+                            const text = `${mat.code} - ${mat.name} (Pendiente: ${mat.pending_quantity} ${mat.unit})`;
                             const option = new Option(text, mat.id);
                             option.dataset.materialId = mat.id;
                             returnMaterialSelect.add(option);
@@ -1443,13 +1475,23 @@
             // Al seleccionar material: mostrar condiciones y cargar medidas recicladas
             returnMaterialSelect.addEventListener('change', async function () {
                 returnConditionBlock.style.display = 'none';
+                returnQuantityBlock.style.display = 'none';
                 returnNotesBlock.style.display = 'none';
                 returnRecycleSection.style.display = 'none';
                 returnSubmitBtn.disabled = true;
+                returnQuantityInput.value = '';
                 document.querySelectorAll('input[name="return_condition"]').forEach(r => r.checked = false);
                 returnRecycledOptions = [];
 
                 if (!this.value) return;
+
+                // Actualizar la unidad y cantidad máxima del material seleccionado
+                const matInfo = returnMaterialsMap[this.value];
+                if (matInfo) {
+                    returnQuantityUnit.textContent = matInfo.unit;
+                    returnQuantityInput.max = matInfo.pending_quantity;
+                    returnQuantityHelp.innerHTML = `<i class="fas fa-info-circle me-1"></i>Máximo disponible para retorno: <strong>${matInfo.pending_quantity} ${matInfo.unit}</strong>`;
+                }
 
                 // Cargar medidas recicladas vinculadas a este material
                 try {
@@ -1466,10 +1508,17 @@
                 returnSubmitBtn.disabled = false;
             });
 
-            // Toggle sección reciclado al elegir la condición
+            // Toggle sección reciclado y cantidad al elegir la condición
             document.querySelectorAll('input[name="return_condition"]').forEach(radio => {
                 radio.addEventListener('change', function() {
-                    returnRecycleSection.style.display = (this.value === 'reciclable') ? 'block' : 'none';
+                    if (this.value === 'reciclable') {
+                        returnRecycleSection.style.display = 'block';
+                        returnQuantityBlock.style.display = 'none';
+                    } else {
+                        // Reutilizable o Desecho: mostrar campo de cantidad
+                        returnRecycleSection.style.display = 'none';
+                        returnQuantityBlock.style.display = 'block';
+                    }
                 });
             });
 
@@ -1783,6 +1832,21 @@
         if (!condRadio) {
             showToast('Seleccione una condición de retorno', true);
             return;
+        }
+
+        // Validar cantidad para Reutilizable y Desecho
+        if (condRadio.value === 'reutilizable' || condRadio.value === 'desecho') {
+            const qtyInput = document.getElementById('returnQuantityInput');
+            const qty = parseFloat(qtyInput?.value);
+            if (!qty || qty <= 0) {
+                showToast('Ingrese una cantidad válida para el retorno', true);
+                return;
+            }
+            const maxQty = parseFloat(qtyInput.max);
+            if (maxQty && qty > maxQty + 0.001) {
+                showToast(`La cantidad no puede exceder ${maxQty}`, true);
+                return;
+            }
         }
 
         const formData = new FormData(form);
