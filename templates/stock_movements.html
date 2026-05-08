@@ -136,7 +136,7 @@
                                     {% endif %}
                                 </td>
                                 <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>{{
-                                        movement.quantity }}</strong> {{ movement.material.unit }}</td>
+                                        movement.quantity | round(2) | int if movement.quantity == movement.quantity | round(0) else movement.quantity | round(2) }}</strong> {{ movement.material.unit }}</td>
                                 <td>
                                     {% if movement.fp_code %}
                                     {%- set proj = projects_dict.get(movement.fp_code, {}) -%}

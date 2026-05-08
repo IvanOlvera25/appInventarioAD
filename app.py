@@ -5191,7 +5191,7 @@ def register_entry():
     try:
         data = request.form
         material_id = data.get('material_id')
-        quantity = float(data.get('quantity'))
+        quantity = round(float(data.get('quantity')), 2)
 
         material = Material.query.get(material_id)
         if not material:
@@ -5590,7 +5590,7 @@ def register_exit_multiple():
         for item in materials:
             try:
                 material_id = item.get('material_id')
-                quantity = float(item.get('quantity'))
+                quantity = round(float(item.get('quantity')), 2)
 
                 material = Material.query.get(material_id)
                 if not material:
