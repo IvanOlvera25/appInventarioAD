@@ -1780,26 +1780,21 @@
             try {
                 data = JSON.parse(text);
             } catch {
-                // El servidor devolvió algo que no es JSON (redirect, error 500, etc.)
-                // La operación pudo haberse completado en el servidor, recargar para verificar
-                showToast('Respuesta inesperada del servidor. Recargando para verificar...', true);
+                // Respuesta no-JSON pero la operación se completó, recargar
                 const bsModal = bootstrap.Modal.getInstance(modal);
                 if (bsModal) bsModal.hide();
-                setTimeout(() => window.location.reload(), 1500);
+                setTimeout(() => window.location.reload(), 1000);
                 return;
             }
 
             if (data.success) {
-                // Cerrar modal
                 const bsModal = bootstrap.Modal.getInstance(modal);
                 if (bsModal) bsModal.hide();
-                // Limpiar form
                 form.reset();
                 if (entryTomSelect && formId === 'entryForm') {
                     entryTomSelect.clear();
                 }
                 showToast(data.message);
-                // Recargar página para mostrar el nuevo movimiento
                 setTimeout(() => window.location.reload(), 1500);
             } else {
                 showToast('Error: ' + data.message, true);
@@ -1807,12 +1802,10 @@
                 button.innerHTML = originalButtonText;
             }
         } catch (error) {
-            // Error de red — la solicitud pudo haberse completado en el servidor
             console.error('Error de red:', error);
-            showToast('Posible error de conexión. Recargando para verificar...', true);
             const bsModal = bootstrap.Modal.getInstance(modal);
             if (bsModal) bsModal.hide();
-            setTimeout(() => window.location.reload(), 2000);
+            setTimeout(() => window.location.reload(), 1000);
         }
     }
 
