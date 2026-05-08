@@ -1775,16 +1775,17 @@
 
         try {
             const response = await fetch(url, { method: 'POST', body: formData });
-            // Leer texto primero para evitar falso error si la respuesta no es JSON válido
             const text = await response.text();
             let data;
             try {
                 data = JSON.parse(text);
             } catch {
-                // El servidor devuelvió algo que no es JSON (redirect, error 500, etc.)
-                showToast('Error en el servidor. Verifica que el registro fue guardado.', true);
-                button.disabled = false;
-                button.innerHTML = originalButtonText;
+                // El servidor devolvió algo que no es JSON (redirect, error 500, etc.)
+                // La operación pudo haberse completado en el servidor, recargar para verificar
+                showToast('Respuesta inesperada del servidor. Recargando para verificar...', true);
+                const bsModal = bootstrap.Modal.getInstance(modal);
+                if (bsModal) bsModal.hide();
+                setTimeout(() => window.location.reload(), 1500);
                 return;
             }
 
@@ -1806,11 +1807,12 @@
                 button.innerHTML = originalButtonText;
             }
         } catch (error) {
-            // Error real de red (sin conexión)
+            // Error de red — la solicitud pudo haberse completado en el servidor
             console.error('Error de red:', error);
-            showToast('Error de conexión. Verifica tu red e inténtalo de nuevo.', true);
-            button.disabled = false;
-            button.innerHTML = originalButtonText;
+            showToast('Posible error de conexión. Recargando para verificar...', true);
+            const bsModal = bootstrap.Modal.getInstance(modal);
+            if (bsModal) bsModal.hide();
+            setTimeout(() => window.location.reload(), 2000);
         }
     }
 
