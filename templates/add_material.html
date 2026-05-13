@@ -33,7 +33,7 @@
                                 <select class="form-select" name="unit" id="unitSelect" required>
                                     <option value="">Seleccionar...</option>
                                     {% for unit in remote_units %}
-                                    <option value="{{ unit.name or unit.unidad or unit }}"
+                                    <option value="{{ unit.symbol or unit.singular or unit.name or unit.abbreviation or unit.unidad or unit }}"
                                             data-singular="{{ unit.singular or unit.name or unit.unidad or unit }}">
                                         {{ unit.singular or unit.name or unit.unidad or unit }}
                                     </option>

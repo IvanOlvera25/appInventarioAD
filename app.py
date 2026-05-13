@@ -552,26 +552,70 @@ class RemoteDatabase:
             "user": "IvanUriel",
             "password": "iuOp20!!25",
             "charset": 'utf8mb4',
-            "cursorclass": pymysql.cursors.DictCursor
+            "cursorclass": pymysql.cursors.DictCursor,
+            "connect_timeout": 10,   # máx 10s para establecer conexión
+            "read_timeout": 15,      # máx 15s esperando datos
+            "write_timeout": 10,     # máx 10s escribiendo datos
         }
 
     @contextmanager
-    def get_connection(self, database="AD17_Materiales"):
-        """Context manager para conexiones a la base de datos"""
+    def get_connection(self, database="AD17_Materiales", retries=2):
+        """Context manager para conexiones a la base de datos con reintentos"""
+        import time
         connection = None
-        try:
-            params = self.connection_params.copy()
-            params['database'] = database
-            connection = pymysql.connect(**params)
-            yield connection
-        except pymysql.Error as e:
-            app.logger.error(f"Error de conexión MySQL: {e}")
-            if connection:
-                connection.rollback()
-            raise
-        finally:
-            if connection:
-                connection.close()
+        last_error = None
+
+        for attempt in range(1, retries + 1):
+            try:
+                params = self.connection_params.copy()
+                params['database'] = database
+                connection = pymysql.connect(**params)
+                yield connection
+                return  # éxito, salir
+            except (pymysql.err.OperationalError, pymysql.err.InterfaceError, OSError) as e:
+                last_error = e
+                err_code = e.args[0] if e.args else 0
+                # Códigos recuperables: 2003=Can't connect, 2006=Server gone, 2013=Lost connection
+                if err_code in (2003, 2006, 2013) or isinstance(e, (OSError, TimeoutError)):
+                    app.logger.warning(
+                        f"⚠️ Conexión remota falló (intento {attempt}/{retries}): {e}"
+                    )
+                    if connection:
+                        try:
+                            connection.close()
+                        except Exception:
+                            pass
+                        connection = None
+                    if attempt < retries:
+                        time.sleep(1)  # esperar 1s antes de reintentar
+                        continue
+                # Error no recuperable, propagar
+                if connection:
+                    try:
+                        connection.rollback()
+                    except Exception:
+                        pass
+                raise
+            except pymysql.Error as e:
+                app.logger.error(f"Error de conexión MySQL: {e}")
+                if connection:
+                    try:
+                        connection.rollback()
+                    except Exception:
+                        pass
+                raise
+            finally:
+                if connection:
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+                    connection = None
+
+        # Si agotamos reintentos
+        if last_error:
+            app.logger.error(f"❌ Conexión remota agotó {retries} reintentos: {last_error}")
+            raise last_error
 
     def get_empleados_activos(self):
             """Obtener lista de empleados activos ordenados alfabéticamente"""
@@ -2118,9 +2162,25 @@ def add_material():
             if cat:
                 category_id = cat.id
 
+        # Protección: si el formulario envía un diccionario serializado como string,
+        # extraer solo el símbolo o nombre corto de la unidad
+        if unit_name and unit_name.startswith('{'):
+            try:
+                import ast
+                unit_dict = ast.literal_eval(unit_name)
+                unit_name = unit_dict.get('symbol') or unit_dict.get('singular') or unit_dict.get('name') or unit_dict.get('abbreviation') or str(unit_dict.get('id', ''))
+            except (ValueError, SyntaxError):
+                pass  # dejar el valor original si no se puede parsear
+
+        # Truncar a 50 caracteres (tamaño de la columna en BD)
+        if unit_name and len(unit_name) > 50:
+            unit_name = unit_name[:50]
+
         # Buscar unidad local
         if unit_name:
             unit = Unit.query.filter_by(name=unit_name).first()
+            if not unit:
+                unit = Unit.query.filter_by(abbreviation=unit_name).first()
             if unit:
                 unit_id = unit.id
 
@@ -4694,6 +4754,20 @@ def edit_material(material_id):
 
             # Manejar unidad
             unit = request.form.get('unit', '')
+
+            # Protección: si el formulario envía un diccionario serializado como string
+            if unit and unit.startswith('{'):
+                try:
+                    import ast
+                    unit_dict = ast.literal_eval(unit)
+                    unit = unit_dict.get('symbol') or unit_dict.get('singular') or unit_dict.get('name') or unit_dict.get('abbreviation') or str(unit_dict.get('id', ''))
+                except (ValueError, SyntaxError):
+                    pass
+
+            # Truncar a 50 caracteres (tamaño de la columna en BD)
+            if unit and len(unit) > 50:
+                unit = unit[:50]
+
             material.unit = unit
 
             # Ancho de tela
