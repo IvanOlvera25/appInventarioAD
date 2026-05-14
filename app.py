@@ -4166,14 +4166,54 @@ def reports():
         flash('Sección no disponible para requisitadores.', 'warning')
         return redirect(url_for('dashboard'))
 
-    # Materiales con stock bajo
-    low_stock = Material.query.filter(Material.current_stock <= Material.min_stock).all()
+    # Materiales con stock bajo (excluyendo min_stock = 0)
+    low_stock = Material.query.filter(
+        Material.min_stock > 0,
+        Material.current_stock <= Material.min_stock
+    ).order_by(Material.last_movement.desc()).all()
 
     # Materiales sin movimiento en 6 meses
     six_months_ago = datetime.utcnow() - timedelta(days=180)
     no_movement = Material.query.filter(
         (Material.last_movement < six_months_ago) | (Material.last_movement.is_(None))
-    ).all()
+    ).order_by(Material.last_movement.desc()).all()
+    
+    # Pendientes de compra (RequestItem.item_status == 'pendiente_compra')
+    pending_items = RequestItem.query.join(Request).filter(
+        RequestItem.item_status == 'pendiente_compra'
+    ).options(joinedload(RequestItem.request).joinedload(Request.project)).all()
+    
+    pending_purchases_data = []
+    for item in pending_items:
+        quantity_to_buy = (item.quantity_requested or 0) - (item.quantity_delivered or 0)
+        if quantity_to_buy <= 0:
+            continue
+            
+        material_id = item.material_id or 0
+        material_name = item.material.name if item.material else item.new_material_name
+        material_code = item.material.code if item.material else item.new_material_code
+        material_unit = item.material.unit if item.material else item.new_material_unit
+        
+        project_name = item.request.project.name if item.request.project else "N/A"
+        project_fp = item.request.project.fp_code if item.request.project and hasattr(item.request.project, 'fp_code') else "N/A"
+        client = item.request.project.client if item.request.project and hasattr(item.request.project, 'client') else "N/A"
+        
+        acquisition_deadline = item.request.acquisition_deadline.strftime('%Y-%m-%d') if item.request.acquisition_deadline else "9999-12-31"
+        created_at = item.request.created_at.strftime('%Y-%m-%d') if item.request.created_at else "1970-01-01"
+            
+        pending_purchases_data.append({
+            'id': item.id,
+            'material_id': material_id,
+            'material_code': material_code or '',
+            'material_name': material_name or '',
+            'material_unit': material_unit or '',
+            'project_name': project_name,
+            'project_fp': project_fp,
+            'client': client or 'N/A',
+            'quantity': quantity_to_buy,
+            'acquisition_deadline': acquisition_deadline,
+            'created_at': created_at
+        })
 
     # Estadísticas de devoluciones
     returns_stats = db.session.query(
@@ -4186,7 +4226,8 @@ def reports():
     return render_template('reports.html',
                          low_stock=low_stock,
                          no_movement=no_movement,
-                         returns_stats=returns_stats)
+                         returns_stats=returns_stats,
+                         pending_purchases_data=pending_purchases_data)
 @app.route('/leader-dashboard')
 @login_required
 def leader_dashboard():
