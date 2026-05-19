@@ -60,12 +60,12 @@
                                     {% for cat in remote_categories %}
                                     <option value="{{ cat.name }}"
                                         data-is-fabric="{{ cat.is_fabric|default(false)|lower }}" {% if
-                                        cat.name==material.category %}selected{% endif %}>{{ cat.name }}</option>
+                                        cat.name|trim|lower==material.category|trim|lower %}selected{% endif %}>{{ cat.name }}</option>
                                     {% endfor %}
                                     <!-- Categorías locales si no hay remotas -->
                                     {% if not remote_categories %}
                                     {% for cat in local_categories %}
-                                    <option value="{{ cat }}" {% if cat==material.category %}selected{% endif %}>{{ cat
+                                    <option value="{{ cat }}" {% if cat|trim|lower==material.category|trim|lower %}selected{% endif %}>{{ cat
                                         }}</option>
                                     {% endfor %}
                                     {% endif %}

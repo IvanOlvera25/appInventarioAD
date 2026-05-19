@@ -4877,7 +4877,34 @@ def edit_material(material_id):
     # GET request - mostrar formulario de edición
 
     # Obtener categorías y unidades remotas
-    remote_categories = get_remote_categories_for_select()
+    raw_remote_categories = get_remote_categories_for_select()
+    remote_categories = []
+    for cat in raw_remote_categories or []:
+        if isinstance(cat, dict):
+            name = (cat.get('name') or cat.get('categoria') or cat.get('category') or '').strip()
+            is_fabric = bool(cat.get('is_fabric'))
+        else:
+            name = str(cat).strip()
+            is_fabric = False
+
+        if name:
+            remote_categories.append({
+                'name': name,
+                'is_fabric': is_fabric
+            })
+
+    # Si la categoría actual no viene del catálogo remoto, agregarla para que
+    # el formulario no la pierda al guardar otros cambios.
+    current_category = (material.category or '').strip()
+    if current_category and not any(
+        (cat['name'] or '').strip().casefold() == current_category.casefold()
+        for cat in remote_categories
+    ):
+        remote_categories.append({
+            'name': current_category,
+            'is_fabric': bool(material.is_fabric_roll)
+        })
+
     remote_units = get_remote_units_for_select()
 
     # Obtener categorías locales como fallback

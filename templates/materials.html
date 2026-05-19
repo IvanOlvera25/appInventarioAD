@@ -271,7 +271,7 @@
                 {% if materials.page > 1 %}
                 <li class="page-item">
                   <a class="page-link"
-                    href="{{ url_for('materials', page=materials.page-1, search=search, category=category, type='materials') }}">
+                    href="{{ url_for('materials', page=materials.page-1, search=search, category=category, type='materials', consumibles=consumibles_filter, reciclables=reciclables_filter, reutilizables=reutilizables_filter, reciclados=reciclados_filter, error_stock=error_stock_filter) }}">
                     <i class="fas fa-chevron-left"></i>
                   </a>
                 </li>
@@ -282,7 +282,7 @@
                 {% if page_num != materials.page %}
                 <li class="page-item">
                   <a class="page-link"
-                    href="{{ url_for('materials', page=page_num, search=search, category=category, type='materials') }}">{{
+                    href="{{ url_for('materials', page=page_num, search=search, category=category, type='materials', consumibles=consumibles_filter, reciclables=reciclables_filter, reutilizables=reutilizables_filter, reciclados=reciclados_filter, error_stock=error_stock_filter) }}">{{
                     page_num }}</a>
                 </li>
                 {% else %}
@@ -295,7 +295,7 @@
 
                 {% if materials.page < materials.pages %} <li class="page-item">
                   <a class="page-link"
-                    href="{{ url_for('materials', page=materials.page+1, search=search, category=category, type='materials') }}">
+                    href="{{ url_for('materials', page=materials.page+1, search=search, category=category, type='materials', consumibles=consumibles_filter, reciclables=reciclables_filter, reutilizables=reutilizables_filter, reciclados=reciclados_filter, error_stock=error_stock_filter) }}">
                     <i class="fas fa-chevron-right"></i>
                   </a>
                   </li>
