@@ -152,7 +152,7 @@
                 </thead>
                 <tbody>
                   {% for material in materials.items %}
-                  <tr class="small">
+                  <tr class="small{% if material.current_stock < 0 %} table-danger{% endif %}">
                     <!-- Código -->
                     <td class="py-1">
                       <strong class="text-primary">{{ material.code }}</strong>
@@ -194,22 +194,33 @@
 
                     <!-- Stock -->
                     <td class="py-1 text-center">
-                      <span
-                        class="fw-bold {% if material.min_stock > 0 and material.current_stock <= material.min_stock %}text-danger{% elif material.max_stock > 0 and material.current_stock >= material.max_stock %}text-warning{% else %}text-success{% endif %}">
-                        {{ material.current_stock }}
-                      </span>
-                      <span class="text-muted">{{ material.unit }}</span>
+                      {% if material.current_stock < 0 %}
+                        <span class="fw-bold text-danger">
+                          <i class="fas fa-exclamation-triangle me-1"></i>{{ material.current_stock }}
+                        </span>
+                        <span class="text-muted">{{ material.unit }}</span>
+                        <br>
+                        <span class="badge bg-danger" style="font-size:0.65rem;">⚠ NEGATIVO</span>
+                      {% else %}
+                        <span
+                          class="fw-bold {% if material.min_stock > 0 and material.current_stock <= material.min_stock %}text-danger{% elif material.max_stock > 0 and material.current_stock >= material.max_stock %}text-warning{% else %}text-success{% endif %}">
+                          {{ material.current_stock }}
+                        </span>
+                        <span class="text-muted">{{ material.unit }}</span>
+                      {% endif %}
                     </td>
 
                     <!-- Estado -->
                     <td class="py-1 text-center">
-                      {% if material.min_stock > 0 and material.current_stock <= material.min_stock %} <span
-                        class="badge bg-danger"><i class="fas fa-arrow-down me-1"></i>Bajo</span>
-                        {% elif material.max_stock > 0 and material.current_stock >= material.max_stock %}
+                      {% if material.current_stock < 0 %}
+                        <span class="badge bg-danger"><i class="fas fa-exclamation-triangle me-1"></i>Negativo</span>
+                      {% elif material.min_stock > 0 and material.current_stock <= material.min_stock %}
+                        <span class="badge bg-danger"><i class="fas fa-arrow-down me-1"></i>Bajo</span>
+                      {% elif material.max_stock > 0 and material.current_stock >= material.max_stock %}
                         <span class="badge bg-warning"><i class="fas fa-arrow-up me-1"></i>Alto</span>
-                        {% else %}
+                      {% else %}
                         <span class="badge bg-success"><i class="fas fa-check me-1"></i>OK</span>
-                        {% endif %}
+                      {% endif %}
                     </td>
 
                     <!-- Costo Unitario (solo Admin) -->

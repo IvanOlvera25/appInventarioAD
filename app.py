@@ -15,7 +15,7 @@ import tempfile
 import pymysql
 import pymysql.cursors
 from contextlib import contextmanager
-from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog
+from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog, SystemConfig
 from functools import wraps
 import secrets  # <- si estás generando códigos de verificación
 from sqlalchemy import text
@@ -75,12 +75,19 @@ def inject_globals():
     except:
         units = []
 
+    # Cargar estado del toggle de validación de stock
+    try:
+        stock_check_enabled = get_stock_check_enabled()
+    except Exception:
+        stock_check_enabled = False
+
     return {
         'moment': datetime,
         'now': datetime.utcnow(),
         'departments': departments,
         'categories': categories,
-        'units': units
+        'units': units,
+        'stock_check_enabled': stock_check_enabled
     }
 
 # Asegurarse de que el directorio existe
@@ -160,6 +167,23 @@ with app.app_context():
             """))
             print("  ✅ Tabla 'audit_log' verificada/creada")
 
+            # -- Tabla system_config --
+            _conn2.execute(_text2("""
+                CREATE TABLE IF NOT EXISTS `system_config` (
+                    `id`         INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `key`        VARCHAR(100) NOT NULL UNIQUE,
+                    `value`      VARCHAR(255) NOT NULL DEFAULT '0',
+                    `updated_by` INT DEFAULT NULL,
+                    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            # Insertar valor default de stock_check_enabled si no existe
+            _conn2.execute(_text2("""
+                INSERT IGNORE INTO `system_config` (`key`, `value`)
+                VALUES ('stock_check_enabled', '0')
+            """))
+            print("  ✅ Tabla 'system_config' verificada/creada")
+
             _conn2.commit()
     except Exception as _e2:
         print(f"  ⚠️ Migraciones tempranas: {_e2}")
@@ -173,6 +197,19 @@ login_manager.login_view = 'login'
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def get_stock_check_enabled():
+    """Retorna True si la validación de stock suficiente está habilitada.
+    Cuando es False, se permiten salidas aunque el stock quede negativo.
+    Por defecto retorna False (desactivado) para que la app sea usable antes
+    de terminar el conteo físico.
+    """
+    try:
+        cfg = SystemConfig.query.filter_by(key='stock_check_enabled').first()
+        return cfg is not None and cfg.value == '1'
+    except Exception:
+        return False  # Fallback seguro si la tabla aún no existe
 
 
 
@@ -5513,7 +5550,8 @@ def register_exit():
         if not material:
             return jsonify({'success': False, 'message': 'Material no encontrado.'})
 
-        if quantity > material.current_stock:
+        # Solo bloquear si la validación de stock está activada en la configuración
+        if get_stock_check_enabled() and quantity > material.current_stock:
             return jsonify({
                 'success': False,
                 'message': f'Stock insuficiente. Disponible: {material.current_stock} {material.unit}'
@@ -5740,8 +5778,8 @@ def register_exit_multiple():
                     continue
 
                 if is_consumable_exit:
-                    # Salida de consumible: solo validar contra stock
-                    if quantity > material.current_stock + 0.001:
+                    # Salida de consumible: solo validar contra stock (si el toggle está activo)
+                    if get_stock_check_enabled() and quantity > material.current_stock + 0.001:
                         errors.append(
                             f"{material.code}: Stock insuficiente. "
                             f"Disponible: {material.current_stock} {material.unit}"
@@ -5765,22 +5803,23 @@ def register_exit_multiple():
                     total_delivered_so_far = sum((ri.quantity_delivered or 0) for ri in req_items)
                     abastecida_pendiente = max(0, total_supplied - total_delivered_so_far)
 
-                    # Validar: máximo permitido es el menor entre stock y abastecida pendiente
-                    max_allowed = min(material.current_stock, abastecida_pendiente)
-                    if quantity > max_allowed + 0.001:
-                        if material.current_stock < abastecida_pendiente:
-                            errors.append(
-                                f"{material.code}: Stock insuficiente. "
-                                f"Disponible: {material.current_stock:.2f} {material.unit}, "
-                                f"Abastecido pendiente: {abastecida_pendiente:.2f} {material.unit}"
-                            )
-                        else:
-                            errors.append(
-                                f"{material.code}: Cantidad excede abastecido pendiente. "
-                                f"Abastecido pendiente: {abastecida_pendiente:.2f} {material.unit}, "
-                                f"Stock: {material.current_stock:.2f} {material.unit}"
-                            )
-                        continue
+                    # Validar solo si el toggle está activo
+                    if get_stock_check_enabled():
+                        max_allowed = min(material.current_stock, abastecida_pendiente)
+                        if quantity > max_allowed + 0.001:
+                            if material.current_stock < abastecida_pendiente:
+                                errors.append(
+                                    f"{material.code}: Stock insuficiente. "
+                                    f"Disponible: {material.current_stock:.2f} {material.unit}, "
+                                    f"Abastecido pendiente: {abastecida_pendiente:.2f} {material.unit}"
+                                )
+                            else:
+                                errors.append(
+                                    f"{material.code}: Cantidad excede abastecido pendiente. "
+                                    f"Abastecido pendiente: {abastecida_pendiente:.2f} {material.unit}, "
+                                    f"Stock: {material.current_stock:.2f} {material.unit}"
+                                )
+                            continue
 
                     # Descontar del stock
                     material.current_stock -= quantity
@@ -7591,6 +7630,38 @@ def api_fabric_roll_production_info():
         'total_pending': round(total_pending, 4),
         'areas': areas_list
     })
+
+# ===== ADMINISTRACIÓN: Toggle validación de stock =====
+@app.route('/admin/toggle-stock-check', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_toggle_stock_check():
+    """Habilita o deshabilita la validación de stock suficiente antes de salidas.
+    Cualquier admin puede usar este endpoint. El estado se persiste en system_config.
+    """
+    try:
+        cfg = SystemConfig.query.filter_by(key='stock_check_enabled').first()
+        if not cfg:
+            cfg = SystemConfig(key='stock_check_enabled', value='0')
+            db.session.add(cfg)
+
+        # Alternar valor
+        new_value = '0' if cfg.value == '1' else '1'
+        cfg.value = new_value
+        cfg.updated_by = current_user.id
+        cfg.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        enabled = new_value == '1'
+        return jsonify({
+            'success': True,
+            'enabled': enabled,
+            'message': 'Validación de stock ACTIVADA ✅' if enabled else 'Validación de stock DESACTIVADA — se permiten salidas con stock negativo ⚠️'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': f'Error al cambiar configuración: {str(e)}'}), 500
+
 
 # --- ADMIN: Usuarios + Códigos fijos ---
 

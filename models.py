@@ -289,3 +289,20 @@ class AuditLog(db.Model):
     notes       = db.Column(db.Text)                           # Contexto adicional (número req, etc.)
 
     author = db.relationship('User', foreign_keys=[changed_by])
+
+
+# --- Configuración global del sistema (toggles y ajustes de admin) ---
+class SystemConfig(db.Model):
+    """Almacena configuraciones globales de la app que los admins pueden cambiar.
+    Cada fila es un par clave-valor. Claves conocidas:
+      - stock_check_enabled: '1' = validar stock antes de salida, '0' = permitir negativos
+    """
+    __tablename__ = 'system_config'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    key        = db.Column(db.String(100), unique=True, nullable=False)
+    value      = db.Column(db.String(255), nullable=False, default='0')
+    updated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    author = db.relationship('User', foreign_keys=[updated_by])

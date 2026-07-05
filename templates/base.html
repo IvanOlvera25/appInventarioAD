@@ -273,6 +273,47 @@
             align-items: center;
             gap: 1rem;
         }
+
+        /* Stock Check Toggle (solo admins) */
+        .stock-toggle-pill {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.35rem 0.85rem;
+            border-radius: 50px;
+            border: 2px solid;
+            cursor: pointer;
+            font-size: 0.78rem;
+            font-weight: 600;
+            transition: all 0.25s ease;
+            white-space: nowrap;
+            user-select: none;
+        }
+        .stock-toggle-pill.enabled {
+            background: #d4edda;
+            border-color: #27ae60;
+            color: #155724;
+        }
+        .stock-toggle-pill.disabled {
+            background: #fff3cd;
+            border-color: #f39c12;
+            color: #856404;
+        }
+        .stock-toggle-pill:hover {
+            filter: brightness(0.93);
+            transform: scale(0.98);
+        }
+        .stock-toggle-pill .pill-icon {
+            font-size: 0.85rem;
+        }
+        .stock-toggle-pill .pill-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .stock-toggle-pill.enabled .pill-indicator { background: #27ae60; }
+        .stock-toggle-pill.disabled .pill-indicator { background: #f39c12; }
     </style>
 </head>
 
@@ -351,6 +392,20 @@
             </div>
 
             <div class="ms-auto user-menu">
+                {% if current_user.role == 'admin' %}
+                <!-- Toggle: Validación de Stock -->
+                <button
+                    id="stockCheckToggle"
+                    class="stock-toggle-pill {{ 'enabled' if stock_check_enabled else 'disabled' }}"
+                    title="{% if stock_check_enabled %}Validación de stock ACTIVA — clic para desactivar{% else %}Validación de stock INACTIVA — clic para activar{% endif %}"
+                    onclick="toggleStockCheck()"
+                >
+                    <span class="pill-indicator"></span>
+                    <i class="fas {{ 'fa-shield-alt' if stock_check_enabled else 'fa-exclamation-triangle' }} pill-icon"></i>
+                    <span id="stockCheckLabel">{% if stock_check_enabled %}Stock: Validando{% else %}Stock: Libre{% endif %}</span>
+                </button>
+                {% endif %}
+
                 <div class="text-end d-none d-md-block">
                     <div class="fw-bold small mb-0">{{ current_user.username }}</div>
                     <div class="text-muted small" style="font-size: 0.75rem;">{{ current_user.role|title }}</div>
@@ -443,6 +498,52 @@
                 }
             });
         });
+
+        // Toggle validación de stock (solo admins)
+        function toggleStockCheck() {
+            var btn = document.getElementById('stockCheckToggle');
+            var label = document.getElementById('stockCheckLabel');
+            if (!btn) return;
+
+            btn.style.opacity = '0.6';
+            btn.style.pointerEvents = 'none';
+
+            fetch('/admin/toggle-stock-check', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '' }
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    var enabled = data.enabled;
+                    btn.classList.toggle('enabled', enabled);
+                    btn.classList.toggle('disabled', !enabled);
+                    btn.querySelector('.pill-indicator').style.background = enabled ? '#27ae60' : '#f39c12';
+                    btn.querySelector('i').className = 'fas ' + (enabled ? 'fa-shield-alt' : 'fa-exclamation-triangle') + ' pill-icon';
+                    label.textContent = enabled ? 'Stock: Validando' : 'Stock: Libre';
+                    btn.title = enabled
+                        ? 'Validación de stock ACTIVA — clic para desactivar'
+                        : 'Validación de stock INACTIVA — clic para activar';
+
+                    // Toast notificación
+                    var toast = document.createElement('div');
+                    toast.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;padding:0.75rem 1.2rem;border-radius:8px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,0.15);transition:all 0.3s;';
+                    toast.style.background = enabled ? '#d4edda' : '#fff3cd';
+                    toast.style.color = enabled ? '#155724' : '#856404';
+                    toast.style.border = '1.5px solid ' + (enabled ? '#27ae60' : '#f39c12');
+                    toast.textContent = data.message;
+                    document.body.appendChild(toast);
+                    setTimeout(function() { toast.style.opacity = '0'; setTimeout(function(){ toast.remove(); }, 300); }, 3500);
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(function(err) { console.error('Toggle error:', err); alert('Error de conexión.'); })
+            .finally(function() {
+                btn.style.opacity = '1';
+                btn.style.pointerEvents = 'auto';
+            });
+        }
     </script>
     {% block scripts %}{% endblock %}
 </body>
