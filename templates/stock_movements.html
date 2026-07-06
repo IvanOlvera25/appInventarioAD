@@ -801,6 +801,8 @@
         let exitMaterialsData = [];
         let availableMaterials = [];
         let selectedProjectData = null;
+        // Toggle de validación de stock (sincronizado con SystemConfig desde el servidor)
+        const stockCheckEnabled = {{ 'true' if stock_check_enabled else 'false' }};
 
         const exitModal = document.getElementById('exitModal');
         if (!exitModal) { console.warn('exitModal not found, skipping exit modal setup'); return; }
@@ -1099,8 +1101,8 @@
                 }
 
                 if (entregableAhora > 0.001) {
-                    // Mostrar el límite real (min entre stock y abastecido pendiente)
-                    const maxNow = Math.min(mat.stock, entregableAhora);
+                    // Mostrar el límite real: en stock libre no limitamos por stock físico
+                    const maxNow = stockCheckEnabled ? Math.min(mat.stock, entregableAhora) : entregableAhora;
                     const text = `${mat.code} - ${mat.name} (Disponible: ${maxNow.toFixed(2)} ${mat.unit})`;
                     const option = new Option(text, mat.id);
                     option.dataset.pending             = entregableAhora;   // abastecida_pendiente restante
@@ -1136,9 +1138,19 @@
             const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0); // ← Amarillo
             const isConsumable        = document.querySelector('input[name="exitType"]:checked')?.value === 'consumable';
 
-            // Máximo a entregar AHORA = min(stock disponible, abastecido pendiente)
-            // Para consumibles: solo el stock (no hay abastecido pendiente)
-            const maxAllowed = isConsumable ? stock : Math.min(stock, abastecidaPendiente);
+            // Máximo a entregar AHORA:
+            //  - Consumible: limitado por stock (siempre)
+            //  - Normal + stockCheckEnabled=true: min(stock, abastecido pendiente)
+            //  - Normal + stockCheckEnabled=false (Stock Libre): solo abastecido pendiente
+            let maxAllowed;
+            if (isConsumable) {
+                maxAllowed = stock;
+            } else if (stockCheckEnabled) {
+                maxAllowed = Math.min(stock, abastecidaPendiente);
+            } else {
+                // Stock libre: no bloquear por stock físico, solo por lo abastecido
+                maxAllowed = abastecidaPendiente;
+            }
 
             exitQuantityInput.max = maxAllowed;
             exitQuantityInput.value = '';
@@ -1222,7 +1234,10 @@
                     const stock = parseFloat(selected.dataset.stock);
                     const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
 
-                    if (quantity > stock && quantity > abastecidaPendiente) {
+                    if (!stockCheckEnabled) {
+                        // Stock libre: solo limitar por abastecido pendiente
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Abastecido Pendiente por Entregar (' + abastecidaPendiente.toFixed(2) + ').';
+                    } else if (quantity > stock && quantity > abastecidaPendiente) {
                         alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible y el Abastecido Pendiente por Entregar.';
                     } else if (quantity > stock) {
                         alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible (' + stock.toFixed(2) + ').';
