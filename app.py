@@ -5648,7 +5648,7 @@ def get_consumables_list():
 
 @app.route('/api/stock/all-materials-list')
 @login_required
-def get_all_materials_list():
+def get_free_exit_materials_list():
     """Lista de TODOS los materiales activos (no telas) para el modo Salida Libre.
     No filtra por stock — permite salidas de materiales con stock negativo o cero.
     Solo disponible cuando free_exit_enabled es True.
@@ -5672,6 +5672,7 @@ def get_all_materials_list():
     } for m in materials]
 
     return jsonify({'success': True, 'materials': result})
+
 
 
 
