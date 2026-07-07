@@ -4345,7 +4345,7 @@ def reports():
     
     pending_purchases_data = []
     for item in pending_items:
-        quantity_to_buy = (item.quantity_requested or 0) - (item.quantity_delivered or 0)
+        quantity_to_buy = (item.quantity_requested or 0) - (item.quantity_supplied or 0)
         if quantity_to_buy <= 0:
             continue
             
