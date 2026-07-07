@@ -962,6 +962,7 @@
 
         // Seleccionar proyecto
         async function selectProject(project) {
+            const isFree = document.querySelector('input[name="exitType"]:checked')?.value === 'free';
             selectedProjectData = project;
             fpSearchInput.value = `${project.fp_code} - ${project.nombre || ''}`;
             fpCodeHidden.value = project.fp_code;
@@ -969,13 +970,22 @@
             projectInfo.style.display = 'block';
             fpResultsDropdown.classList.remove('show');
 
-            exitDepartmentCard.style.display = 'block';
-            exitPersonnelCard.style.display = 'block';
-
-            await Promise.all([
-                loadDepartments(project.fp_code),
-                loadActiveEmployees()
-            ]);
+            if (isFree) {
+                // MODO LIBRE: no requiere departamento, solo FP y materiales
+                exitDepartmentCard.style.display = 'none';
+                exitPersonnelCard.style.display = 'block';
+                exitMaterialsCard.style.display = 'block';
+                exitNotesCard.style.display = 'block';
+                await loadActiveEmployees();
+            } else {
+                // MODO NORMAL (PROYECTO)
+                exitDepartmentCard.style.display = 'block';
+                exitPersonnelCard.style.display = 'block';
+                await Promise.all([
+                    loadDepartments(project.fp_code),
+                    loadActiveEmployees()
+                ]);
+            }
         }
 
         // Cargar departamentos
@@ -1365,14 +1375,22 @@
             }
 
             const isConsumable = document.querySelector('input[name="exitType"]:checked')?.value === 'consumable';
+            const isFree = document.querySelector('input[name="exitType"]:checked')?.value === 'free';
+            
+            if (isFree && !fpCodeHidden.value) {
+                alert('Debe seleccionar un proyecto (FP) para asignar el costo.');
+                return;
+            }
+            
             const requestData = {
                 fp_code: fpCodeHidden.value,
-                department: isConsumable ? '' : exitDepartmentSelect.value,
+                department: (isConsumable || isFree) ? '' : exitDepartmentSelect.value,
                 requester_id: requesterSelected.value,
                 requester_name: requesterSelected.dataset.nombre,
                 deliverer_name: exitDelivererName.value,
                 notes: exitNotes.value,
                 is_consumable_exit: isConsumable,
+                is_free_exit: isFree,
                 materials: exitMaterialsData.map(m => ({
                     material_id: m.material_id,
                     quantity: m.quantity
@@ -1680,16 +1698,18 @@
                     }
 
                 } else if (this.value === 'free') {
-                    // MODO SALIDA LIBRE: ocultar proyecto y departamento, mostrar TODOS los materiales
-                    exitProjectBlock.style.display = 'none';
+                    // MODO SALIDA LIBRE: Mostrar proyecto (ahora requerido), ocultar departamento
+                    exitProjectBlock.style.display = 'block';
                     exitDepartmentCard.style.display = 'none';
-                    exitPersonnelCard.style.display = 'block';
-                    exitMaterialsCard.style.display = 'block';
-                    exitNotesCard.style.display = 'block';
+                    exitPersonnelCard.style.display = 'none'; // Se muestra al seleccionar FP
+                    exitMaterialsCard.style.display = 'none'; // Se muestra al seleccionar FP
+                    exitNotesCard.style.display = 'none';
+                    
+                    // Limpiar FP
                     fpCodeHidden.value = '';
-
-                    await loadCurrentUserFullname();
-                    await loadActiveEmployees();
+                    fpSearchInput.value = '';
+                    projectInfo.style.display = 'none';
+                    selectedProjectData = null;
 
                     // Cargar TODOS los materiales activos (no telas)
                     exitMaterialLoader.style.display = 'block';

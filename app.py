@@ -5914,6 +5914,7 @@ def register_exit_multiple():
         notes = data.get('notes', '')
         materials = data.get('materials', [])
         is_consumable_exit = data.get('is_consumable_exit', False)
+        is_free_exit = data.get('is_free_exit', False)
 
 
         if not materials or len(materials) == 0:
@@ -5922,15 +5923,21 @@ def register_exit_multiple():
                 'message': 'Debe agregar al menos un material'
             })
 
-        # Validar que el proyecto existe (si se proporcionó FP)
+        # Validar que el proyecto existe (si se proporcionó FP o si es libre)
         project = None
         if fp_code:
             project = Project.query.filter_by(fp_code=fp_code).first()
-            if not project and not is_consumable_exit:
+            if not project:
                 return jsonify({
                     'success': False,
                     'message': 'Proyecto no encontrado'
                 })
+        elif not is_consumable_exit:
+            # Si no es consumible y no tiene fp_code, error (libre y regular requieren FP)
+            return jsonify({
+                'success': False,
+                'message': 'El proyecto (FP) es obligatorio para esta salida'
+            })
 
         movements_created = []
         errors = []
@@ -5946,8 +5953,8 @@ def register_exit_multiple():
                     errors.append(f"Material ID {material_id} no encontrado")
                     continue
 
-                if is_consumable_exit:
-                    # Salida de consumible: solo validar contra stock (si el toggle está activo)
+                if is_consumable_exit or is_free_exit:
+                    # Salida de consumible o libre: solo validar contra stock (si el toggle está activo)
                     if get_stock_check_enabled() and quantity > material.current_stock + 0.001:
                         errors.append(
                             f"{material.code}: Stock insuficiente. "
@@ -6002,6 +6009,16 @@ def register_exit_multiple():
                 last_id = StockMovement.query.count()
                 idm = f"SAL-{datetime.utcnow().strftime('%y%m%d')}-{last_id + 1:04d}"
 
+                if is_free_exit:
+                    notes_prefix = f"Salida Libre. Solicitante: {requester_name}. "
+                    ref_type = 'libre'
+                elif is_consumable_exit:
+                    notes_prefix = "Consumible. "
+                    ref_type = 'consumible'
+                else:
+                    notes_prefix = f"Solicitante: {requester_name}. "
+                    ref_type = 'requisicion'
+
                 # Crear movimiento
                 movement = StockMovement(
                     idm=idm,
@@ -6014,8 +6031,8 @@ def register_exit_multiple():
                     hora=datetime.utcnow().time(),
                     personal=deliverer_name,
                     user_id=current_user.id,
-                    notes=f"Solicitante: {requester_name}. {notes}" if not is_consumable_exit else f"Consumible. {notes}",
-                    reference_type='consumible' if is_consumable_exit else 'requisicion'
+                    notes=f"{notes_prefix}{notes}",
+                    reference_type=ref_type
                 )
 
                 db.session.add(movement)
