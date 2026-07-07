@@ -1149,17 +1149,18 @@
             const isConsumable        = document.querySelector('input[name="exitType"]:checked')?.value === 'consumable';
 
             // Máximo a entregar AHORA:
-            //  - Consumible: limitado por stock (siempre)
+            //  - Consumible: limitado por stock (siempre si toggle activo; sin límite si libre)
             //  - Normal + stockCheckEnabled=true:  min(stock, abastecida_pendiente)
-            //  - Normal + stockCheckEnabled=false (Stock Libre): pendingQty sin límite de stock
+            //  - Normal + stockCheckEnabled=false (Stock Libre): abastecida_pendiente (sin límite de stock físico)
             let maxAllowed;
             if (isConsumable) {
-                maxAllowed = stock;
+                // Consumibles: si el toggle está activo validar contra stock, si está libre no hay tope
+                maxAllowed = stockCheckEnabled ? stock : 9999;
             } else if (stockCheckEnabled) {
                 maxAllowed = Math.min(stock, abastecidaPendiente);
             } else {
-                // Stock libre: cantidad total requisitada pendiente de entregar (sin tope de stock)
-                maxAllowed = pendingQty > 0 ? pendingQty : 9999;
+                // Stock libre: no bloquear por stock físico, PERO sí respetar lo abastecido
+                maxAllowed = abastecidaPendiente > 0 ? abastecidaPendiente : pendingQty;
             }
 
             exitQuantityInput.max = maxAllowed;

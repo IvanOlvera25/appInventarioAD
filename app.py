@@ -521,6 +521,33 @@ def create_system_alert(alert_type, message, severity='info', target_user_id=Non
         print(f"⚠️ Error creando alerta del sistema: {e}")
 
 
+def notify_leaders(department, alert_type, message, severity='info', request_id=None):
+    """Envia una alerta a todos los lideres del departamento dado.
+    Si department es None o no hay lideres, no hace nada.
+    Se invoca ADEMAS de create_system_alert para el autor de la req.
+    """
+    try:
+        leaders = User.query.filter(
+            User.is_leader == True,
+            User.department == department
+        ).all()
+        for leader in leaders:
+            alert = SystemAlert(
+                alert_type=alert_type,
+                message=message,
+                severity=severity,
+                target_user_id=leader.id,
+                request_id=request_id,
+                created_at=datetime.utcnow()
+            )
+            db.session.add(alert)
+        if leaders:
+            db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"⚠️ Error notificando lideres [{department}]: {e}")
+
+
 def log_change(table_name, record_id, action, changed_fields=None, notes=None):
     """Registra cambios en audit_log (append-only, nunca se edita).
 
@@ -2249,8 +2276,11 @@ def add_material():
         )
 
         db.session.add(material)
+        db.session.flush()  # Obtener el ID asignado por la BD sin hacer commit todavía
+        # El código es exactamente igual al ID del material (requerimiento del sistema)
+        material.code = str(material.id)
         db.session.commit()
-        flash(f'Material "{material.name}" agregado exitosamente con código {new_code}')
+        flash(f'Material "{material.name}" agregado exitosamente con código {material.code}')
         return redirect(url_for('materials'))
 
     # GET request - pasar categorías y unidades (locales o remotas)
@@ -2945,6 +2975,14 @@ def new_request():
                 target_user_id=None,
                 request_id=new_req.id
             )
+            # Notificar a los líderes del departamento que se creo la requisicion
+            notify_leaders(
+                department=new_req.department,
+                alert_type='requisicion_alta',
+                message=f'Nueva requisición {req_number} (FP: {fp_code}) generada por {current_user.username}',
+                severity='info',
+                request_id=new_req.id
+            )
 
             # === AUDIT LOG: CREATE ===
             log_change('request', new_req.id, 'CREATE',
@@ -3052,8 +3090,8 @@ def get_request_details(request_id):
     try:
         req = Request.query.get_or_404(request_id)
 
-        # Verificar permisos
-        if not (current_user.role == 'admin' or
+        # Verificar permisos: admin, lider, almacenista o el propio creador
+        if not (current_user.role in ['admin', 'almacenista'] or
                 current_user.is_leader or
                 req.user_id == current_user.id):
             return jsonify({'success': False, 'message': 'Sin permisos para ver esta requisición'})
@@ -3909,11 +3947,20 @@ def api_mark_item_supplied(id):
 
         # === ALERTA: Material abastecido (para el autor de la requisición) ===
         mat_name = item.material.name if item.material else item.new_material_name or 'Desconocido'
+        req_num  = item.request.request_number if item.request else ''
         create_system_alert(
             alert_type='material_abastecido',
-            message=f'Material {mat_name}, de RQ{item.request.request_number} ha sido completamente abastecido',
+            message=f'Material {mat_name}, de RQ{req_num} ha sido completamente abastecido',
             severity='success',
             target_user_id=item.request.user_id,
+            request_id=item.request_id
+        )
+        # Notificar también a líderes del departamento de la requisición
+        notify_leaders(
+            department=item.request.department if item.request else None,
+            alert_type='material_abastecido',
+            message=f'Material {mat_name} de RQ{req_num} ha sido abastecido',
+            severity='success',
             request_id=item.request_id
         )
 
@@ -3927,6 +3974,74 @@ def api_mark_item_supplied(id):
 
         db.session.commit()
         return jsonify({'success': True, 'message': 'Material marcado como abastecido'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/request-item/<int:id>/partial-supply', methods=['POST'])
+@login_required
+def api_partial_supply_item(id):
+    """Registrar entrega parcial de material de compras.
+    Acepta JSON: { quantity_received: float }
+    Acumula en quantity_supplied. Marca 'abastecido' solo cuando llega al total solicitado.
+    """
+    try:
+        item = RequestItem.query.get_or_404(id)
+        if current_user.role not in ['admin', 'almacenista']:
+            return jsonify({'success': False, 'message': 'Sin permisos para esta acción'})
+        if item.item_status not in ['pendiente_compra', 'abastecido']:
+            return jsonify({'success': False, 'message': 'Solo aplica a items en pendiente_compra o parcialmente abastecidos'})
+
+        data = request.get_json(force=True) or {}
+        qty_received = float(data.get('quantity_received', 0))
+        if qty_received <= 0:
+            return jsonify({'success': False, 'message': 'La cantidad recibida debe ser mayor a 0'})
+
+        old_supplied = item.quantity_supplied or 0
+        old_status   = item.item_status
+        new_supplied = min(old_supplied + qty_received, item.quantity_requested)
+        item.quantity_supplied = new_supplied
+
+        if new_supplied >= item.quantity_requested - 0.001:
+            item.item_status = 'abastecido'
+            status_msg = 'completamente abastecido'
+        else:
+            item.item_status = 'pendiente_compra'
+            status_msg = f'parcialmente abastecido ({new_supplied:.2f}/{item.quantity_requested:.2f})'
+
+        mat_name = item.material.name if item.material else item.new_material_name or 'Desconocido'
+        req_num  = item.request.request_number if item.request else ''
+
+        if item.item_status == 'abastecido' and old_status != 'abastecido':
+            create_system_alert(
+                alert_type='material_abastecido',
+                message=f'Material {mat_name} de RQ{req_num} ha sido completamente abastecido',
+                severity='success',
+                target_user_id=item.request.user_id,
+                request_id=item.request_id
+            )
+            notify_leaders(
+                department=item.request.department if item.request else None,
+                alert_type='material_abastecido',
+                message=f'Material {mat_name} de RQ{req_num} completamente abastecido',
+                severity='success',
+                request_id=item.request_id
+            )
+
+        recalculate_request_status(item.request)
+        log_change('request_item', item.id, 'UPDATE', {
+            'quantity_supplied': (old_supplied, new_supplied),
+            'item_status': (old_status, item.item_status),
+        }, notes=f'Entrega parcial compra — RQ{req_num} — recibido: {qty_received}')
+
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': f'Material {status_msg}',
+            'quantity_supplied': new_supplied,
+            'item_status': item.item_status
+        })
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(e)})
@@ -4199,7 +4314,8 @@ def audit_log_view():
 @app.route('/reports')
 @login_required
 def reports():
-    if current_user.role == 'requisitador':
+    # Líderes y almacenistas también pueden ver reportes; solo requisitadores sin is_leader quedan fuera
+    if current_user.role == 'requisitador' and not current_user.is_leader:
         flash('Sección no disponible para requisitadores.', 'warning')
         return redirect(url_for('dashboard'))
 
@@ -6079,6 +6195,24 @@ def delete_movement(movement_id):
             material.current_stock -= movement.quantity
         elif movement.movement_type == 'salida':
             material.current_stock += movement.quantity
+            # Revertir quantity_delivered en el RequestItem asociado (si es de requisición)
+            if movement.reference_type == 'requisicion' and movement.fp_code:
+                project = Project.query.filter_by(fp_code=movement.fp_code).first()
+                if project:
+                    department = movement.area  # guardado en campo 'area'
+                    req_item = db.session.query(RequestItem)\
+                        .join(Request)\
+                        .filter(
+                            Request.project_id == project.id,
+                            Request.department == department,
+                            RequestItem.material_id == movement.material_id
+                        ).first()
+                    if req_item and req_item.quantity_delivered:
+                        req_item.quantity_delivered = max(0, (req_item.quantity_delivered or 0) - movement.quantity)
+                        # Actualizar status del item si ya no está totalmente entregado
+                        if req_item.item_status == 'entregado' and req_item.quantity_delivered < req_item.quantity_requested:
+                            req_item.item_status = 'abastecido'
+                        recalculate_request_status(req_item.request)
         elif movement.movement_type == 'retorno':
             material.current_stock -= movement.quantity
 
@@ -6086,7 +6220,7 @@ def delete_movement(movement_id):
         db.session.delete(movement)
         db.session.commit()
 
-        return jsonify({'success': True, 'message': 'Movimiento eliminado exitosamente'})
+        return jsonify({'success': True, 'message': 'Movimiento eliminado y stock revertido exitosamente'})
 
     except Exception as e:
         db.session.rollback()
