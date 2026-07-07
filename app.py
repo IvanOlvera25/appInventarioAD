@@ -5456,31 +5456,35 @@ def get_requisitioned_materials():
      .group_by(Material.id, Material.code, Material.name, Material.unit, Material.current_stock)\
      .all()
 
+    stock_libre = not get_stock_check_enabled()  # True = sin restriccion de stock
+
     materials_data = []
     for item in items:
         total_requested = item.total_requested or 0
-        total_supplied  = item.total_supplied  or 0   # Abastecido en análisis vs stock
-        total_delivered = item.total_delivered or 0   # Entregado físicamente al departamento
-        pending_quantity     = total_requested - total_delivered   # Pendiente de la requisición
-        abastecida_pendiente = max(0, total_supplied - total_delivered)  # Listo para entregar
+        total_supplied  = item.total_supplied  or 0
+        total_delivered = item.total_delivered or 0
+        pending_quantity     = total_requested - total_delivered
+        abastecida_pendiente = max(0, total_supplied - total_delivered)
 
-        # Solo se puede entregar si el material fue ABASTECIDO (abastecida_pendiente > 0).
-        # Si sigue en status "pendiente" (total_supplied == 0) NO debe aparecer.
-        if pending_quantity > 0 and abastecida_pendiente > 0:
+        # En modo Stock Libre: mostrar todo lo que tenga pendiente de entregar,
+        # aunque el material no haya pasado por el flujo de abastecimiento.
+        # En modo normal: solo mostrar si ya fue abastecido (abastecida_pendiente > 0).
+        if pending_quantity > 0.001 and (stock_libre or abastecida_pendiente > 0.001):
             materials_data.append({
                 'id': item.id,
                 'code': item.code,
                 'name': item.name,
                 'unit': item.unit,
                 'stock': item.current_stock,
-                'pending': pending_quantity,
+                'pending': pending_quantity,           # total_requested - total_delivered
                 'total_requested': total_requested,
                 'total_supplied': total_supplied,
                 'total_delivered': total_delivered,
-                'abastecida_pendiente': abastecida_pendiente
+                'abastecida_pendiente': abastecida_pendiente,
+                'stock_libre': stock_libre             # indica al front si hay restriccion
             })
 
-    return jsonify({'success': True, 'materials': materials_data})
+    return jsonify({'success': True, 'materials': materials_data, 'stock_libre': stock_libre})
 
 
 @app.route('/api/stock/consumables-list')

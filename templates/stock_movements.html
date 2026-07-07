@@ -1093,19 +1093,28 @@
             exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
 
             availableMaterials.forEach(mat => {
-                // El límite real es abastecida_pendiente (no pending_quantity que incluye lo que va a compras)
-                let entregableAhora = mat.abastecida_pendiente !== undefined ? mat.abastecida_pendiente : mat.pending;
+                // En modo Stock Libre: limitár solo por cantidad requisitada pendiente.
+                // En modo normal: limitár por abastecida_pendiente.
+                let entregableAhora = stockCheckEnabled
+                    ? (mat.abastecida_pendiente !== undefined ? mat.abastecida_pendiente : mat.pending)
+                    : mat.pending;  // En libre: todo lo pendiente de entregar
+
                 const alreadyAdded = exitMaterialsData.find(m => m.material_id == mat.id);
                 if (alreadyAdded) {
                     entregableAhora -= alreadyAdded.quantity;
                 }
 
-                if (entregableAhora > 0.001) {
-                    // Mostrar el límite real: en stock libre no limitamos por stock físico
+                // En stock libre siempre mostrar si pending > 0; en normal solo si entregableAhora > 0
+                const mostrar = stockCheckEnabled ? (entregableAhora > 0.001) : (mat.pending > 0.001);
+
+                if (mostrar) {
+                    // Mostrar el límite real: en libre no limitamos por stock físico
                     const maxNow = stockCheckEnabled ? Math.min(mat.stock, entregableAhora) : entregableAhora;
-                    const text = `${mat.code} - ${mat.name} (Disponible: ${maxNow.toFixed(2)} ${mat.unit})`;
+                    const stockLabel = mat.stock < 0 ? `⚠️ Stock: ${mat.stock.toFixed(2)}` : `Disponible: ${maxNow.toFixed(2)}`;
+                    const text = `${mat.code} - ${mat.name} (${stockLabel} ${mat.unit})`;
                     const option = new Option(text, mat.id);
-                    option.dataset.pending             = entregableAhora;   // abastecida_pendiente restante
+                    option.dataset.pending             = entregableAhora;
+                    option.dataset.pendingQty          = mat.pending;      // total requisitado pendiente
                     option.dataset.stock               = mat.stock;
                     option.dataset.unit                = mat.unit;
                     option.dataset.code                = mat.code;
@@ -1113,7 +1122,7 @@
                     option.dataset.totalRequested      = mat.total_requested || 0;
                     option.dataset.totalSupplied       = mat.total_supplied || 0;
                     option.dataset.totalDelivered      = mat.total_delivered || 0;
-                    option.dataset.abastecidaPendiente = entregableAhora;
+                    option.dataset.abastecidaPendiente = mat.abastecida_pendiente || 0;
                     exitMaterialSelect.add(option);
                 }
             });
@@ -1135,21 +1144,22 @@
             const totalRequested      = parseFloat(selected.dataset.totalRequested || 0);
             const totalSupplied       = parseFloat(selected.dataset.totalSupplied || 0);   // ← Verde
             const totalDelivered      = parseFloat(selected.dataset.totalDelivered || 0);
-            const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0); // ← Amarillo
+            const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
+            const pendingQty          = parseFloat(selected.dataset.pendingQty || selected.dataset.pending || 0);
             const isConsumable        = document.querySelector('input[name="exitType"]:checked')?.value === 'consumable';
 
             // Máximo a entregar AHORA:
             //  - Consumible: limitado por stock (siempre)
-            //  - Normal + stockCheckEnabled=true: min(stock, abastecido pendiente)
-            //  - Normal + stockCheckEnabled=false (Stock Libre): solo abastecido pendiente
+            //  - Normal + stockCheckEnabled=true:  min(stock, abastecida_pendiente)
+            //  - Normal + stockCheckEnabled=false (Stock Libre): pendingQty sin límite de stock
             let maxAllowed;
             if (isConsumable) {
                 maxAllowed = stock;
             } else if (stockCheckEnabled) {
                 maxAllowed = Math.min(stock, abastecidaPendiente);
             } else {
-                // Stock libre: no bloquear por stock físico, solo por lo abastecido
-                maxAllowed = abastecidaPendiente;
+                // Stock libre: cantidad total requisitada pendiente de entregar (sin tope de stock)
+                maxAllowed = pendingQty > 0 ? pendingQty : 9999;
             }
 
             exitQuantityInput.max = maxAllowed;
@@ -1235,8 +1245,9 @@
                     const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
 
                     if (!stockCheckEnabled) {
-                        // Stock libre: solo limitar por abastecido pendiente
-                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Abastecido Pendiente por Entregar (' + abastecidaPendiente.toFixed(2) + ').';
+                        // Stock libre: solo limitar por pending_qty (total requisitado pendiente)
+                        const pQty = parseFloat(selected.dataset.pendingQty || selected.dataset.pending || 0);
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el total requisitado pendiente (' + pQty.toFixed(2) + ').';
                     } else if (quantity > stock && quantity > abastecidaPendiente) {
                         alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible y el Abastecido Pendiente por Entregar.';
                     } else if (quantity > stock) {
