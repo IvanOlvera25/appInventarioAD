@@ -404,6 +404,18 @@
                     <i class="fas {{ 'fa-shield-alt' if stock_check_enabled else 'fa-exclamation-triangle' }} pill-icon"></i>
                     <span id="stockCheckLabel">{% if stock_check_enabled %}Stock: Validando{% else %}Stock: Libre{% endif %}</span>
                 </button>
+                <!-- Toggle: Salidas Libres -->
+                <button
+                    id="freeExitToggle"
+                    class="stock-toggle-pill {{ 'enabled' if free_exit_enabled else 'disabled' }}"
+                    style="background: {{ 'rgba(39,174,96,0.15)' if free_exit_enabled else 'rgba(231,76,60,0.08)' }}; margin-left:6px;"
+                    title="{% if free_exit_enabled %}Salidas Libres ACTIVAS — clic para requerir requisición{% else %}Salidas Libres INACTIVAS — clic para permitir salidas sin requisición{% endif %}"
+                    onclick="toggleFreeExit()"
+                >
+                    <span class="pill-indicator" style="background:{{ '#27ae60' if free_exit_enabled else '#e74c3c' }};"></span>
+                    <i class="fas {{ 'fa-door-open' if free_exit_enabled else 'fa-door-closed' }} pill-icon"></i>
+                    <span id="freeExitLabel">{% if free_exit_enabled %}Salidas: Libres{% else %}Salidas: Con Req.{% endif %}</span>
+                </button>
                 {% endif %}
 
                 <div class="text-end d-none d-md-block">
@@ -525,7 +537,6 @@
                         ? 'Validación de stock ACTIVA — clic para desactivar'
                         : 'Validación de stock INACTIVA — clic para activar';
 
-                    // Toast notificación
                     var toast = document.createElement('div');
                     toast.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;padding:0.75rem 1.2rem;border-radius:8px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,0.15);transition:all 0.3s;';
                     toast.style.background = enabled ? '#d4edda' : '#fff3cd';
@@ -539,10 +550,50 @@
                 }
             })
             .catch(function(err) { console.error('Toggle error:', err); alert('Error de conexión.'); })
-            .finally(function() {
-                btn.style.opacity = '1';
-                btn.style.pointerEvents = 'auto';
-            });
+            .finally(function() { btn.style.opacity = '1'; btn.style.pointerEvents = 'auto'; });
+        }
+
+        // Toggle salidas libres sin requisición (solo admins)
+        function toggleFreeExit() {
+            var btn = document.getElementById('freeExitToggle');
+            var label = document.getElementById('freeExitLabel');
+            if (!btn) return;
+
+            btn.style.opacity = '0.6';
+            btn.style.pointerEvents = 'none';
+
+            fetch('/admin/toggle-free-exit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    var enabled = data.enabled;
+                    btn.classList.toggle('enabled', enabled);
+                    btn.classList.toggle('disabled', !enabled);
+                    btn.querySelector('.pill-indicator').style.background = enabled ? '#27ae60' : '#e74c3c';
+                    btn.querySelector('i').className = 'fas ' + (enabled ? 'fa-door-open' : 'fa-door-closed') + ' pill-icon';
+                    label.textContent = enabled ? 'Salidas: Libres' : 'Salidas: Con Req.';
+                    btn.title = enabled
+                        ? 'Salidas Libres ACTIVAS — clic para requerir requisición'
+                        : 'Salidas Libres INACTIVAS — clic para permitir sin requisición';
+                    btn.style.background = enabled ? 'rgba(39,174,96,0.15)' : 'rgba(231,76,60,0.08)';
+
+                    var toast = document.createElement('div');
+                    toast.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;padding:0.75rem 1.2rem;border-radius:8px;font-size:0.85rem;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,0.15);transition:all 0.3s;';
+                    toast.style.background = enabled ? '#d4edda' : '#fce4e4';
+                    toast.style.color = enabled ? '#155724' : '#7b1b1b';
+                    toast.style.border = '1.5px solid ' + (enabled ? '#27ae60' : '#e74c3c');
+                    toast.textContent = data.message;
+                    document.body.appendChild(toast);
+                    setTimeout(function() { toast.style.opacity = '0'; setTimeout(function(){ toast.remove(); }, 300); }, 3500);
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(function(err) { console.error('Toggle error:', err); alert('Error de conexión.'); })
+            .finally(function() { btn.style.opacity = '1'; btn.style.pointerEvents = 'auto'; });
         }
     </script>
     {% block scripts %}{% endblock %}

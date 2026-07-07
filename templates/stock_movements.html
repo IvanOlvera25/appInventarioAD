@@ -375,7 +375,7 @@
                             <div class="row g-3">
                                 <!-- Toggle consumible PRIMERO — define el flujo -->
                                 <div class="col-12">
-                                    <div class="d-flex gap-3">
+                                    <div class="d-flex gap-3 flex-wrap">
                                         <div class="form-check form-check-inline">
                                             <input class="form-check-input" type="radio" name="exitType" id="exitTypeProject" value="project" checked>
                                             <label class="form-check-label fw-bold" for="exitTypeProject">
@@ -389,6 +389,15 @@
                                                 <small class="text-muted fw-normal">(sin requisición)</small>
                                             </label>
                                         </div>
+                                        {% if free_exit_enabled %}
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="radio" name="exitType" id="exitTypeFree" value="free">
+                                            <label class="form-check-label fw-bold" for="exitTypeFree">
+                                                <i class="fas fa-door-open text-warning me-1"></i>Salida Libre
+                                                <small class="text-muted fw-normal">(cualquier material, sin req.)</small>
+                                            </label>
+                                        </div>
+                                        {% endif %}
                                     </div>
                                 </div>
 
@@ -803,6 +812,7 @@
         let selectedProjectData = null;
         // Toggle de validación de stock (sincronizado con SystemConfig desde el servidor)
         const stockCheckEnabled = {{ 'true' if stock_check_enabled else 'false' }};
+        const freeExitEnabled   = {{ 'true' if free_exit_enabled else 'false' }};
 
         const exitModal = document.getElementById('exitModal');
         if (!exitModal) { console.warn('exitModal not found, skipping exit modal setup'); return; }
@@ -1665,6 +1675,61 @@
                         }
                     } catch (err) {
                         exitMaterialSelect.innerHTML = '<option value="">Error al cargar consumibles</option>';
+                    } finally {
+                        exitMaterialLoader.style.display = 'none';
+                    }
+
+                } else if (this.value === 'free') {
+                    // MODO SALIDA LIBRE: ocultar proyecto y departamento, mostrar TODOS los materiales
+                    exitProjectBlock.style.display = 'none';
+                    exitDepartmentCard.style.display = 'none';
+                    exitPersonnelCard.style.display = 'block';
+                    exitMaterialsCard.style.display = 'block';
+                    exitNotesCard.style.display = 'block';
+                    fpCodeHidden.value = '';
+
+                    await loadCurrentUserFullname();
+                    await loadActiveEmployees();
+
+                    // Cargar TODOS los materiales activos (no telas)
+                    exitMaterialLoader.style.display = 'block';
+                    exitMaterialSelect.innerHTML = '<option value="" selected disabled>Cargando materiales...</option>';
+                    exitMaterialSelect.disabled = true;
+
+                    try {
+                        const res  = await fetch('/api/stock/all-materials-list');
+                        const data = await res.json();
+                        exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
+                        if (data.success && data.materials.length > 0) {
+                            availableMaterials = data.materials.map(m => ({
+                                id: m.id, code: m.code, name: m.name, unit: m.unit,
+                                stock: m.stock, pending: 9999,
+                                total_requested: 0, total_supplied: 9999, total_delivered: 0,
+                                abastecida_pendiente: 9999
+                            }));
+                            availableMaterials.forEach(mat => {
+                                const stockLabel = mat.stock < 0
+                                    ? `⚠️ Stock: ${mat.stock.toFixed(2)}`
+                                    : `Stock: ${mat.stock.toFixed(2)}`;
+                                const option = new Option(`${mat.name}  [${mat.code}]  — ${stockLabel} ${mat.unit}`, mat.id);
+                                option.dataset.pending             = 9999;
+                                option.dataset.pendingQty          = 9999;
+                                option.dataset.stock               = mat.stock;
+                                option.dataset.unit                = mat.unit;
+                                option.dataset.code                = mat.code;
+                                option.dataset.name                = mat.name;
+                                option.dataset.totalRequested      = 0;
+                                option.dataset.totalSupplied       = 9999;
+                                option.dataset.totalDelivered      = 0;
+                                option.dataset.abastecidaPendiente = 9999;
+                                exitMaterialSelect.add(option);
+                            });
+                            exitMaterialSelect.disabled = false;
+                        } else {
+                            exitMaterialSelect.innerHTML = '<option value="">No hay materiales disponibles</option>';
+                        }
+                    } catch (err) {
+                        exitMaterialSelect.innerHTML = '<option value="">Error al cargar materiales</option>';
                     } finally {
                         exitMaterialLoader.style.display = 'none';
                     }

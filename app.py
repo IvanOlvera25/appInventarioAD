@@ -75,11 +75,16 @@ def inject_globals():
     except:
         units = []
 
-    # Cargar estado del toggle de validación de stock
+    # Cargar estado de los toggles del sistema
     try:
         stock_check_enabled = get_stock_check_enabled()
     except Exception:
         stock_check_enabled = False
+
+    try:
+        free_exit_enabled = get_free_exit_enabled()
+    except Exception:
+        free_exit_enabled = False
 
     return {
         'moment': datetime,
@@ -87,7 +92,8 @@ def inject_globals():
         'departments': departments,
         'categories': categories,
         'units': units,
-        'stock_check_enabled': stock_check_enabled
+        'stock_check_enabled': stock_check_enabled,
+        'free_exit_enabled': free_exit_enabled
     }
 
 # Asegurarse de que el directorio existe
@@ -177,10 +183,11 @@ with app.app_context():
                     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """))
-            # Insertar valor default de stock_check_enabled si no existe
+            # Insertar valores default de system_config si no existen
             _conn2.execute(_text2("""
                 INSERT IGNORE INTO `system_config` (`key`, `value`)
-                VALUES ('stock_check_enabled', '0')
+                VALUES ('stock_check_enabled', '0'),
+                       ('free_exit_enabled', '0')
             """))
             print("  ✅ Tabla 'system_config' verificada/creada")
 
@@ -210,6 +217,18 @@ def get_stock_check_enabled():
         return cfg is not None and cfg.value == '1'
     except Exception:
         return False  # Fallback seguro si la tabla aún no existe
+
+
+def get_free_exit_enabled():
+    """Retorna True si las salidas libres (sin FP ni requisición) están habilitadas.
+    Permite a almacenistas registrar salidas directamente del inventario sin
+    necesidad de crear una requisición previa.
+    """
+    try:
+        cfg = SystemConfig.query.filter_by(key='free_exit_enabled').first()
+        return cfg is not None and cfg.value == '1'
+    except Exception:
+        return False
 
 
 
@@ -5627,6 +5646,35 @@ def get_consumables_list():
     return jsonify({'success': True, 'materials': result})
 
 
+@app.route('/api/stock/all-materials-list')
+@login_required
+def get_all_materials_list():
+    """Lista de TODOS los materiales activos (no telas) para el modo Salida Libre.
+    No filtra por stock — permite salidas de materiales con stock negativo o cero.
+    Solo disponible cuando free_exit_enabled es True.
+    """
+    if not get_free_exit_enabled():
+        return jsonify({'success': False, 'message': 'Salidas libres no están habilitadas'}), 403
+
+    materials = Material.query.filter(
+        Material.is_active == True,
+        ~Material.category.ilike('%tela%'),
+        Material.is_fabric_roll == False
+    ).order_by(Material.name).all()
+
+    result = [{
+        'id': m.id,
+        'code': m.code,
+        'name': m.name,
+        'unit': m.unit,
+        'stock': m.current_stock or 0,
+        'category': m.category
+    } for m in materials]
+
+    return jsonify({'success': True, 'materials': result})
+
+
+
 @app.route('/api/materials/<int:material_id>/recycled-options')
 @login_required
 def get_recycled_options(material_id):
@@ -7800,8 +7848,38 @@ def admin_toggle_stock_check():
         db.session.rollback()
         return jsonify({'success': False, 'message': f'Error al cambiar configuración: {str(e)}'}), 500
 
+# ===== ADMINISTRACIÓN: Toggle salidas libres sin requisición =====
+@app.route('/admin/toggle-free-exit', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_toggle_free_exit():
+    """Habilita o deshabilita las salidas libres (sin FP ni requisición previa).
+    Útil durante el período de transición mientras el equipo se familiariza con el sistema.
+    """
+    try:
+        cfg = SystemConfig.query.filter_by(key='free_exit_enabled').first()
+        if not cfg:
+            cfg = SystemConfig(key='free_exit_enabled', value='0')
+            db.session.add(cfg)
 
-# --- ADMIN: Usuarios + Códigos fijos ---
+        new_value = '0' if cfg.value == '1' else '1'
+        cfg.value = new_value
+        cfg.updated_by = current_user.id
+        cfg.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        enabled = new_value == '1'
+        return jsonify({
+            'success': True,
+            'enabled': enabled,
+            'message': 'Salidas Libres ACTIVADAS ✅ — se pueden registrar salidas sin requisición' if enabled
+                       else 'Salidas Libres DESACTIVADAS — se requiere requisición para toda salida'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+
 
 from sqlalchemy import asc
 
