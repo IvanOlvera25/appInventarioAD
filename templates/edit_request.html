@@ -264,7 +264,7 @@
                                                 ['admin', 'almacenista'] %}
                                                 <!-- Cambiar a Abastecido -->
                                                 <button class="btn btn-outline-success"
-                                                    onclick="markSupplied({{ item.id }})" title="Cambiar a Abastecido">
+                                                    onclick="markSupplied({{ item.id }}, {{ item.quantity_requested }}, {{ item.quantity_supplied or 0 }})" title="Cambiar a Abastecido">
                                                     <i class="fas fa-check"></i>
                                                 </button>
                                                 {% endif %}
@@ -610,10 +610,33 @@
     }
 
     // ===== MARCAR ABASTECIDO =====
-    async function markSupplied(itemId) {
-        if (!confirm('¿Marcar este material como abastecido?')) return;
+    async function markSupplied(itemId, requestedQty, suppliedQty) {
+        let msg = `¿Qué cantidad de material llegó?\n(Solicitada: ${requestedQty}. Ya recibida: ${suppliedQty}).\n\n- Ingresa un número para entrega parcial.\n- Escribe 'todo' o deja vacío si llegó completo.`;
+        let input = prompt(msg);
+        
+        if (input === null) return; // Usuario canceló
+
+        input = input.trim().toLowerCase();
+        
+        let url, body, headers;
+        
+        if (input === '' || input === 'todo') {
+            url = `/api/request-item/${itemId}/mark-supplied`;
+            body = null;
+            headers = {};
+        } else {
+            let qty = parseFloat(input);
+            if (isNaN(qty) || qty <= 0) {
+                alert('Cantidad inválida. Ingresa un número mayor a 0, "todo" o deja en vacío.');
+                return;
+            }
+            url = `/api/request-item/${itemId}/partial-supply`;
+            body = JSON.stringify({ quantity_received: qty });
+            headers = { 'Content-Type': 'application/json' };
+        }
+
         try {
-            const res = await fetch(`/api/request-item/${itemId}/mark-supplied`, { method: 'POST' });
+            const res = await fetch(url, { method: 'POST', headers: headers, body: body });
             const data = await res.json();
             alert(data.message);
             if (data.success) location.reload();
