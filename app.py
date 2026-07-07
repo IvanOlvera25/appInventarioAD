@@ -2896,19 +2896,29 @@ def new_request():
                     material_id = None
                     is_new = material_data.get('is_new_material', False)
 
-                    # Auto-generar código si es nuevo y no viene informado
-                    if is_new and not material_data.get('code'):
-                        # Generar un código temporal o definitivo
-                        # Opción simple: MAT-{timestamp} para evitar colisiones
-                        import time
-                        timestamp_code = int(time.time())
-                        material_data['code'] = f"MAT-{timestamp_code}"
-                        print(f"    ℹ️ Código auto-generado: {material_data['code']}")
-
                     if not is_new:
                         material_id = material_data.get('material_id')
                         if material_id:
                             print(f"    → Material existente ID: {material_id}")
+                    else:
+                        # CREAR EL MATERIAL DIRECTAMENTE ANTES DEL REQUEST ITEM
+                        new_material = Material(
+                            code="TEMP", # Temporal
+                            name=material_data.get('name'),
+                            unit=material_data.get('unit'),
+                            category=material_data.get('category'),
+                            description=f"Material creado desde requisición {req_number}",
+                            current_stock=0,
+                            min_stock=0,
+                            max_stock=0,
+                            unit_cost=0
+                        )
+                        db.session.add(new_material)
+                        db.session.flush() # Para obtener ID
+                        new_material.code = str(new_material.id) # Asegurar que code = id
+                        material_id = new_material.id
+                        print(f"    ✅ Material nuevo agregado al catálogo con ID: {material_id}")
+                        new_materials_created += 1
 
                     # Procesar fecha de retorno
                     return_date = None
@@ -2922,14 +2932,15 @@ def new_request():
                         except ValueError:
                             print(f"    ⚠️ Fecha retorno inválida, se omitirá")
 
-                    # Crear RequestItem
+                    # Crear RequestItem (ya con material_id resuelto)
                     item = RequestItem(
                         request_id=new_req.id,
                         material_id=material_id,
-                        new_material_code=material_data.get('code') if is_new else None,
-                        new_material_name=material_data.get('name') if is_new else None,
-                        new_material_unit=material_data.get('unit') if is_new else None,
-                        new_material_category=material_data.get('category') if is_new else None,
+                        # Ya no se usan los campos temporales, todo se relaciona al Material directamente
+                        new_material_code=None,
+                        new_material_name=None,
+                        new_material_unit=None,
+                        new_material_category=None,
                         is_new_material=is_new,
                         quantity_requested=float(material_data['quantity']),
                         item_type=material_data.get('item_type', 'nuevo'),
@@ -2941,29 +2952,6 @@ def new_request():
                     db.session.add(item)
                     items_created += 1
                     print(f"    ✅ Item de requisición creado")
-
-                    # Si es material nuevo, agregarlo al catálogo
-                    if is_new:
-                        code = material_data.get('code')
-                        existing = Material.query.filter_by(code=code).first()
-
-                        if not existing:
-                            new_material = Material(
-                                code=code,
-                                name=material_data.get('name'),
-                                unit=material_data.get('unit'),
-                                category=material_data.get('category'),
-                                description=f"Material creado desde requisición {req_number}",
-                                current_stock=0,
-                                min_stock=0,
-                                max_stock=0,
-                                unit_cost=0
-                            )
-                            db.session.add(new_material)
-                            new_materials_created += 1
-                            print(f"    ✅ Material nuevo agregado al catálogo: {code}")
-                        else:
-                            print(f"    ℹ️ Material {code} ya existe en catálogo")
 
                 except Exception as item_error:
                     print(f"    ❌ ERROR procesando material: {str(item_error)}")
