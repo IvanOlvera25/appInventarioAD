@@ -4121,7 +4121,7 @@ def fabric_rolls():
     rolls = query.all()
     # Obtener solo materiales cuya categoría sea 'Telas'
     materials = Material.query.filter(Material.category.ilike('%tela%')).all()
-    return render_template('fabric_rolls.html', rolls=rolls, materials=materials)
+    return render_template('fabric_rolls.html', rolls=rolls, materials=materials, free_exit_enabled=get_free_exit_enabled())
 
 @app.route('/stock-movements')
 @login_required

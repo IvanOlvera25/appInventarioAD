@@ -264,7 +264,7 @@
           </div>
         </a>
       </div>
-      {% if current_user.role != 'requisitador' %}
+      {% if current_user.role != 'requisitador' or current_user.is_leader %}
       <div class="col-md-3">
         <a href="{{ url_for('reports') }}" class="quick-btn text-warning">
           <i class="fas fa-chart-bar"></i>

@@ -799,7 +799,9 @@
                 (data.client ? ` · Cliente: ${data.client}` : '');
 
             // ¿Existe alguna requisición de este material?
-            if (!data.has_requisition) {
+            const freeExitEnabled = {{ 'true' if free_exit_enabled else 'false' }};
+            
+            if (!data.has_requisition && !freeExitEnabled) {
                 noReqAlert.style.display = 'block';
                 areaSelect.innerHTML = '<option value="">Sin requisiciones</option>';
                 limitDiv.innerHTML = '';
@@ -812,7 +814,7 @@
             _fpHasRequisition = true;
 
             // ¿La requisición existe pero está en status PENDIENTE (no abastecida aún)?
-            if (data.abastecido === false || data.total_pending === 0) {
+            if ((data.abastecido === false || data.total_pending === 0) && !freeExitEnabled) {
                 areaSelect.innerHTML = '<option value="">Requisición pendiente de abastecer</option>';
                 limitDiv.innerHTML = `
                     <div class="alert alert-warning py-1 px-2 mt-1 mb-0 small">
