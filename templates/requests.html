@@ -677,14 +677,21 @@
         // Formatear fechas
         const formatDate = (dateStr) => {
             if (!dateStr) return '-';
-            const d = new Date(dateStr);
-            return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            // Parsear YYYY-MM-DD directamente para evitar desplazamiento de timezone
+            const [y, m, d] = dateStr.substring(0, 10).split('-').map(Number);
+            return `${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y}`;
         };
         const formatDateTime = (dateStr) => {
             if (!dateStr) return '-';
-            const d = new Date(dateStr);
-            return d.toLocaleDateString('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
-                ' ' + d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+            // Para datetimes con hora: decodificar en UTC
+            const dateUTC = new Date(dateStr);
+            const d = new Date(dateUTC.getTime() - (6 * 60 * 60 * 1000)); // Ajustar a UTC-6 (Mexico)
+            const dd = String(d.getUTCDate()).padStart(2,'0');
+            const mm = String(d.getUTCMonth()+1).padStart(2,'0');
+            const yyyy = d.getUTCFullYear();
+            const hh = String(d.getUTCHours()).padStart(2,'0');
+            const min = String(d.getUTCMinutes()).padStart(2,'0');
+            return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
         };
 
         // Generar filas de materiales
@@ -749,7 +756,6 @@
                                 ${req.assembly_start_date ? formatDate(req.assembly_start_date) : '-'} / 
                                 ${req.assembly_end_date ? formatDate(req.assembly_end_date) : '-'}
                             </td></tr>
-                            <tr><td class="fw-bold">Entrega Proyecto:</td><td>${formatDate(req.project.delivery_date)}</td></tr>
                         </table>
                     </div>
                 </div>

@@ -3064,14 +3064,14 @@ def get_departments_by_fp():
 def search_materials():
     """Buscar materiales para el autocompletado"""
     query = request.args.get('q', '')
-    if len(query) < 2:
+    if len(query) < 1:
         return jsonify({'materials': []})
 
     materials = Material.query.filter(
         Material.is_active == True,
         db.or_(
-            Material.name.contains(query),
-            Material.code.contains(query)
+            Material.name.ilike(f'%{query}%'),
+            Material.code.ilike(f'%{query}%')
         )
     ).limit(25).all()
 
@@ -3117,14 +3117,8 @@ def get_request_details(request_id):
                 'is_new_material': item.is_new_material
             }
 
-            if item.is_new_material:
-                item_data.update({
-                    'code': item.new_material_code,
-                    'name': item.new_material_name,
-                    'unit': item.new_material_unit,
-                    'category': item.new_material_category
-                })
-            else:
+            # Si el material ya está vinculado en BD (material_id siempre debería estar), usarlo
+            if item.material:
                 item_data.update({
                     'code': item.material.code,
                     'name': item.material.name,
@@ -3132,6 +3126,16 @@ def get_request_details(request_id):
                     'category': item.material.category,
                     'current_stock': item.material.current_stock
                 })
+            elif item.is_new_material:
+                # Fallback a campos legacy si aún existen
+                item_data.update({
+                    'code': item.new_material_code or 'N/A',
+                    'name': item.new_material_name or 'Sin nombre',
+                    'unit': item.new_material_unit or '',
+                    'category': item.new_material_category or ''
+                })
+            else:
+                item_data.update({'code': 'N/A', 'name': 'Material no encontrado', 'unit': '', 'category': ''})
 
             items_data.append(item_data)
 
@@ -3144,13 +3148,15 @@ def get_request_details(request_id):
             'is_incident': req.is_incident,
             'incident_id': req.incident_id,
             'client': req.project.client,
-            'acquisition_deadline': req.acquisition_deadline.isoformat() if req.acquisition_deadline else None,
-            'assembly_start_date': req.assembly_start_date.isoformat() if req.assembly_start_date else None,
-            'assembly_end_date': req.assembly_end_date.isoformat() if req.assembly_end_date else None,
+            # Fechas tipo date: enviar como YYYY-MM-DD sin conversión de timezone
+            'acquisition_deadline': req.acquisition_deadline.strftime('%Y-%m-%d') if req.acquisition_deadline else None,
+            'assembly_start_date': req.assembly_start_date.strftime('%Y-%m-%d') if req.assembly_start_date else None,
+            'assembly_end_date': req.assembly_end_date.strftime('%Y-%m-%d') if req.assembly_end_date else None,
             'status': req.status,
             'notes': req.notes,
-            'created_at': req.created_at.isoformat(),
-            'approved_at': req.approved_at.isoformat() if req.approved_at else None,
+            # created_at es datetime (con hora): mandarlo en UTC con Z para que el frontend lo muestre correcto
+            'created_at': req.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if req.created_at else None,
+            'approved_at': req.approved_at.strftime('%Y-%m-%dT%H:%M:%SZ') if req.approved_at else None,
             'user': {
                 'username': req.user.username,
                 'email': req.user.email
@@ -3158,9 +3164,7 @@ def get_request_details(request_id):
             'project': {
                 'name': req.project.name,
                 'fp_code': req.project.fp_code,
-                'delivery_date': req.project.delivery_date.isoformat(),
-                'production_start': req.project.production_start.isoformat(),
-                'assembly_date': req.project.assembly_date.isoformat()
+                'production_start': req.project.production_start.strftime('%Y-%m-%d') if req.project.production_start else None
             },
             'items': items_data
         }
@@ -7540,18 +7544,20 @@ def api_cut_fabric_roll():
 
         if reason == 'produccion' and fp_code:
             # Para producción: límite = min(abastecido pendiente de entrega, longitud restante)
-            material_check = roll.material
-            supplied_items = RequestItem.query.join(Request).filter(
-                Request.project.has(Project.fp_code == fp_code),
-                RequestItem.material_id == material_check.id,
-                RequestItem.item_status == 'abastecido'   # solo abastecidos
-            ).all()
-            total_supplied_pending = sum(
-                max((item.quantity_supplied or 0) - (item.quantity_delivered or 0), 0)
-                for item in supplied_items
-            )
-            if total_supplied_pending > 0:
-                max_allowed = min(total_supplied_pending, roll.remaining_length or 0)
+            # PERO si free_exit_enabled, no hay límite de abastecido pendiente
+            if not get_free_exit_enabled():
+                material_check = roll.material
+                supplied_items = RequestItem.query.join(Request).filter(
+                    Request.project.has(Project.fp_code == fp_code),
+                    RequestItem.material_id == material_check.id,
+                    RequestItem.item_status == 'abastecido'   # solo abastecidos
+                ).all()
+                total_supplied_pending = sum(
+                    max((item.quantity_supplied or 0) - (item.quantity_delivered or 0), 0)
+                    for item in supplied_items
+                )
+                if total_supplied_pending > 0:
+                    max_allowed = min(total_supplied_pending, roll.remaining_length or 0)
 
         if cut_length > max_allowed + 0.001:  # tolerancia de redondeo
             return jsonify({'success': False, 'message': f'La longitud de corte excede el máximo permitido ({max_allowed:.2f} m)'}), 400
