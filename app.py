@@ -7768,6 +7768,15 @@ def api_fabric_roll_production_info():
     # Buscar el proyecto
     project = Project.query.filter_by(fp_code=fp_code).first()
     if not project:
+        if get_free_exit_enabled():
+            return jsonify({
+                'success': True,
+                'project_name': 'Proyecto Nuevo/No Registrado',
+                'client': 'N/D',
+                'has_requisition': False,
+                'total_pending': 0,
+                'areas': []
+            })
         return jsonify({'success': False, 'message': 'Proyecto no encontrado'}), 404
 
     # ¿Existe ALGUNA requisición de este material para este proyecto?

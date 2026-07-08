@@ -800,11 +800,29 @@
 
             // ¿Existe alguna requisición de este material?
             const freeExitEnabled = {{ 'true' if free_exit_enabled else 'false' }};
+            const areaContainer = document.getElementById('areaContainer');
             
             if (!data.has_requisition && !freeExitEnabled) {
                 noReqAlert.style.display = 'block';
                 areaSelect.innerHTML = '<option value="">Sin requisiciones</option>';
                 limitDiv.innerHTML = '';
+                _fpPendingTotal = 0;
+                _fpHasRequisition = false;
+                applyMaxLimit();
+                return;
+            } else if (!data.has_requisition && freeExitEnabled) {
+                noReqAlert.style.display = 'block';
+                noReqAlert.innerHTML = `
+                    <i class="fas fa-info-circle me-1"></i>
+                    <strong>Modo Salida Libre:</strong> No hay requisición registrada.
+                    <span class="text-muted">Ingrese el área manualmente. El límite es la longitud del rollo.</span>`;
+                
+                // Cambiar select por input text
+                areaContainer.innerHTML = `
+                    <label class="form-label">Área destino <small>(Libre)</small></label>
+                    <input type="text" class="form-control" id="cutArea" name="area" placeholder="Ej. Herrería, Tapicería..." required>
+                    <div id="productionPendingLimit" class="form-text mt-1 text-warning"></div>
+                `;
                 _fpPendingTotal = 0;
                 _fpHasRequisition = false;
                 applyMaxLimit();
@@ -826,29 +844,53 @@
                 _fpPendingTotal = 0;   // sin límite de abastecido → trabaja como "otro motivo"
                 applyMaxLimit();
                 return;
+            } else if ((data.abastecido === false || data.total_pending === 0) && freeExitEnabled) {
+                // Modo libre y la requisición está pendiente: dejar elegir área libremente
+                areaContainer.innerHTML = `
+                    <label class="form-label">Área destino <small>(Libre)</small></label>
+                    <input type="text" class="form-control" id="cutArea" name="area" placeholder="Ej. Herrería, Tapicería..." required>
+                    <div id="productionPendingLimit" class="form-text mt-1 text-warning">
+                        Nota: La requisición no tiene saldo abastecido, pero el modo libre está activado.
+                    </div>
+                `;
+                _fpPendingTotal = 0;
+                applyMaxLimit();
+                return;
             }
+
+            // Asegurar que el contenedor vuelva a ser select si sí hay data (por si se reemplazó antes)
+            areaContainer.innerHTML = `
+                <label class="form-label">Área</label>
+                <select class="form-select" id="cutArea" name="area">
+                    <option value="">Seleccione un FP primero...</option>
+                </select>
+                <div id="productionPendingLimit" class="form-text mt-1 text-warning"></div>
+            `;
+            // Readquiere referencia al select y al limitDiv después del innerHTML
+            const newAreaSelect = document.getElementById('cutArea');
+            const newLimitDiv = document.getElementById('productionPendingLimit');
 
             _fpPendingTotal   = data.total_pending || 0;
 
             // Poblar select de áreas
-            areaSelect.innerHTML = '';
+            newAreaSelect.innerHTML = '';
             if (data.areas && data.areas.length > 0) {
-                areaSelect.innerHTML = '<option value="">Seleccionar área (opcional)...</option>';
+                newAreaSelect.innerHTML = '<option value="">Seleccionar área (opcional)...</option>';
                 data.areas.forEach(a => {
                     const opt = document.createElement('option');
                     opt.value = a.area;
                     opt.text  = `${a.area} (Pendiente: ${a.pending}m)`;
                     opt.dataset.pending = a.pending;
-                    areaSelect.appendChild(opt);
+                    newAreaSelect.appendChild(opt);
                 });
 
                 // Mostrar límite global aún si no seleccionan área
                 const globalLimit = Math.min(_fpPendingTotal, currentRollRemainingLength);
-                limitDiv.innerHTML = `Total abastecido pendiente: <strong>${_fpPendingTotal}m</strong>.
+                newLimitDiv.innerHTML = `Total abastecido pendiente: <strong>${_fpPendingTotal}m</strong>.
                     Límite de corte ajustado a <strong>${globalLimit.toFixed(2)}m</strong>.`;
             } else {
-                areaSelect.innerHTML = '<option value="">Todo el material ya fue entregado</option>';
-                limitDiv.innerHTML = '<span class="text-muted">No hay material abastecido pendiente de entrega en este proyecto.</span>';
+                newAreaSelect.innerHTML = '<option value="">Todo el material ya fue entregado</option>';
+                newLimitDiv.innerHTML = '<span class="text-muted">No hay material abastecido pendiente de entrega en este proyecto.</span>';
                 _fpPendingTotal = 0;
             }
 
@@ -860,24 +902,30 @@
     }
     
     // Al seleccionar un área: ajustar límite al pendiente de esa área específica
-    document.getElementById('cutArea').addEventListener('change', function () {
-        if (this.selectedIndex > 0) {
-            const opt = this.options[this.selectedIndex];
-            const areaPending = parseFloat(opt.dataset.pending || 0);
-            if (areaPending > 0) {
-                // Para esta área específica: min(area_pending, rol_remaining)
-                const areaLimit = Math.min(areaPending, currentRollRemainingLength);
-                document.getElementById('productionPendingLimit').innerHTML =
-                    `Área: <strong>${areaPending}m pendientes</strong> → Límite ajustado a <strong>${areaLimit.toFixed(2)}m</strong>.`;
-                document.getElementById('maxLength').textContent = areaLimit.toFixed(2);
-                document.getElementById('cutLength').max = areaLimit;
+    document.addEventListener('change', function (e) {
+        if (e.target && e.target.id === 'cutArea') {
+            if (e.target.tagName.toLowerCase() === 'select') {
+                if (e.target.selectedIndex > 0) {
+                    const opt = e.target.options[e.target.selectedIndex];
+                    const areaPending = parseFloat(opt.dataset.pending || 0);
+                    if (areaPending > 0) {
+                        // Para esta área específica: min(area_pending, rol_remaining)
+                        const areaLimit = Math.min(areaPending, currentRollRemainingLength);
+                        document.getElementById('productionPendingLimit').innerHTML =
+                            `Área: <strong>${areaPending}m pendientes</strong> → Límite ajustado a <strong>${areaLimit.toFixed(2)}m</strong>.`;
+                        document.getElementById('maxLength').textContent = areaLimit.toFixed(2);
+                        document.getElementById('cutLength').max = areaLimit;
+                    } else {
+                        // Sin pendiente en esta área, volver al total del FP
+                        applyMaxLimit();
+                    }
+                } else {
+                    // Volver al total del FP
+                    applyMaxLimit();
+                }
             } else {
-                // Sin pendiente en esta área, volver al total del FP
                 applyMaxLimit();
             }
-        } else {
-            // Volver al total del FP
-            applyMaxLimit();
         }
     });
 

@@ -1084,8 +1084,14 @@
                 const response = await fetch('/api/employees/active');
                 const data = await response.json();
 
-                if (data.success && data.employees && data.employees.length > 0) {
+                if (exitRequesterSelect.tomselect) {
+                    exitRequesterSelect.tomselect.clearOptions();
+                    exitRequesterSelect.tomselect.clear();
+                } else {
                     exitRequesterSelect.innerHTML = '<option value="" selected disabled>Seleccione una persona...</option>';
+                }
+
+                if (data.success && data.employees && data.employees.length > 0) {
                     data.employees.forEach(emp => {
                         const option = new Option(emp.nombre, emp.id);
                         option.dataset.nombre = emp.nombre;
@@ -1093,7 +1099,6 @@
                     });
                     
                     if (exitRequesterSelect.tomselect) {
-                        exitRequesterSelect.tomselect.clearOptions();
                         data.employees.forEach(emp => {
                             exitRequesterSelect.tomselect.addOption({value: emp.id, text: emp.nombre});
                         });
@@ -1103,13 +1108,21 @@
                         exitRequesterSelect.disabled = false;
                     }
                 } else {
-                    exitRequesterSelect.innerHTML = '<option value="">No se encontraron empleados</option>';
-                    if (exitRequesterSelect.tomselect) exitRequesterSelect.tomselect.clearOptions();
+                    if (exitRequesterSelect.tomselect) {
+                        exitRequesterSelect.tomselect.clearOptions();
+                        exitRequesterSelect.tomselect.clear();
+                    } else {
+                        exitRequesterSelect.innerHTML = '<option value="">No se encontraron empleados</option>';
+                    }
                 }
             } catch (error) {
                 console.error('Error cargando empleados:', error);
-                exitRequesterSelect.innerHTML = '<option value="">Error al cargar empleados</option>';
-                if (exitRequesterSelect.tomselect) exitRequesterSelect.tomselect.clearOptions();
+                if (exitRequesterSelect.tomselect) {
+                    exitRequesterSelect.tomselect.clearOptions();
+                    exitRequesterSelect.tomselect.clear();
+                } else {
+                    exitRequesterSelect.innerHTML = '<option value="">Error al cargar empleados</option>';
+                }
             } finally {
                 exitRequesterLoader.style.display = 'none';
             }
@@ -1133,7 +1146,12 @@
             exitAddMaterialBtn.disabled = true;
 
             if (!fpCode || !department) {
-                exitMaterialSelect.innerHTML = '<option value="">Seleccione proyecto y departamento</option>';
+                if (exitMaterialSelect.tomselect) {
+                    exitMaterialSelect.tomselect.clearOptions();
+                    exitMaterialSelect.tomselect.clear();
+                } else {
+                    exitMaterialSelect.innerHTML = '<option value="">Seleccione proyecto y departamento</option>';
+                }
                 exitMaterialsCard.style.display = 'none';
                 return;
             }
@@ -1147,8 +1165,12 @@
                 const response = await fetch(url);
                 const data = await response.json();
 
-                exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
-
+                if (exitMaterialSelect.tomselect) {
+                    exitMaterialSelect.tomselect.clearOptions();
+                    exitMaterialSelect.tomselect.clear();
+                } else {
+                    exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
+                }
                 if (data.success && data.materials && data.materials.length > 0) {
                     availableMaterials = data.materials;
                     updateAvailableMaterialsSelect();
@@ -1173,12 +1195,15 @@
             }
         }
 
-        // Actualizar select de materiales disponibles
         function updateAvailableMaterialsSelect() {
             exitMaterialSelect.disabled = true;
-            if (exitMaterialSelect.tomselect) exitMaterialSelect.tomselect.disable();
-            exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
-            if (exitMaterialSelect.tomselect) exitMaterialSelect.tomselect.clearOptions();
+            if (exitMaterialSelect.tomselect) {
+                exitMaterialSelect.tomselect.disable();
+                exitMaterialSelect.tomselect.clearOptions();
+                exitMaterialSelect.tomselect.clear();
+            } else {
+                exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
+            }
 
             availableMaterials.forEach(mat => {
                 // En modo Stock Libre: limitár solo por cantidad requisitada pendiente.
@@ -1236,28 +1261,26 @@
                 return;
             }
 
-            const selected = this.options[this.selectedIndex];
-            const stock               = parseFloat(selected.dataset.stock || 0);
-            const unit                = selected.dataset.unit;
-            const totalRequested      = parseFloat(selected.dataset.totalRequested || 0);
-            const totalSupplied       = parseFloat(selected.dataset.totalSupplied || 0);   // ← Verde
-            const totalDelivered      = parseFloat(selected.dataset.totalDelivered || 0);
-            const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
-            const pendingQty          = parseFloat(selected.dataset.pendingQty || selected.dataset.pending || 0);
+            const materialId = parseInt(this.value);
+            const mat = availableMaterials.find(m => m.id === materialId) || {};
+            
+            const stock               = parseFloat(mat.stock || 0);
+            const unit                = mat.unit || '-';
+            const totalRequested      = parseFloat(mat.total_requested || 0);
+            const totalSupplied       = parseFloat(mat.total_supplied || 0);
+            const totalDelivered      = parseFloat(mat.total_delivered || 0);
+            const abastecidaPendiente = parseFloat(mat.abastecida_pendiente !== undefined ? mat.abastecida_pendiente : (mat.pending || 0));
+            const pendingQty          = parseFloat(mat.pending || 0);
             const isConsumable        = document.querySelector('input[name="exitType"]:checked')?.value === 'consumable';
+            const isFreeMode          = document.querySelector('input[name="exitType"]:checked')?.value === 'free';
 
-            // Máximo a entregar AHORA:
-            //  - Consumible: limitado por stock (siempre si toggle activo; sin límite si libre)
-            //  - Normal + stockCheckEnabled=true:  min(stock, abastecida_pendiente)
-            //  - Normal + stockCheckEnabled=false (Stock Libre): abastecida_pendiente (sin límite de stock físico)
             let maxAllowed;
-            if (isConsumable) {
-                // Consumibles: si el toggle está activo validar contra stock, si está libre no hay tope
+            if (isConsumable || isFreeMode) {
+                // Si es modo salida libre o consumible y está el check deshabilitado:
                 maxAllowed = stockCheckEnabled ? stock : 9999;
             } else if (stockCheckEnabled) {
                 maxAllowed = Math.min(stock, abastecidaPendiente);
             } else {
-                // Stock libre: no bloquear por stock físico, PERO sí respetar lo abastecido
                 maxAllowed = abastecidaPendiente > 0 ? abastecidaPendiente : pendingQty;
             }
 
@@ -1338,15 +1361,17 @@
                 exitAddMaterialBtn.disabled = true;
                 if (quantity > max) {
                     this.classList.add('is-invalid');
-                    const selected = exitMaterialSelect.options[exitMaterialSelect.selectedIndex];
-                    const pending = parseFloat(selected.dataset.pending);
-                    const stock = parseFloat(selected.dataset.stock);
-                    const abastecidaPendiente = parseFloat(selected.dataset.abastecidaPendiente || 0);
+                    const materialId = parseInt(exitMaterialSelect.value);
+                    const mat = availableMaterials.find(m => m.id === materialId) || {};
+                    
+                    const pending = parseFloat(mat.pending || 0);
+                    const stock = parseFloat(mat.stock || 0);
+                    const abastecidaPendiente = parseFloat(mat.abastecida_pendiente !== undefined ? mat.abastecida_pendiente : pending);
 
                     if (!stockCheckEnabled) {
                         // Stock libre: solo limitar por pending_qty (total requisitado pendiente)
-                        const pQty = parseFloat(selected.dataset.pendingQty || selected.dataset.pending || 0);
-                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el total requisitado pendiente (' + pQty.toFixed(2) + ').';
+                        const pQty = parseFloat(mat.pending || 0);
+                        alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el límite permitido (' + pQty.toFixed(2) + ').';
                     } else if (quantity > stock && quantity > abastecidaPendiente) {
                         alertMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>La cantidad supera el Stock disponible y el Abastecido Pendiente por Entregar.';
                     } else if (quantity > stock) {
@@ -1370,11 +1395,11 @@
                 return;
             }
 
-            const selected = exitMaterialSelect.options[exitMaterialSelect.selectedIndex];
-            const materialCode = selected.dataset.code;
-            const materialName = selected.dataset.name;
-            const unit = selected.dataset.unit;
-            const pending = parseFloat(selected.dataset.pending);
+            const mat = availableMaterials.find(m => m.id == materialId) || {};
+            const materialCode = mat.code || '';
+            const materialName = mat.name || '';
+            const unit = mat.unit || '';
+            const pending = parseFloat(mat.pending || 0);
 
             exitMaterialsData.push({
                 material_id: materialId,
@@ -1538,7 +1563,12 @@
             returnModal.addEventListener('show.bs.modal', () => {
                 returnFpInput.value = '';
                 returnFpFeedback.innerHTML = '';
-                returnMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
+                if (returnMaterialSelect.tomselect) {
+                    returnMaterialSelect.tomselect.clearOptions();
+                    returnMaterialSelect.tomselect.clear();
+                } else {
+                    returnMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
+                }
                 returnMaterialBlock.style.display = 'none';
                 returnConditionBlock.style.display = 'none';
                 returnQuantityBlock.style.display = 'none';
@@ -1572,7 +1602,12 @@
                     const res = await fetch(`/api/stock/pending-return-by-fp?fp_code=${encodeURIComponent(fpCode.trim())}`);
                     const data = await res.json();
 
-                    returnMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
+                    if (returnMaterialSelect.tomselect) {
+                        returnMaterialSelect.tomselect.clearOptions();
+                        returnMaterialSelect.tomselect.clear();
+                    } else {
+                        returnMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
+                    }
                     returnMaterialsMap = {};
                     if (data.materials && data.materials.length > 0) {
                         data.materials.forEach(mat => {
@@ -1584,7 +1619,15 @@
                             const option = new Option(text, mat.id);
                             option.dataset.materialId = mat.id;
                             returnMaterialSelect.add(option);
+
+                            if (returnMaterialSelect.tomselect) {
+                                returnMaterialSelect.tomselect.addOption({value: mat.id, text: text});
+                            }
                         });
+                        if (returnMaterialSelect.tomselect) {
+                            returnMaterialSelect.tomselect.enable();
+                            returnMaterialSelect.tomselect.refreshOptions(false);
+                        }
                         returnMaterialBlock.style.display = 'block';
                         returnFpFeedback.innerHTML = `<span class="text-success"><i class="fas fa-check-circle me-1"></i>FP encontrado — ${data.materials.length} material(es) con salidas</span>`;
                     } else {
@@ -1738,14 +1781,25 @@
 
                     // Cargar consumibles
                     exitMaterialLoader.style.display = 'block';
-                    exitMaterialSelect.innerHTML = '<option value="" selected disabled>Cargando consumibles...</option>';
-                    exitMaterialSelect.disabled = true;
+                    if (exitMaterialSelect.tomselect) {
+                        exitMaterialSelect.tomselect.clearOptions();
+                        exitMaterialSelect.tomselect.clear();
+                        exitMaterialSelect.tomselect.disable();
+                    } else {
+                        exitMaterialSelect.innerHTML = '<option value="" selected disabled>Cargando consumibles...</option>';
+                        exitMaterialSelect.disabled = true;
+                    }
 
                     try {
                         const res  = await fetch('/api/stock/consumables-list');
                         const data = await res.json();
-                        if (exitMaterialSelect.tomselect) exitMaterialSelect.tomselect.clearOptions();
-                        exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un consumible...</option>';
+                        if (exitMaterialSelect.tomselect) {
+                            exitMaterialSelect.tomselect.clearOptions();
+                            exitMaterialSelect.tomselect.clear();
+                        } else {
+                            exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un consumible...</option>';
+                        }
+                        
                         if (data.success && data.materials.length > 0) {
                             availableMaterials = data.materials.map(m => ({
                                 id: m.id, code: m.code, name: m.name, unit: m.unit,
@@ -1803,14 +1857,24 @@
 
                     // Cargar TODOS los materiales activos (no telas)
                     exitMaterialLoader.style.display = 'block';
-                    exitMaterialSelect.innerHTML = '<option value="" selected disabled>Cargando materiales...</option>';
-                    exitMaterialSelect.disabled = true;
+                    if (exitMaterialSelect.tomselect) {
+                        exitMaterialSelect.tomselect.clearOptions();
+                        exitMaterialSelect.tomselect.clear();
+                        exitMaterialSelect.tomselect.disable();
+                    } else {
+                        exitMaterialSelect.innerHTML = '<option value="" selected disabled>Cargando materiales...</option>';
+                        exitMaterialSelect.disabled = true;
+                    }
 
                     try {
                         const res  = await fetch('/api/stock/all-materials-list');
                         const data = await res.json();
-                        if (exitMaterialSelect.tomselect) exitMaterialSelect.tomselect.clearOptions();
-                        exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
+                        if (exitMaterialSelect.tomselect) {
+                            exitMaterialSelect.tomselect.clearOptions();
+                            exitMaterialSelect.tomselect.clear();
+                        } else {
+                            exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
+                        }
                         if (data.success && data.materials.length > 0) {
                             availableMaterials = data.materials.map(m => ({
                                 id: m.id, code: m.code, name: m.name, unit: m.unit,
@@ -2125,39 +2189,20 @@
     function initTomSelect(el, opts = {}) {
         if (!el || el.tomselect) return;
         new TomSelect(el, {
-            maxOptions: 500,
+            maxOptions: false,
             placeholder: el.getAttribute('placeholder') || 'Buscar...',
             searchField: ['text'],
+            sortField: '$order',
             ...opts
         });
     }
 
-    // Aplicar al abrir modales (para que funcione con elementos ocultos)
-    document.getElementById('entryModal')?.addEventListener('shown.bs.modal', () => {
-        initTomSelect(document.getElementById('entryMaterialSelect'));
-    });
-    document.getElementById('returnModal')?.addEventListener('shown.bs.modal', () => {
-        initTomSelect(document.getElementById('returnMaterialSelect'));
-    });
-    document.getElementById('exitModal')?.addEventListener('shown.bs.modal', () => {
+    document.addEventListener('DOMContentLoaded', function () {
         initTomSelect(document.getElementById('exitMaterialSelect'));
+        initTomSelect(document.getElementById('exitRequesterSelect'));
+        initTomSelect(document.getElementById('returnMaterialSelect'));
+        initTomSelect(document.getElementById('returnPersonSelect'));
     });
-    // El select de persona en salidas se recarga dinámicamente, usar MutationObserver
-    const exitRequesterEl = document.getElementById('exitRequesterSelect');
-    if (exitRequesterEl) {
-        const exitPersonCard = document.getElementById('exitPersonnelCard');
-        let tsRequester = null;
-        // Inicializar cuando el card se vuelva visible
-        new MutationObserver(() => {
-            if (exitPersonCard.style.display !== 'none' && !tsRequester) {
-                tsRequester = new TomSelect(exitRequesterEl, {
-                    maxOptions: 500,
-                    placeholder: 'Buscar persona...',
-                    searchField: ['text']
-                });
-            }
-        }).observe(exitPersonCard, { attributes: true, attributeFilter: ['style'] });
-    }
 
 </script>
 
