@@ -5946,8 +5946,10 @@ def register_exit_multiple():
                     continue
 
                 if is_consumable_exit or is_free_exit:
-                    # Salida de consumible o libre: solo validar contra stock (si el toggle está activo)
-                    if get_stock_check_enabled() and quantity > material.current_stock + 0.001:
+                    # Salida de consumible o libre:
+                    # Solo validar contra stock si el toggle de stock ESTÁ activo Y el modo libre NO está activo
+                    skip_stock_check = get_free_exit_enabled() or not get_stock_check_enabled()
+                    if not skip_stock_check and quantity > material.current_stock + 0.001:
                         errors.append(
                             f"{material.code}: Stock insuficiente. "
                             f"Disponible: {material.current_stock} {material.unit}"
