@@ -848,7 +848,15 @@
                 // Modo libre y la requisición está pendiente: dejar elegir área libremente
                 areaContainer.innerHTML = `
                     <label class="form-label">Área destino <small>(Libre)</small></label>
-                    <input type="text" class="form-control" id="cutArea" name="area" placeholder="Ej. Herrería, Tapicería..." required>
+                    <select class="form-select" id="cutArea" name="area" required>
+                        <option value="">Seleccione un área...</option>
+                        <option value="Costura">Costura</option>
+                        <option value="Impresion">Impresion</option>
+                        <option value="Metal">Metal</option>
+                        <option value="Staging">Staging</option>
+                        <option value="Montaje">Montaje</option>
+                        <option value="Administrativo">Administrativo</option>
+                    </select>
                     <div id="productionPendingLimit" class="form-text mt-1 text-warning">
                         Nota: La requisición no tiene saldo abastecido, pero el modo libre está activado.
                     </div>

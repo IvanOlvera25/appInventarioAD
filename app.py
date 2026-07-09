@@ -5587,11 +5587,11 @@ def get_requisitioned_materials():
 
     materials_data = []
     for item in items:
-        total_requested = item.total_requested or 0
-        total_supplied  = item.total_supplied  or 0
-        total_delivered = item.total_delivered or 0
-        pending_quantity     = total_requested - total_delivered
-        abastecida_pendiente = max(0, total_supplied - total_delivered)
+        total_requested = round(float(item.total_requested or 0), 2)
+        total_supplied  = round(float(item.total_supplied  or 0), 2)
+        total_delivered = round(float(item.total_delivered or 0), 2)
+        pending_quantity     = round(total_requested - total_delivered, 2)
+        abastecida_pendiente = round(max(0, total_supplied - total_delivered), 2)
 
         # En modo Stock Libre: mostrar todo lo que tenga pendiente de entregar,
         # aunque el material no haya pasado por el flujo de abastecimiento.
@@ -5617,14 +5617,18 @@ def get_requisitioned_materials():
 @app.route('/api/stock/consumables-list')
 @login_required
 def get_consumables_list():
-    """Lista de materiales consumibles con stock disponible, excluyendo Telas."""
-    materials = Material.query.filter(
+    """Lista de materiales consumibles con stock disponible (o todos si stock es libre), excluyendo Telas."""
+    query = Material.query.filter(
         Material.is_consumible == True,
         Material.is_active == True,
         ~Material.category.ilike('%tela%'),
-        Material.is_fabric_roll == False,
-        Material.current_stock > 0
-    ).order_by(Material.name).all()
+        Material.is_fabric_roll == False
+    )
+    
+    if get_stock_check_enabled():
+        query = query.filter(Material.current_stock > 0)
+        
+    materials = query.order_by(Material.name).all()
 
     result = [{
         'id': m.id,
@@ -5969,9 +5973,9 @@ def register_exit_multiple():
                         )\
                         .all()
 
-                    total_supplied = sum((ri.quantity_supplied or 0) for ri in req_items)
-                    total_delivered_so_far = sum((ri.quantity_delivered or 0) for ri in req_items)
-                    abastecida_pendiente = max(0, total_supplied - total_delivered_so_far)
+                    total_supplied = round(sum((ri.quantity_supplied or 0) for ri in req_items), 2)
+                    total_delivered_so_far = round(sum((ri.quantity_delivered or 0) for ri in req_items), 2)
+                    abastecida_pendiente = round(max(0, total_supplied - total_delivered_so_far), 2)
 
                     # Validar solo si el toggle está activo
                     if get_stock_check_enabled():
@@ -7555,7 +7559,7 @@ def api_cut_fabric_roll():
                     RequestItem.item_status == 'abastecido'   # solo abastecidos
                 ).all()
                 total_supplied_pending = sum(
-                    max((item.quantity_supplied or 0) - (item.quantity_delivered or 0), 0)
+                    round(max((float(item.quantity_supplied or 0)) - (float(item.quantity_delivered or 0)), 0), 2)
                     for item in supplied_items
                 )
                 if total_supplied_pending > 0:
@@ -7588,7 +7592,7 @@ def api_cut_fabric_roll():
             for req_item in abastecidos:
                 if to_deliver <= 0:
                     break
-                disponible = max((req_item.quantity_supplied or 0) - (req_item.quantity_delivered or 0), 0)
+                disponible = round(max((float(req_item.quantity_supplied or 0)) - (float(req_item.quantity_delivered or 0)), 0), 2)
                 if disponible <= 0:
                     continue
                 applying = min(disponible, to_deliver)
@@ -7809,7 +7813,7 @@ def api_fabric_roll_production_info():
 
     for item in pending_items:
         # Cantidad lista para entrega = abastecido - ya entregado
-        qty = max((item.quantity_supplied or 0) - (item.quantity_delivered or 0), 0)
+        qty = round(max((float(item.quantity_supplied or 0)) - (float(item.quantity_delivered or 0)), 0), 2)
         if qty > 0:
             area = item.request.area or item.request.department or 'Sin Área'
             areas_with_pending[area] = areas_with_pending.get(area, 0) + qty
