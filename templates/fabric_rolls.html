@@ -817,10 +817,14 @@
                     <strong>Modo Salida Libre:</strong> No hay requisición registrada.
                     <span class="text-muted">Ingrese el área manualmente. El límite es la longitud del rollo.</span>`;
                 
-                // Cambiar select por input text
+                // Cambiar select por dropdown de áreas (cargado desde BD)
+                const _areaOpts = await _getFreeAreaOptions();
                 areaContainer.innerHTML = `
                     <label class="form-label">Área destino <small>(Libre)</small></label>
-                    <input type="text" class="form-control" id="cutArea" name="area" placeholder="Ej. Herrería, Tapicería..." required>
+                    <select class="form-select" id="cutArea" name="area" required>
+                        <option value="">Seleccione un área...</option>
+                        ${_areaOpts}
+                    </select>
                     <div id="productionPendingLimit" class="form-text mt-1 text-warning"></div>
                 `;
                 _fpPendingTotal = 0;
@@ -846,16 +850,12 @@
                 return;
             } else if ((data.abastecido === false || data.total_pending === 0) && freeExitEnabled) {
                 // Modo libre y la requisición está pendiente: dejar elegir área libremente
+                const _areaOpts2 = await _getFreeAreaOptions();
                 areaContainer.innerHTML = `
                     <label class="form-label">Área destino <small>(Libre)</small></label>
                     <select class="form-select" id="cutArea" name="area" required>
                         <option value="">Seleccione un área...</option>
-                        <option value="Costura">Costura</option>
-                        <option value="Impresion">Impresion</option>
-                        <option value="Metal">Metal</option>
-                        <option value="Staging">Staging</option>
-                        <option value="Montaje">Montaje</option>
-                        <option value="Administrativo">Administrativo</option>
+                        ${_areaOpts2}
                     </select>
                     <div id="productionPendingLimit" class="form-text mt-1 text-warning">
                         Nota: La requisición no tiene saldo abastecido, pero el modo libre está activado.
@@ -1029,5 +1029,42 @@
             if (q) q.value = urlParams.get('search');
         }
     });
+
+    // ── Carga dinámica de áreas desde la BD ──────────────────────────────────
+    let _freeAreaCache = null;
+
+    async function _getFreeAreaOptions() {
+        if (_freeAreaCache !== null) return _freeAreaCache;
+        try {
+            const res  = await fetch('/api/warehouse-locations?type=area');
+            const data = await res.json();
+            if (data.success && data.locations.length > 0) {
+                _freeAreaCache = data.locations
+                    .map(l => `<option value="${l.name}">${l.name}</option>`)
+                    .join('');
+            } else {
+                // Fallback si la BD no devuelve nada
+                _freeAreaCache = `
+                    <option value="Costura">Costura</option>
+                    <option value="Impresion">Impresion</option>
+                    <option value="Metal">Metal</option>
+                    <option value="Staging">Staging</option>
+                    <option value="Montaje">Montaje</option>
+                    <option value="Administrativo">Administrativo</option>
+                `;
+            }
+        } catch (e) {
+            console.warn('No se pudieron cargar las áreas dinámicamente, usando valores por defecto.');
+            _freeAreaCache = `
+                <option value="Costura">Costura</option>
+                <option value="Impresion">Impresion</option>
+                <option value="Metal">Metal</option>
+                <option value="Staging">Staging</option>
+                <option value="Montaje">Montaje</option>
+                <option value="Administrativo">Administrativo</option>
+            `;
+        }
+        return _freeAreaCache;
+    }
 </script>
 {% endblock %}

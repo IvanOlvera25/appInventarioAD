@@ -306,3 +306,25 @@ class SystemConfig(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     author = db.relationship('User', foreign_keys=[updated_by])
+
+
+# --- Ubicaciones / Áreas del almacén (administrables desde el panel) ---
+class WarehouseLocation(db.Model):
+    """Catálogo de ubicaciones (almacenes) y áreas destino configurables por el admin.
+
+    location_type:
+      'almacen' → aparece en el dropdown de Ubicación/Área al registrar una entrada.
+      'area'    → aparece en el dropdown de Área destino en salidas libres y corte libre de tela.
+    """
+    __tablename__ = 'warehouse_location'
+
+    id            = db.Column(db.Integer, primary_key=True)
+    name          = db.Column(db.String(120), nullable=False)
+    location_type = db.Column(db.String(20), nullable=False, default='almacen')  # 'almacen' | 'area'
+    is_active     = db.Column(db.Boolean, default=True)
+    sort_order    = db.Column(db.Integer, default=0)   # para ordenar en el dropdown
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('name', 'location_type', name='uq_location_name_type'),
+    )

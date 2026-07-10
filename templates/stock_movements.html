@@ -327,16 +327,12 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-bold">Ubicación / Área</label>
-                        <select class="form-select" name="location">
+                        <select class="form-select" name="location" id="entryLocationSelect">
                             <option value="">Sin especificar</option>
-                            <option value="Almacén Principal">Almacén Principal</option>
-                            <option value="Almacén de Telas">Almacén de Telas</option>
-                            <option value='Área de Producción'>Área de Producción</option>
-                            <option value='Área de Impresión'>Área de Impresión</option>
-                            <option value='Área de Costura'>Área de Costura</option>
-                            <option value="Compras">Compras</option>
+                            <!-- Opciones cargadas dinámicamente desde /api/warehouse-locations?type=almacen -->
                         </select>
                     </div>
+
                     <div class="mb-3">
                         <label class="form-label fw-bold">Notas</label>
                         <textarea class="form-control" name="notes" rows="2"
@@ -479,6 +475,17 @@
                                     <input type="text" class="form-control" id="exitDelivererName" readonly>
                                 </div>
                             </div>
+                            <!-- Campo de Área: solo visible en modo Salida Libre -->
+                            <div class="row" id="exitFreeAreaRow" style="display: none;">
+                                <div class="col-12 mb-3">
+                                    <label class="form-label fw-bold">Area <span class="text-danger">*</span></label>
+                                    <select class="form-select" id="exitFreeAreaSelect">
+                                        <option value="">Seleccione un área...</option>
+                                        <!-- Cargadas dinámicamente desde /api/warehouse-locations?type=area -->
+                                    </select>
+                                </div>
+                            </div>
+
                         </div>
                     </div>
 
@@ -833,6 +840,8 @@
         const exitRequesterSelect = document.getElementById('exitRequesterSelect');
         const exitRequesterLoader = document.getElementById('exitRequesterLoader');
         const exitDelivererName = document.getElementById('exitDelivererName');
+        const exitFreeAreaRow = document.getElementById('exitFreeAreaRow');
+        const exitFreeAreaSelect = document.getElementById('exitFreeAreaSelect');
 
         const exitMaterialsCard = document.getElementById('exitMaterialsCard');
         const exitMaterialSelect = document.getElementById('exitMaterialSelect');
@@ -868,6 +877,8 @@
             exitRequesterSelect.innerHTML = '<option value="" selected disabled>Cargando...</option>';
             exitRequesterSelect.disabled = true;
             exitDelivererName.value = '';
+            exitFreeAreaRow.style.display = 'none';
+            exitFreeAreaSelect.value = '';
 
             exitMaterialsCard.style.display = 'none';
             exitMaterialSelect.innerHTML = '<option value="">Seleccione un material...</option>';
@@ -972,9 +983,11 @@
             fpResultsDropdown.classList.remove('show');
 
             if (isFree) {
-                // MODO LIBRE: no requiere departamento, solo FP y materiales
+                // MODO LIBRE: no requiere departamento, solo FP, área y materiales
                 exitDepartmentCard.style.display = 'none';
                 exitPersonnelCard.style.display = 'block';
+                exitFreeAreaRow.style.display = 'flex';
+                if (typeof window._loadFreeAreaOptions === 'function') window._loadFreeAreaOptions();
                 exitMaterialsCard.style.display = 'block';
                 exitNotesCard.style.display = 'block';
                 await loadActiveEmployees();
@@ -1484,10 +1497,17 @@
                 alert('Debe seleccionar un proyecto (FP) para asignar el costo.');
                 return;
             }
+
+            if (isFree && !exitFreeAreaSelect.value) {
+                alert('Debe seleccionar el área de destino para la salida libre.');
+                exitFreeAreaSelect.focus();
+                return;
+            }
             
             const requestData = {
                 fp_code: fpCodeHidden.value,
                 department: (isConsumable || isFree) ? '' : exitDepartmentSelect.value,
+                area_libre: isFree ? exitFreeAreaSelect.value : '',
                 requester_id: requesterSelected.value,
                 requester_name: requesterSelected.dataset.nombre,
                 deliverer_name: exitDelivererName.value,
@@ -1499,6 +1519,7 @@
                     quantity: m.quantity
                 }))
             };
+
 
             const originalButtonText = exitSubmitBtn.innerHTML;
             exitSubmitBtn.disabled = true;
@@ -2343,4 +2364,60 @@
         background-color: rgba(0, 0, 0, 0.075);
     }
 </style>
+
+<script>
+// ── Carga dinámica de Ubicaciones / Áreas desde la BD ──────────────────────────
+
+(function () {
+    // Caché en memoria para esta carga de página
+    let _locCache = {};
+
+    async function fetchLocations(type) {
+        if (_locCache[type]) return _locCache[type];
+        try {
+            const res  = await fetch(`/api/warehouse-locations?type=${type}`);
+            const data = await res.json();
+            if (data.success) {
+                _locCache[type] = data.locations;
+                return data.locations;
+            }
+        } catch (e) {
+            console.error('Error cargando ubicaciones:', e);
+        }
+        return [];
+    }
+
+    function populateSelect(sel, locations, emptyLabel = 'Sin especificar') {
+        const current = sel.value;
+        sel.innerHTML = `<option value="">${emptyLabel}</option>`;
+        locations.forEach(loc => {
+            const opt = new Option(loc.name, loc.name);
+            if (loc.name === current) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    }
+
+    // ── Entrada: poblar al abrir el modal ──────────────────────────────────────
+    const entryModal = document.getElementById('entryModal');
+    if (entryModal) {
+        entryModal.addEventListener('show.bs.modal', async () => {
+            const sel = document.getElementById('entryLocationSelect');
+            if (sel) {
+                const locs = await fetchLocations('almacen');
+                populateSelect(sel, locs, 'Sin especificar');
+            }
+        });
+    }
+
+    // ── Salida Libre: poblar área al mostrar el row ────────────────────────────
+    // Se llama cuando exitFreeAreaRow se vuelve visible.
+    // Exponemos la función globalmente para que el código de salida pueda llamarla.
+    window._loadFreeAreaOptions = async function () {
+        const sel = document.getElementById('exitFreeAreaSelect');
+        if (!sel) return;
+        const locs = await fetchLocations('area');
+        populateSelect(sel, locs, 'Seleccione un área...');
+    };
+})();
+</script>
 {% endblock %}

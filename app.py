@@ -15,7 +15,7 @@ import tempfile
 import pymysql
 import pymysql.cursors
 from contextlib import contextmanager
-from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog, SystemConfig
+from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog, SystemConfig, WarehouseLocation
 from functools import wraps
 import secrets  # <- si estás generando códigos de verificación
 from sqlalchemy import text
@@ -5865,15 +5865,24 @@ def get_active_employees():
 def get_current_user_fullname():
     """Obtener nombre completo del usuario actual desde la base de datos remota"""
     try:
-        # ✅ Buscar el empleado en la base remota usando el ID del usuario actual
-        # Asumiendo que current_user.id corresponde al ID en empleados_activos
-        empleado = remote_db.get_empleado_by_id(current_user.id)
+        # ✅ Buscar el empleado en la base remota usando el employee_id vinculado al usuario
+        # current_user.employee_id es la FK a AD17_RH.empleados_activos
+        # (current_user.id es el PK local de la tabla users, NO el ID del empleado)
+        emp_id = current_user.employee_id
+
+        if emp_id:
+            empleado = remote_db.get_empleado_by_id(emp_id)
+        else:
+            empleado = None
 
         if empleado and empleado.get('nombre'):
             fullname = empleado['nombre']
+        elif current_user.employee_name:
+            # Fallback: usar el nombre cacheado en la columna employee_name
+            fullname = current_user.employee_name
         else:
-            # Fallback: si no se encuentra, usar el username
-            app.logger.warning(f"No se encontró empleado con ID {current_user.id}, usando username")
+            # Último recurso: username
+            app.logger.warning(f"No se encontró empleado con employee_id={emp_id} para user {current_user.id}, usando username")
             fullname = current_user.username
 
         return jsonify({
@@ -5904,6 +5913,7 @@ def register_exit_multiple():
 
         fp_code = data.get('fp_code')
         department = data.get('department')
+        area_libre = data.get('area_libre', '')  # Área destino en modo Salida Libre
         requester_id = data.get('requester_id')
         requester_name = data.get('requester_name')
         deliverer_name = data.get('deliverer_name')
@@ -5912,6 +5922,8 @@ def register_exit_multiple():
         is_consumable_exit = data.get('is_consumable_exit', False)
         is_free_exit = data.get('is_free_exit', False)
 
+        # Determinar el área a almacenar en el movimiento
+        movement_area = area_libre if is_free_exit else department
 
         if not materials or len(materials) == 0:
             return jsonify({
@@ -6024,7 +6036,7 @@ def register_exit_multiple():
                     movement_type='salida',
                     quantity=quantity,
                     fp_code=fp_code,
-                    area=department,
+                    area=movement_area,
                     fecha=datetime.utcnow().date(),
                     hora=datetime.utcnow().time(),
                     personal=deliverer_name,
@@ -8180,6 +8192,186 @@ def roll_history_redirect(roll_id):
     return redirect(url_for('stock_movements', material=roll.material.code))
 
 
+# ======== UBICACIONES / ÁREAS DE ALMACÉN ========
+
+def seed_warehouse_locations():
+    """Poblar la tabla warehouse_location con los valores por defecto si está vacía."""
+    almacenes_default = [
+        'Almacén Principal',
+        'Almacén de Telas',
+        'Almacén de Tubo',
+        'Área de Producción',
+        'Área de Impresión',
+        'Área de Costura',
+        'Compras',
+    ]
+    areas_default = [
+        'Costura',
+        'Impresion',
+        'Metal',
+        'Staging',
+        'Montaje',
+        'Administrativo',
+    ]
+
+    changed = False
+    for i, name in enumerate(almacenes_default):
+        exists = WarehouseLocation.query.filter_by(name=name, location_type='almacen').first()
+        if not exists:
+            db.session.add(WarehouseLocation(name=name, location_type='almacen', sort_order=i))
+            changed = True
+
+    for i, name in enumerate(areas_default):
+        exists = WarehouseLocation.query.filter_by(name=name, location_type='area').first()
+        if not exists:
+            db.session.add(WarehouseLocation(name=name, location_type='area', sort_order=i))
+            changed = True
+
+    if changed:
+        try:
+            db.session.commit()
+            app.logger.info('✅ Ubicaciones de almacén sembradas correctamente.')
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f'Error sembrando ubicaciones: {e}')
+
+
+# ── API pública: lista de ubicaciones para los dropdowns ──────────────────────
+
+@app.route('/api/warehouse-locations')
+@login_required
+def api_warehouse_locations():
+    """Devuelve las ubicaciones activas por tipo para poblar dropdowns dinámicamente."""
+    loc_type = request.args.get('type', 'almacen')  # 'almacen' | 'area'
+    locations = (
+        WarehouseLocation.query
+        .filter_by(location_type=loc_type, is_active=True)
+        .order_by(WarehouseLocation.sort_order, WarehouseLocation.name)
+        .all()
+    )
+    return jsonify({
+        'success': True,
+        'locations': [{'id': l.id, 'name': l.name} for l in locations]
+    })
+
+
+# ── Pantalla de administración ────────────────────────────────────────────────
+
+@app.route('/admin/locations')
+@login_required
+@role_required('admin')
+def admin_locations():
+    """Página de administración de ubicaciones de almacén."""
+    almacenes = (WarehouseLocation.query
+                 .filter_by(location_type='almacen')
+                 .order_by(WarehouseLocation.sort_order, WarehouseLocation.name)
+                 .all())
+    areas = (WarehouseLocation.query
+             .filter_by(location_type='area')
+             .order_by(WarehouseLocation.sort_order, WarehouseLocation.name)
+             .all())
+    return render_template('admin_locations.html', almacenes=almacenes, areas=areas)
+
+
+@app.route('/admin/locations/add', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_add_location():
+    """Agregar nueva ubicación."""
+    try:
+        name          = request.form.get('name', '').strip()
+        location_type = request.form.get('location_type', 'almacen').strip()
+        sort_order    = int(request.form.get('sort_order', 0) or 0)
+
+        if not name:
+            flash('El nombre es requerido.', 'error')
+            return redirect(url_for('admin_locations'))
+
+        if location_type not in ('almacen', 'area'):
+            flash('Tipo de ubicación inválido.', 'error')
+            return redirect(url_for('admin_locations'))
+
+        existing = WarehouseLocation.query.filter_by(name=name, location_type=location_type).first()
+        if existing:
+            flash(f'Ya existe una entrada con ese nombre en este tipo.', 'error')
+            return redirect(url_for('admin_locations'))
+
+        loc = WarehouseLocation(name=name, location_type=location_type, sort_order=sort_order)
+        db.session.add(loc)
+        db.session.commit()
+        flash(f'"{name}" agregado correctamente.', 'success')
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al agregar: {str(e)}', 'error')
+
+    return redirect(url_for('admin_locations'))
+
+
+@app.route('/admin/locations/<int:loc_id>/edit', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_edit_location(loc_id):
+    """Editar nombre y orden de una ubicación."""
+    try:
+        loc = WarehouseLocation.query.get_or_404(loc_id)
+        name       = request.form.get('name', '').strip()
+        sort_order = int(request.form.get('sort_order', 0) or 0)
+
+        if not name:
+            return jsonify({'success': False, 'message': 'El nombre es requerido.'})
+
+        # Verificar duplicado
+        dup = WarehouseLocation.query.filter(
+            WarehouseLocation.name == name,
+            WarehouseLocation.location_type == loc.location_type,
+            WarehouseLocation.id != loc_id
+        ).first()
+        if dup:
+            return jsonify({'success': False, 'message': 'Ya existe una entrada con ese nombre.'})
+
+        loc.name       = name
+        loc.sort_order = sort_order
+        db.session.commit()
+        return jsonify({'success': True, 'message': f'"{name}" actualizado.'})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/admin/locations/<int:loc_id>/toggle', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_toggle_location(loc_id):
+    """Activar / Desactivar una ubicación."""
+    try:
+        loc = WarehouseLocation.query.get_or_404(loc_id)
+        loc.is_active = not loc.is_active
+        db.session.commit()
+        status = 'activado' if loc.is_active else 'desactivado'
+        return jsonify({'success': True, 'message': f'"{loc.name}" {status}.', 'is_active': loc.is_active})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/admin/locations/<int:loc_id>/delete', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_delete_location(loc_id):
+    """Eliminar permanentemente una ubicación (solo si no tiene movimientos asociados)."""
+    try:
+        loc = WarehouseLocation.query.get_or_404(loc_id)
+        name = loc.name
+        db.session.delete(loc)
+        db.session.commit()
+        return jsonify({'success': True, 'message': f'"{name}" eliminado.'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)})
+
+
 # Comando para ejecutar desde la línea de comandos
 # Comando para ejecutar desde la línea de comandos
 if __name__ == '__main__':
@@ -8239,6 +8431,7 @@ if __name__ == '__main__':
         # Verificación segura de DB y siembra de códigos de verificación
         safe_init_db()
         seed_verification_codes_fixed()
+        seed_warehouse_locations()   # ← poblar catálogo de ubicaciones/áreas
 
     # Iniciar scheduler de sincronización automática
     # use_reloader=False evita duplicar el scheduler en modo debug
