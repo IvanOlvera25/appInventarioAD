@@ -48,6 +48,11 @@
                             value="{{ request.args.get('material', '') }}">
                     </div>
                     <div class="col-md-2">
+                        <label class="form-label">Rollo de tela</label>
+                        <input type="text" class="form-control" name="roll" placeholder="No. de rollo..."
+                            value="{{ roll_filter }}">
+                    </div>
+                    <div class="col-md-2">
                         <label class="form-label">FP</label>
                         <input type="text" class="form-control" name="fp" placeholder="Ej: 2025001"
                             value="{{ fp_filter }}">
@@ -122,6 +127,11 @@
                                 <td>
                                     <strong>{{ movement.material.name }}</strong><br>
                                     <small class="text-muted">#{{ movement.material.id }} &bull; {{ movement.material.code }}</small>
+                                    {% if movement.fabric_roll %}
+                                    <br><a href="{{ url_for('roll_history', roll_id=movement.fabric_roll.id) }}"
+                                        class="badge bg-info text-dark text-decoration-none" title="Ver historial del rollo">
+                                        <i class="fas fa-scroll me-1"></i>{{ movement.fabric_roll.roll_number }}</a>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     {% if movement.movement_type == 'entrada' %}<span class="badge bg-success"><i
@@ -2372,19 +2382,28 @@
     // Caché en memoria para esta carga de página
     let _locCache = {};
 
+    // Fallback si la BD no responde o la tabla aún no existe/está vacía
+    const _fallbackLocations = {
+        almacen: ['Almacén Principal', 'Almacén de Telas', 'Almacén de Tubo',
+                  'Área de Producción', 'Área de Impresión', 'Área de Costura', 'Compras'],
+        area: ['Costura', 'Impresion', 'Metal', 'Staging', 'Montaje', 'Administrativo'],
+    };
+
     async function fetchLocations(type) {
         if (_locCache[type]) return _locCache[type];
         try {
             const res  = await fetch(`/api/warehouse-locations?type=${type}`);
             const data = await res.json();
-            if (data.success) {
+            if (data.success && data.locations.length > 0) {
                 _locCache[type] = data.locations;
                 return data.locations;
             }
         } catch (e) {
             console.error('Error cargando ubicaciones:', e);
         }
-        return [];
+        const fallback = (_fallbackLocations[type] || []).map(name => ({ name }));
+        _locCache[type] = fallback;
+        return fallback;
     }
 
     function populateSelect(sel, locations, emptyLabel = 'Sin especificar') {

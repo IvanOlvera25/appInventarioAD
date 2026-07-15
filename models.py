@@ -116,7 +116,12 @@ class FabricRoll(db.Model):
     status = db.Column(db.String(50), default='disponible')
     location = db.Column(db.String(100), default='Almacén de Telas')
     provisioned_by_client = db.Column(db.String(200))
+    # Historial del rollo
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)  # Cuándo se registró
+    created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)  # Quién lo registró
+    finished_at = db.Column(db.DateTime, nullable=True)  # Cuándo se terminó (agotó)
     material = db.relationship('Material', backref='fabric_rolls')
+    creator = db.relationship('User', foreign_keys=[created_by])
 
 
 class Request(db.Model):
@@ -211,6 +216,8 @@ class StockMovement(db.Model):
     unit_cost = db.Column(db.Float)
     reference_id = db.Column(db.Integer)  # ID de la requisición o compra
     reference_type = db.Column(db.String(50))  # requisicion, compra, ajuste
+    # Rollo de tela de origen (solo salidas por corte de tela)
+    fabric_roll_id = db.Column(db.Integer, db.ForeignKey('fabric_roll.id'), nullable=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)  # Fecha creación
@@ -222,6 +229,7 @@ class StockMovement(db.Model):
 
     material = db.relationship('Material', backref='movements')
     user = db.relationship('User', backref='movements')
+    fabric_roll = db.relationship('FabricRoll', foreign_keys=[fabric_roll_id], backref='movements')
 
 
 class PurchaseRequest(db.Model):

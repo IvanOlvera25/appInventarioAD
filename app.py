@@ -191,6 +191,38 @@ with app.app_context():
             """))
             print("  ✅ Tabla 'system_config' verificada/creada")
 
+            # -- stock_movement.fabric_roll_id (rollo de origen de una salida de tela) --
+            _has_roll_fk = _conn2.execute(_text2(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stock_movement' AND COLUMN_NAME = 'fabric_roll_id'"
+            )).scalar()
+            if not _has_roll_fk:
+                _conn2.execute(_text2('ALTER TABLE `stock_movement` ADD COLUMN fabric_roll_id INT DEFAULT NULL'))
+                print("  ✅ Columna 'fabric_roll_id' agregada a stock_movement")
+            # Backfill idempotente: cortes históricos ya guardaban reference_id = roll.id.
+            # Solo toca filas de corte con fabric_roll_id aún vacío, así que tras la
+            # primera vez no actualiza nada.
+            _bf = _conn2.execute(_text2(
+                "UPDATE `stock_movement` SET fabric_roll_id = reference_id "
+                "WHERE reference_type = 'corte_rollo' AND fabric_roll_id IS NULL AND reference_id IS NOT NULL"
+            ))
+            if getattr(_bf, 'rowcount', 0):
+                print(f"  ✅ Backfill fabric_roll_id en {_bf.rowcount} cortes históricos")
+
+            # -- fabric_roll: created_at / created_by / finished_at (historial de rollos) --
+            for _fr_col, _fr_ddl in (
+                ('created_at',  'ALTER TABLE `fabric_roll` ADD COLUMN created_at DATETIME DEFAULT NULL'),
+                ('created_by',  'ALTER TABLE `fabric_roll` ADD COLUMN created_by INT DEFAULT NULL'),
+                ('finished_at', 'ALTER TABLE `fabric_roll` ADD COLUMN finished_at DATETIME DEFAULT NULL'),
+            ):
+                _fr_has = _conn2.execute(_text2(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fabric_roll' AND COLUMN_NAME = :c"
+                ), {"c": _fr_col}).scalar()
+                if not _fr_has:
+                    _conn2.execute(_text2(_fr_ddl))
+                    print(f"  ✅ Columna '{_fr_col}' agregada a fabric_roll")
+
             _conn2.commit()
     except Exception as _e2:
         print(f"  ⚠️ Migraciones tempranas: {_e2}")
@@ -431,6 +463,20 @@ def safe_init_db():
                 if not _mysql_column_exists(conn, 'stock_movement', 'updated_at'):
                     conn.execute(text('ALTER TABLE `stock_movement` ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
                     print("  ✅ Columna 'updated_at' agregada a stock_movement")
+                if not _mysql_column_exists(conn, 'stock_movement', 'fabric_roll_id'):
+                    conn.execute(text('ALTER TABLE `stock_movement` ADD COLUMN fabric_roll_id INT DEFAULT NULL'))
+                    print("  ✅ Columna 'fabric_roll_id' agregada a stock_movement")
+
+            if 'fabric_roll' in tables:
+                if not _mysql_column_exists(conn, 'fabric_roll', 'created_at'):
+                    conn.execute(text('ALTER TABLE `fabric_roll` ADD COLUMN created_at DATETIME DEFAULT NULL'))
+                    print("  ✅ Columna 'created_at' agregada a fabric_roll")
+                if not _mysql_column_exists(conn, 'fabric_roll', 'created_by'):
+                    conn.execute(text('ALTER TABLE `fabric_roll` ADD COLUMN created_by INT DEFAULT NULL'))
+                    print("  ✅ Columna 'created_by' agregada a fabric_roll")
+                if not _mysql_column_exists(conn, 'fabric_roll', 'finished_at'):
+                    conn.execute(text('ALTER TABLE `fabric_roll` ADD COLUMN finished_at DATETIME DEFAULT NULL'))
+                    print("  ✅ Columna 'finished_at' agregada a fabric_roll")
 
             if 'request_item' in tables:
                 if not _mysql_column_exists(conn, 'request_item', 'item_status'):
@@ -3062,18 +3108,31 @@ def get_departments_by_fp():
 @app.route('/api/materials/search')
 @login_required
 def search_materials():
-    """Buscar materiales para el autocompletado"""
+    """Buscar materiales para el autocompletado.
+
+    Búsqueda por tokens: divide la consulta en palabras y exige que TODAS
+    aparezcan (en cualquier orden, con o sin palabras intermedias) en alguno
+    de los campos buscables (nombre, código, descripción, categoría).
+    Así "algodon rojo" encuentra "Tela de algodón color rojo" y también
+    "rojo algodon" trae el mismo resultado.
+    """
     query = request.args.get('q', '')
-    if len(query) < 1:
+    # Normalizar: separar por espacios y descartar tokens vacíos
+    tokens = [t for t in query.strip().split() if t]
+    if not tokens:
         return jsonify({'materials': []})
 
-    materials = Material.query.filter(
-        Material.is_active == True,
-        db.or_(
-            Material.name.ilike(f'%{query}%'),
-            Material.code.ilike(f'%{query}%')
-        )
-    ).limit(25).all()
+    filters = [Material.is_active == True]
+    for token in tokens:
+        like = f'%{token}%'
+        filters.append(db.or_(
+            Material.name.ilike(like),
+            Material.code.ilike(like),
+            Material.description.ilike(like),
+            Material.category.ilike(like),
+        ))
+
+    materials = Material.query.filter(*filters).limit(25).all()
 
     materials_data = []
     for material in materials:
@@ -4103,8 +4162,12 @@ def get_project_info(fp_code):
 def fabric_rolls():
     search = request.args.get('search', '', type=str)
     location_filter = request.args.get('location', '', type=str)
+    # Mostrar también los rollos terminados (agotados) para consultar su historial
+    include_finished = request.args.get('include_finished', '', type=str)
 
-    query = FabricRoll.query.join(Material).filter(FabricRoll.remaining_length > 0)
+    query = FabricRoll.query.join(Material)
+    if not include_finished:
+        query = query.filter(FabricRoll.remaining_length > 0)
 
     if search:
         query = query.filter(
@@ -4118,10 +4181,13 @@ def fabric_rolls():
     if location_filter:
         query = query.filter(FabricRoll.location == location_filter)
 
-    rolls = query.all()
+    # Rollos con longitud disponible primero, luego los terminados
+    rolls = query.order_by(FabricRoll.remaining_length <= 0, FabricRoll.id.desc()).all()
     # Obtener solo materiales cuya categoría sea 'Telas'
     materials = Material.query.filter(Material.category.ilike('%tela%')).all()
-    return render_template('fabric_rolls.html', rolls=rolls, materials=materials, free_exit_enabled=get_free_exit_enabled())
+    return render_template('fabric_rolls.html', rolls=rolls, materials=materials,
+                           free_exit_enabled=get_free_exit_enabled(),
+                           include_finished=include_finished)
 
 @app.route('/stock-movements')
 @login_required
@@ -4138,8 +4204,20 @@ def stock_movements():
     fp_filter      = request.args.get('fp', '', type=str).strip()
     proyecto_filter = request.args.get('proyecto', '', type=str).strip()
     cliente_filter = request.args.get('cliente', '', type=str).strip()
+    # Filtro por rollo de tela de origen
+    roll_filter    = request.args.get('roll', '', type=str).strip()
 
     query = StockMovement.query.join(Material)
+
+    # Filtro por rollo de tela: por número de rollo (busca en los rollos vinculados)
+    if roll_filter:
+        matched_roll_ids = [
+            r.id for r in FabricRoll.query.filter(FabricRoll.roll_number.contains(roll_filter)).all()
+        ]
+        if matched_roll_ids:
+            query = query.filter(StockMovement.fabric_roll_id.in_(matched_roll_ids))
+        else:
+            query = query.filter(StockMovement.fabric_roll_id == -1)  # sin resultados
 
     # Filtros de movimiento
     if movement_type:
@@ -4201,7 +4279,8 @@ def stock_movements():
                            projects_dict=projects_dict,
                            fp_filter=fp_filter,
                            proyecto_filter=proyecto_filter,
-                           cliente_filter=cliente_filter)
+                           cliente_filter=cliente_filter,
+                           roll_filter=roll_filter)
 
 
 
@@ -7498,7 +7577,9 @@ def api_create_fabric_roll():
             width=width,
             status=_roll_status(total_length, total_length),
             location=location,
-            provisioned_by_client=provisioned_by_client
+            provisioned_by_client=provisioned_by_client,
+            created_at=datetime.utcnow(),
+            created_by=current_user.id
         )
         db.session.add(roll)
 
@@ -7587,6 +7668,13 @@ def api_cut_fabric_roll():
         roll.remaining_length = (roll.remaining_length or 0) - cut_length
         roll.status = _roll_status(roll.total_length, roll.remaining_length)
 
+        # Marcar fecha de término cuando el rollo se agota
+        if (roll.remaining_length or 0) <= 0.001 and not roll.finished_at:
+            roll.finished_at = datetime.utcnow()
+        elif (roll.remaining_length or 0) > 0.001:
+            # Si por un ajuste vuelve a tener longitud, limpiar la fecha de término
+            roll.finished_at = None
+
         # Actualizar stock del material
         material = roll.material
         material.current_stock = (material.current_stock or 0) - cut_length
@@ -7649,6 +7737,7 @@ def api_cut_fabric_roll():
             fp_code=fp_code if fp_code else None,
             reference_type='corte_rollo',
             reference_id=roll.id,       # Vínculo directo al rollo para actualizaciones futuras
+            fabric_roll_id=roll.id,     # FK explícita al rollo de origen (para mostrar/filtrar)
             user_id=current_user.id,
             personal=current_user.username,
             area=area if area else 'Producción',
@@ -8186,10 +8275,44 @@ def api_export_fabric_rolls():
 
 @app.route('/fabric-rolls/<int:roll_id>/history')
 @login_required
-def roll_history_redirect(roll_id):
+def roll_history(roll_id):
+    """Historial completo de un rollo de tela:
+    - cuándo se registró y quién lo registró
+    - cuándo se terminó (agotó)
+    - todos los movimientos de corte/salida que provienen de él
+    """
     roll = FabricRoll.query.get_or_404(roll_id)
-    # Reusa tu visor de movimientos filtrando por código de material
-    return redirect(url_for('stock_movements', material=roll.material.code))
+
+    # Movimientos vinculados al rollo. Se incluye el vínculo por FK (fabric_roll_id)
+    # y, por compatibilidad con cortes antiguos, el vínculo débil reference_id.
+    movements = StockMovement.query.filter(
+        db.or_(
+            StockMovement.fabric_roll_id == roll.id,
+            db.and_(
+                StockMovement.reference_type == 'corte_rollo',
+                StockMovement.reference_id == roll.id
+            )
+        )
+    ).order_by(StockMovement.created_at.asc()).all()
+
+    # Total cortado/salido del rollo
+    total_cut = sum((m.quantity or 0) for m in movements if m.movement_type == 'salida')
+
+    # Datos de proyecto para mostrar nombre/cliente junto al FP
+    fp_codes = {m.fp_code for m in movements if m.fp_code}
+    projects_dict = {}
+    if fp_codes:
+        for p in Project.query.filter(Project.fp_code.in_(fp_codes)).all():
+            projects_dict[p.fp_code] = {'nombre': p.name or '', 'cliente': p.client or ''}
+
+    creator = User.query.get(roll.created_by) if roll.created_by else None
+
+    return render_template('fabric_roll_history.html',
+                           roll=roll,
+                           movements=movements,
+                           total_cut=total_cut,
+                           projects_dict=projects_dict,
+                           creator=creator)
 
 
 # ======== UBICACIONES / ÁREAS DE ALMACÉN ========
@@ -8243,16 +8366,20 @@ def seed_warehouse_locations():
 def api_warehouse_locations():
     """Devuelve las ubicaciones activas por tipo para poblar dropdowns dinámicamente."""
     loc_type = request.args.get('type', 'almacen')  # 'almacen' | 'area'
-    locations = (
-        WarehouseLocation.query
-        .filter_by(location_type=loc_type, is_active=True)
-        .order_by(WarehouseLocation.sort_order, WarehouseLocation.name)
-        .all()
-    )
-    return jsonify({
-        'success': True,
-        'locations': [{'id': l.id, 'name': l.name} for l in locations]
-    })
+    try:
+        locations = (
+            WarehouseLocation.query
+            .filter_by(location_type=loc_type, is_active=True)
+            .order_by(WarehouseLocation.sort_order, WarehouseLocation.name)
+            .all()
+        )
+        return jsonify({
+            'success': True,
+            'locations': [{'id': l.id, 'name': l.name} for l in locations]
+        })
+    except Exception as e:
+        app.logger.error(f'Error obteniendo warehouse_locations (type={loc_type}): {e}')
+        return jsonify({'success': False, 'locations': [], 'message': str(e)}), 500
 
 
 # ── Pantalla de administración ────────────────────────────────────────────────
