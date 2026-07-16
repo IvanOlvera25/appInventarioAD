@@ -5283,7 +5283,9 @@ def add_stock_api(material_id):
             fp_code=fp_code if fp_code else None,
             user_id=current_user.id,
             notes=' | '.join(full_notes) if full_notes else None,
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
+            fecha=datetime.utcnow().date(),
+            hora=datetime.utcnow().time()
         )
 
         # Actualizar stock del material
@@ -6001,6 +6003,12 @@ def register_exit_multiple():
         is_consumable_exit = data.get('is_consumable_exit', False)
         is_free_exit = data.get('is_free_exit', False)
 
+        # Las salidas de consumible no pasan por requisición/proyecto: se
+        # asignan siempre al FP administrativo para no perder trazabilidad.
+        if is_consumable_exit:
+            fp_code = '0'
+            department = 'Administrativo'
+
         # Determinar el área a almacenar en el movimiento
         movement_area = area_libre if is_free_exit else department
 
@@ -6013,12 +6021,13 @@ def register_exit_multiple():
         # Validar que el proyecto existe (si se proporcionó FP o si es libre)
         project = None
         if fp_code:
-            project = Project.query.filter_by(fp_code=fp_code).first()
-            if not project:
-                return jsonify({
-                    'success': False,
-                    'message': 'Proyecto no encontrado'
-                })
+            if not is_consumable_exit:
+                project = Project.query.filter_by(fp_code=fp_code).first()
+                if not project:
+                    return jsonify({
+                        'success': False,
+                        'message': 'Proyecto no encontrado'
+                    })
         elif not is_consumable_exit:
             # Si no es consumible y no tiene fp_code, error (libre y regular requieren FP)
             return jsonify({
