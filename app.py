@@ -2982,11 +2982,13 @@ def new_request():
                     item = RequestItem(
                         request_id=new_req.id,
                         material_id=material_id,
-                        # Ya no se usan los campos temporales, todo se relaciona al Material directamente
-                        new_material_code=None,
-                        new_material_name=None,
-                        new_material_unit=None,
-                        new_material_category=None,
+                        # El material ya queda relacionado vía material_id, pero varias vistas
+                        # (p.ej. impresión de requisición) siguen leyendo estos campos cuando
+                        # is_new_material=True, así que se replican aquí para no mostrar "None".
+                        new_material_code=new_material.code if is_new else None,
+                        new_material_name=material_data.get('name') if is_new else None,
+                        new_material_unit=material_data.get('unit') if is_new else None,
+                        new_material_category=material_data.get('category') if is_new else None,
                         is_new_material=is_new,
                         quantity_requested=float(material_data['quantity']),
                         item_type=material_data.get('item_type', 'nuevo'),
