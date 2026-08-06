@@ -205,8 +205,9 @@ class StockMovement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     idm = db.Column(db.String(50))  # Nueva columna IDM
     material_id = db.Column(db.Integer, db.ForeignKey('material.id'), nullable=False)
-    movement_type = db.Column(db.String(50), nullable=False)  # entrada, salida, retorno
-    quantity = db.Column(db.Float, nullable=False)
+    movement_type = db.Column(db.String(50), nullable=False)  # entrada, salida, retorno, ajuste
+    quantity = db.Column(db.Float, nullable=False)  # en ajustes = diferencia aplicada (+/-)
+    previous_stock = db.Column(db.Float)  # stock antes del movimiento (se llena en ajustes manuales)
     rollos = db.Column(db.Integer, default=0)  # Rollos
     fp_code = db.Column(db.String(100))  # Código de proyecto
     fecha = db.Column(db.Date)  # Fecha específica

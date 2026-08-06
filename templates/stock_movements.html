@@ -2,6 +2,11 @@
 
 {% block page_title %}Movimientos de Stock{% endblock %}
 
+{# Formatea cantidades: sin decimales cuando es entero #}
+{% macro qty(value) -%}
+{{ value | round(2) | int if value == value | round(0) else value | round(2) }}
+{%- endmacro %}
+
 {% block content %}
 <link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
@@ -122,7 +127,7 @@
                         <tbody>
                             {% for movement in movements.items %}
                             <tr
-                                class="{% if movement.movement_type == 'entrada' %}table-success-subtle{% elif movement.movement_type == 'salida' %}table-danger-subtle{% elif movement.movement_type == 'retorno' %}table-warning-subtle{% endif %}">
+                                class="{% if movement.movement_type == 'entrada' %}table-success-subtle{% elif movement.movement_type == 'salida' %}table-danger-subtle{% elif movement.movement_type == 'retorno' %}table-warning-subtle{% elif movement.movement_type == 'ajuste' %}table-secondary-subtle{% endif %}">
                                 <td><strong>{{ movement.id }}</strong></td>
                                 <td>
                                     <strong>{{ movement.material.name }}</strong><br>
@@ -138,7 +143,8 @@
                                             class="fas fa-arrow-down me-1"></i>Entrada</span>
                                     {% elif movement.movement_type == 'salida' %}<span class="badge bg-danger"><i
                                             class="fas fa-arrow-up me-1"></i>Salida</span>
-                                    {% elif movement.movement_type == 'ajuste' %}<span class="badge bg-secondary"><i
+                                    {% elif movement.movement_type == 'ajuste' %}<span class="badge bg-secondary"
+                                            title="{{ movement.notes or 'Ajuste de inventario' }}"><i
                                             class="fas fa-sliders-h me-1"></i>Ajuste</span>
                                     {% elif movement.movement_type == 'retorno' %}<span class="badge bg-warning text-dark"><i
                                             class="fas fa-undo me-1"></i>Retorno</span>
@@ -146,8 +152,22 @@
                                             class="fas fa-circle me-1"></i>{{ movement.movement_type | capitalize }}</span>
                                     {% endif %}
                                 </td>
-                                <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>{{
-                                        movement.quantity | round(2) | int if movement.quantity == movement.quantity | round(0) else movement.quantity | round(2) }}</strong> {{ movement.material.unit }}</td>
+                                <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                    {% if movement.movement_type == 'ajuste' and movement.previous_stock is not none %}
+                                    {# En ajustes la cantidad relevante es el stock resultante #}
+                                    <strong title="Stock resultante del ajuste">{{ qty(movement.previous_stock + movement.quantity) }}</strong>
+                                    {{ movement.material.unit }}
+                                    <br>
+                                    <small class="text-muted" style="font-size: 0.7rem;">
+                                        antes {{ qty(movement.previous_stock) }} ·
+                                        <span class="{% if movement.quantity > 0 %}text-success{% else %}text-danger{% endif %}">
+                                            {% if movement.quantity > 0 %}+{% endif %}{{ qty(movement.quantity) }}
+                                        </span>
+                                    </small>
+                                    {% else %}
+                                    <strong>{{ qty(movement.quantity) }}</strong> {{ movement.material.unit }}
+                                    {% endif %}
+                                </td>
                                 <td>
                                     {% if movement.fp_code %}
                                     {%- set proj = projects_dict.get(movement.fp_code, {}) -%}
@@ -274,12 +294,19 @@
                     <div class="me-2">
                         {% if movement.movement_type == 'entrada' %}<i class="fas fa-arrow-down text-success"></i>
                         {% elif movement.movement_type == 'salida' %}<i class="fas fa-arrow-up text-danger"></i>
+                        {% elif movement.movement_type == 'ajuste' %}<i class="fas fa-sliders-h text-secondary"></i>
                         {% else %}<i class="fas fa-undo text-warning"></i>
                         {% endif %}
                     </div>
                     <div class="flex-grow-1">
                         <div class="fw-bold">{{ movement.material.code }}</div>
-                        <small class="text-muted">{{ movement.quantity }} {{ movement.material.unit }}</small>
+                        <small class="text-muted">
+                            {% if movement.movement_type == 'ajuste' and movement.previous_stock is not none %}
+                            Ajuste → {{ qty(movement.previous_stock + movement.quantity) }} {{ movement.material.unit }}
+                            {% else %}
+                            {{ movement.quantity }} {{ movement.material.unit }}
+                            {% endif %}
+                        </small>
                     </div>
                     <small class="text-muted">{{ movement.hora.strftime('%H:%M') if movement.hora else '--:--'
                         }}</small>

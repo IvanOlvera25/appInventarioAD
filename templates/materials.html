@@ -248,6 +248,14 @@
                           <i class="fas fa-edit"></i>
                         </a>
                         {% endif %}
+                        {% if current_user.role == 'admin' %}
+                        <button type="button" class="btn btn-outline-success btn-sm py-0 px-1 js-adjust-stock"
+                          title="Ajustar stock" data-id="{{ material.id }}" data-name="{{ material.name }}"
+                          data-code="{{ material.code }}" data-stock="{{ material.current_stock or 0 }}"
+                          data-unit="{{ material.unit }}">
+                          <i class="fas fa-sliders-h"></i>
+                        </button>
+                        {% endif %}
                         <button class="btn btn-outline-info btn-sm py-0 px-1" title="Ver movimientos"
                           onclick="viewMovements('{{ material.name }}')">
                           <i class="fas fa-history"></i>
@@ -467,11 +475,19 @@
                 <td class="text-center">{{ material.current_stock }} {{ material.unit }}</td>
                 <td class="text-center">
                   <div class="btn-group btn-group-sm">
-                    <a class="btn btn-outline-warning btn-sm py-0 px-1"
+                    <a class="btn btn-outline-warning btn-sm py-0 px-1" title="Editar"
                       href="{{ url_for('edit_material', material_id=material.id) }}">
                       <i class="fas fa-edit"></i>
                     </a>
-                    <button class="btn btn-outline-info btn-sm py-0 px-1"
+                    {% if current_user.role == 'admin' %}
+                    <button type="button" class="btn btn-outline-success btn-sm py-0 px-1 js-adjust-stock"
+                      title="Ajustar stock" data-id="{{ material.id }}" data-name="{{ material.name }}"
+                      data-code="{{ material.code }}" data-stock="{{ material.current_stock or 0 }}"
+                      data-unit="{{ material.unit }}">
+                      <i class="fas fa-sliders-h"></i>
+                    </button>
+                    {% endif %}
+                    <button class="btn btn-outline-info btn-sm py-0 px-1" title="Ver movimientos"
                       onclick="viewMovements('{{ material.name }}')">
                       <i class="fas fa-history"></i>
                     </button>
@@ -512,6 +528,63 @@
     </div>
   </div>
 </div>
+
+{% if current_user.role == 'admin' %}
+<!-- Modal: Ajustar Stock (solo admin) -->
+<div class="modal fade" id="adjustStockModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="adjustStockForm">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fas fa-sliders-h me-2"></i>Ajustar cantidad de stock</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-3">
+            <strong id="adjustMaterialName" class="d-block"></strong>
+            <small class="text-muted" id="adjustMaterialCode"></small>
+          </p>
+
+          <div class="row g-3">
+            <div class="col-6">
+              <label class="form-label">Stock actual</label>
+              <input type="text" class="form-control" id="adjustCurrentStock" readonly>
+            </div>
+            <div class="col-6">
+              <label class="form-label">Nueva cantidad <span class="text-danger">*</span></label>
+              <input type="number" step="any" min="0" class="form-control" id="adjustNewStock" required>
+            </div>
+            <div class="col-12">
+              <div class="alert alert-secondary py-2 px-3 mb-0 small" id="adjustDiffBox">
+                Diferencia: <strong>—</strong>
+              </div>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Motivo del ajuste <span class="text-danger">*</span></label>
+              <textarea class="form-control" id="adjustReason" rows="2" required
+                placeholder="Ej: Conteo físico de inventario, corrección de captura, merma..."></textarea>
+            </div>
+          </div>
+
+          <div class="alert alert-info small mt-3 mb-0">
+            <i class="fas fa-info-circle me-1"></i>
+            El ajuste se registra en <strong>Movimientos de Stock</strong> con tipo <strong>Ajuste</strong>
+            y queda en la bitácora de auditoría con tu usuario.
+          </div>
+
+          <div class="alert alert-danger small mt-3 mb-0 d-none" id="adjustError"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="adjustSubmitBtn">
+            <i class="fas fa-save me-1"></i>Guardar ajuste
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% endblock %}
 
@@ -684,6 +757,12 @@
             <button class="btn btn-success btn-sm" onclick="window.location.href='/materials/${m.id}/add-stock'" data-bs-dismiss="modal">
               <i class="fas fa-plus me-1"></i>Agregar Stock
             </button>` : ''}
+            ${CURRENT_USER_ROLE === 'admin' ? `
+            <button class="btn btn-outline-success btn-sm js-adjust-stock" data-bs-dismiss="modal"
+              data-id="${m.id}" data-name="${escapeAttr(m.name)}" data-code="${escapeAttr(m.code)}"
+              data-stock="${m.current_stock}" data-unit="${escapeAttr(m.unit)}">
+              <i class="fas fa-sliders-h me-1"></i>Ajustar Stock
+            </button>` : ''}
             <a class="btn btn-info btn-sm" href="/stock-movements?material=${encodeURIComponent(m.name)}" target="_blank">
               <i class="fas fa-history me-1"></i>Ver Historial de Movimientos
             </a>
@@ -714,6 +793,128 @@
     `;
     }
   }
+
+  // ----- Ajuste de stock (solo admin) -----
+  function escapeAttr(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  const adjustState = { id: null, unit: '', current: 0 };
+
+  function fmtQty(n) {
+    const num = Number(n ?? 0);
+    return Number.isInteger(num) ? String(num) : String(parseFloat(num.toFixed(4)));
+  }
+
+  function setAdjustError(msg) {
+    const box = document.getElementById('adjustError');
+    if (!box) return;
+    box.textContent = msg;
+    box.classList.toggle('d-none', !msg);
+  }
+
+  function updateAdjustDiff() {
+    const box = document.getElementById('adjustDiffBox');
+    const input = document.getElementById('adjustNewStock');
+    if (!box || !input) return;
+
+    const raw = input.value.trim();
+    if (raw === '' || isNaN(parseFloat(raw))) {
+      box.className = 'alert alert-secondary py-2 px-3 mb-0 small';
+      box.innerHTML = 'Diferencia: <strong>—</strong>';
+      return;
+    }
+
+    const diff = parseFloat((parseFloat(raw) - adjustState.current).toFixed(4));
+    if (diff === 0) {
+      box.className = 'alert alert-secondary py-2 px-3 mb-0 small';
+      box.innerHTML = 'Diferencia: <strong>sin cambios</strong>';
+    } else if (diff > 0) {
+      box.className = 'alert alert-success py-2 px-3 mb-0 small';
+      box.innerHTML = `Diferencia: <strong>+${fmtQty(diff)} ${escapeAttr(adjustState.unit)}</strong> (entra al inventario)`;
+    } else {
+      box.className = 'alert alert-danger py-2 px-3 mb-0 small';
+      box.innerHTML = `Diferencia: <strong>${fmtQty(diff)} ${escapeAttr(adjustState.unit)}</strong> (sale del inventario)`;
+    }
+  }
+
+  function openStockAdjust(btn) {
+    const modalEl = document.getElementById('adjustStockModal');
+    if (!modalEl) return;
+
+    adjustState.id = btn.dataset.id;
+    adjustState.unit = btn.dataset.unit || '';
+    adjustState.current = parseFloat(btn.dataset.stock || '0') || 0;
+
+    document.getElementById('adjustMaterialName').textContent = btn.dataset.name || '';
+    document.getElementById('adjustMaterialCode').textContent = btn.dataset.code || '';
+    document.getElementById('adjustCurrentStock').value = `${fmtQty(adjustState.current)} ${adjustState.unit}`;
+    document.getElementById('adjustReason').value = '';
+
+    const newInput = document.getElementById('adjustNewStock');
+    newInput.value = fmtQty(adjustState.current);
+
+    setAdjustError('');
+    updateAdjustDiff();
+
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    setTimeout(() => { newInput.focus(); newInput.select(); }, 400);
+  }
+
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.js-adjust-stock');
+    if (!btn) return;
+
+    // Si el botón vive dentro de otro modal (detalle), esperar a que cierre
+    const parentModal = btn.closest('.modal');
+    if (parentModal && parentModal.id !== 'adjustStockModal') {
+      const data = { ...btn.dataset };
+      parentModal.addEventListener('hidden.bs.modal', () => openStockAdjust({ dataset: data }), { once: true });
+      return;
+    }
+    openStockAdjust(btn);
+  });
+
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('adjustNewStock')?.addEventListener('input', updateAdjustDiff);
+
+    document.getElementById('adjustStockForm')?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      setAdjustError('');
+
+      const newStock = document.getElementById('adjustNewStock').value.trim();
+      const reason = document.getElementById('adjustReason').value.trim();
+
+      if (newStock === '' || isNaN(parseFloat(newStock))) return setAdjustError('Indique la nueva cantidad de stock.');
+      if (parseFloat(newStock) < 0) return setAdjustError('La nueva cantidad no puede ser negativa.');
+      if (!reason) return setAdjustError('Indique el motivo del ajuste.');
+
+      const submitBtn = document.getElementById('adjustSubmitBtn');
+      const originalHtml = submitBtn.innerHTML;
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando...';
+
+      try {
+        const res = await fetch(`/api/materials/${adjustState.id}/adjust-stock`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ new_stock: parseFloat(newStock), reason })
+        });
+        const data = await res.json();
+
+        if (!data.success) throw new Error(data.message || 'No se pudo ajustar el stock.');
+
+        submitBtn.innerHTML = '<i class="fas fa-check me-1"></i>Ajuste guardado';
+        setTimeout(() => window.location.reload(), 700);
+      } catch (err) {
+        setAdjustError(err.message);
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalHtml;
+      }
+    });
+  });
 
   // ----- Utilidades -----
   function exportTableCSV(tableId, filename) {

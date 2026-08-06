@@ -466,6 +466,9 @@ def safe_init_db():
                 if not _mysql_column_exists(conn, 'stock_movement', 'fabric_roll_id'):
                     conn.execute(text('ALTER TABLE `stock_movement` ADD COLUMN fabric_roll_id INT DEFAULT NULL'))
                     print("  ✅ Columna 'fabric_roll_id' agregada a stock_movement")
+                if not _mysql_column_exists(conn, 'stock_movement', 'previous_stock'):
+                    conn.execute(text('ALTER TABLE `stock_movement` ADD COLUMN previous_stock FLOAT DEFAULT NULL'))
+                    print("  ✅ Columna 'previous_stock' agregada a stock_movement")
 
             if 'fabric_roll' in tables:
                 if not _mysql_column_exists(conn, 'fabric_roll', 'created_at'):
@@ -5305,6 +5308,94 @@ def add_stock_api(material_id):
         flash(f'Error al registrar entrada: {str(e)}', 'error')
         return redirect(url_for('add_stock_page', material_id=material_id))
 
+
+@app.route('/api/materials/<int:material_id>/adjust-stock', methods=['POST'])
+@login_required
+def adjust_material_stock(material_id):
+    """Ajuste manual de inventario - solo admins.
+
+    Fija el stock del material en la cantidad contada físicamente y deja
+    registro con movement_type='ajuste'. El movimiento guarda la diferencia
+    aplicada en 'quantity' y el stock previo en 'previous_stock', de modo que
+    el stock resultante siempre se puede reconstruir.
+    """
+    if current_user.role != 'admin':
+        return jsonify({'success': False, 'message': 'Solo los administradores pueden ajustar el stock.'}), 403
+
+    material = Material.query.get_or_404(material_id)
+    data = request.get_json(silent=True) or request.form
+
+    raw_stock = str(data.get('new_stock', '')).strip()
+    reason    = (data.get('reason') or '').strip()
+    area      = (data.get('area') or '').strip()
+
+    if not raw_stock:
+        return jsonify({'success': False, 'message': 'Indique la nueva cantidad de stock.'}), 400
+    try:
+        new_stock = round(float(raw_stock.replace(',', '.')), 4)
+    except ValueError:
+        return jsonify({'success': False, 'message': 'La nueva cantidad debe ser un número válido.'}), 400
+    if new_stock < 0:
+        return jsonify({'success': False, 'message': 'La nueva cantidad no puede ser negativa.'}), 400
+    if not reason:
+        return jsonify({'success': False, 'message': 'Indique el motivo del ajuste.'}), 400
+
+    previous_stock = round(material.current_stock or 0, 4)
+    difference = round(new_stock - previous_stock, 4)
+    if difference == 0:
+        return jsonify({
+            'success': False,
+            'message': f'El material ya tiene {previous_stock} {material.unit}. No hay nada que ajustar.'
+        }), 400
+
+    try:
+        now = datetime.utcnow()
+        idm = f"AJU-{now.strftime('%y%m%d')}-{StockMovement.query.count() + 1:04d}"
+
+        movement = StockMovement(
+            idm=idm,
+            material_id=material.id,
+            movement_type='ajuste',
+            quantity=difference,             # diferencia aplicada (+/-)
+            previous_stock=previous_stock,   # stock antes del ajuste
+            unit_cost=material.unit_cost,
+            reference_type='ajuste',
+            user_id=current_user.id,
+            personal=(current_user.full_name or current_user.username)[:100],
+            area=area[:100] if area else None,
+            fecha=now.date(),
+            hora=now.time(),
+            created_at=now,
+            notes=(f'Ajuste de inventario: {previous_stock} → {new_stock} {material.unit} '
+                   f'({"+" if difference > 0 else ""}{difference}). Motivo: {reason}')
+        )
+        db.session.add(movement)
+
+        material.current_stock = new_stock
+        material.last_movement = now
+
+        log_change('material', material.id, 'UPDATE',
+                   {'current_stock': (previous_stock, new_stock)},
+                   notes=f'Ajuste manual de inventario ({idm}). Motivo: {reason}')
+
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': (f'Stock ajustado: {material.name} pasó de {previous_stock} a '
+                        f'{new_stock} {material.unit} ({"+" if difference > 0 else ""}{difference}).'),
+            'movement_id': movement.id,
+            'previous_stock': previous_stock,
+            'new_stock': new_stock,
+            'difference': difference
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error ajustando stock del material {material_id}: {e}")
+        return jsonify({'success': False, 'message': f'Error al ajustar el stock: {str(e)}'}), 500
+
+
 @app.route('/api/materials/<int:material_id>/details')
 @login_required
 def get_material_details(material_id):
@@ -5547,6 +5638,9 @@ def export_movements():
             'Material': movement.material.code,
             'Movimiento': movement.movement_type,
             'Cantidad': movement.quantity,
+            'Stock Anterior': movement.previous_stock if movement.previous_stock is not None else '',
+            'Stock Nuevo': (round(movement.previous_stock + (movement.quantity or 0), 4)
+                            if movement.previous_stock is not None else ''),
             'Rollos': movement.rollos or 0,
             'FP': movement.fp_code or '',
             'Cliente': cliente,
@@ -6381,6 +6475,9 @@ def delete_movement(movement_id):
                         recalculate_request_status(req_item.request)
         elif movement.movement_type == 'retorno':
             material.current_stock -= movement.quantity
+        elif movement.movement_type == 'ajuste':
+            # En ajustes 'quantity' es la diferencia aplicada: revertirla
+            material.current_stock -= (movement.quantity or 0)
 
         # Eliminar movimiento
         db.session.delete(movement)
