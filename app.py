@@ -209,6 +209,15 @@ with app.app_context():
             if getattr(_bf, 'rowcount', 0):
                 print(f"  ✅ Backfill fabric_roll_id en {_bf.rowcount} cortes históricos")
 
+            # -- stock_movement.previous_stock (stock previo en ajustes manuales) --
+            _has_prev_stock = _conn2.execute(_text2(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stock_movement' AND COLUMN_NAME = 'previous_stock'"
+            )).scalar()
+            if not _has_prev_stock:
+                _conn2.execute(_text2('ALTER TABLE `stock_movement` ADD COLUMN previous_stock FLOAT DEFAULT NULL'))
+                print("  ✅ Columna 'previous_stock' agregada a stock_movement")
+
             # -- fabric_roll: created_at / created_by / finished_at (historial de rollos) --
             for _fr_col, _fr_ddl in (
                 ('created_at',  'ALTER TABLE `fabric_roll` ADD COLUMN created_at DATETIME DEFAULT NULL'),
