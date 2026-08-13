@@ -2870,9 +2870,13 @@ def new_request():
 
             # Generar número de requisición en formato RQ-{FP}-{CONTADOR}
             fp_code = project.fp_code or str(project.id)
-            # Contar requisiciones existentes para este proyecto
-            existing_count = Request.query.filter_by(project_id=project.id).count()
-            req_number = f"RQ-{fp_code}-{existing_count + 1:02d}"
+            # Generar número único verificando que no exista
+            counter = 1
+            while True:
+                req_number = f"RQ-{fp_code}-{counter:02d}"
+                if not Request.query.filter_by(request_number=req_number).first():
+                    break
+                counter += 1
             print(f"  - Número generado: {req_number}")
 
             # Procesar fechas
@@ -2936,7 +2940,19 @@ def new_request():
             )
 
             db.session.add(new_req)
-            db.session.flush()  # Obtener el ID
+            try:
+                db.session.flush()  # Obtener el ID
+            except Exception as e:
+                db.session.rollback()
+                # Si hay error de duplicado, intentar con siguiente número
+                if 'Duplicate entry' in str(e):
+                    counter += 1
+                    req_number = f"RQ-{fp_code}-{counter:02d}"
+                    new_req.request_number = req_number
+                    db.session.add(new_req)
+                    db.session.flush()
+                else:
+                    raise
 
             print(f"✅ Requisición creada con ID: {new_req.id}")
 
