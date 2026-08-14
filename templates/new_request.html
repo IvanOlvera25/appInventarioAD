@@ -892,6 +892,18 @@
       });
   });
 
+  /* ===== DESHABILITAR ENTER PARA AUTO-SUBMIT ===== */
+  document.getElementById('requestForm').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      const activeElement = document.activeElement;
+      const isTextarea = activeElement.tagName === 'TEXTAREA';
+      const isButton = activeElement.tagName === 'BUTTON' || activeElement.type === 'button' || activeElement.type === 'submit';
+      if (!isTextarea && !isButton) {
+        e.preventDefault();
+      }
+    }
+  }, true);
+
   // Inicialización
   document.addEventListener('DOMContentLoaded', () => { updateSubmitButton(); });
 </script>
