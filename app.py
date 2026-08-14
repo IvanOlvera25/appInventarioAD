@@ -3162,7 +3162,7 @@ def search_materials():
             Material.category.ilike(like),
         ))
 
-    materials = Material.query.filter(*filters).limit(25).all()
+    materials = Material.query.filter(*filters).limit(100).all()
 
     materials_data = []
     for material in materials:
@@ -3186,8 +3186,8 @@ def get_request_details(request_id):
     try:
         req = Request.query.get_or_404(request_id)
 
-        # Verificar permisos: admin, lider, almacenista o el propio creador
-        if not (current_user.role in ['admin', 'almacenista'] or
+        # Verificar permisos: admin, lider, almacenista, requisitador o el propio creador
+        if not (current_user.role in ['admin', 'almacenista', 'requisitador'] or
                 current_user.is_leader or
                 req.user_id == current_user.id):
             return jsonify({'success': False, 'message': 'Sin permisos para ver esta requisición'})
@@ -3421,7 +3421,7 @@ def print_request(request_id):
     req = Request.query.get_or_404(request_id)
     
     # Verificar permisos (lectura)
-    if not (current_user.role == 'admin' or
+    if not (current_user.role in ['admin', 'requisitador'] or
             current_user.is_leader or
             req.user_id == current_user.id):
         flash('No tiene permisos para ver esta requisición.', 'danger')
