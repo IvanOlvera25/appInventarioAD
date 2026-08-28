@@ -337,3 +337,184 @@ class WarehouseLocation(db.Model):
     __table_args__ = (
         db.UniqueConstraint('name', 'location_type', name='uq_location_name_type'),
     )
+
+# ===================================================================
+# ===== INVENTARIO DE HERRAMIENTAS =====
+# ===================================================================
+
+class Tool(db.Model):
+    """Herramienta del inventario (control individual por número de serie)."""
+    __tablename__ = 'tool'
+
+    id               = db.Column(db.Integer, primary_key=True)
+    code             = db.Column(db.String(50), unique=True, nullable=False)   # HERR-0001
+    name             = db.Column(db.String(200), nullable=False)
+    serial_number    = db.Column(db.String(120))                               # número de serie
+    brand            = db.Column(db.String(120))                               # marca
+    model            = db.Column(db.String(120))                               # modelo
+    tool_type        = db.Column(db.String(100))                               # tipo (eléctrica, manual, medición...)
+
+    # 'estado' se maneja en dos ejes:
+    #   status    → disponibilidad operativa (se actualiza sola con préstamos/reparaciones)
+    #   condition → estado físico declarado por el almacenista
+    status           = db.Column(db.String(30), default='disponible')  # disponible|prestada|en_reparacion|baja
+    condition        = db.Column(db.String(30), default='bueno')       # nuevo|bueno|regular|malo
+
+    cost             = db.Column(db.Float, default=0)
+    acquisition_date = db.Column(db.Date)
+    photo            = db.Column(db.String(255))                               # nombre de archivo en uploads/herramientas
+    location         = db.Column(db.String(120))                               # dónde se resguarda
+    notes            = db.Column(db.Text)
+
+    is_active        = db.Column(db.Boolean, default=True)                     # baja lógica
+    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by       = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+
+    creator = db.relationship('User', foreign_keys=[created_by])
+
+    @property
+    def active_loan(self):
+        """Préstamo abierto (sin fecha de devolución), si existe."""
+        return next((l for l in self.loans if l.actual_return_date is None), None)
+
+    @property
+    def open_repair(self):
+        """Reparación en proceso, si existe."""
+        return next((r for r in self.repairs if r.status == 'en_proceso'), None)
+
+    @property
+    def total_repair_cost(self):
+        return sum((r.cost or 0) for r in self.repairs)
+
+    @property
+    def status_label(self):
+        return {
+            'disponible':    'Disponible',
+            'prestada':      'Prestada',
+            'en_reparacion': 'En reparación',
+            'baja':          'Dada de baja',
+        }.get(self.status, self.status or '—')
+
+    @property
+    def condition_label(self):
+        return {
+            'nuevo':   'Nuevo',
+            'bueno':   'Bueno',
+            'regular': 'Regular',
+            'malo':    'Malo',
+        }.get(self.condition, self.condition or '—')
+
+
+class ToolLoan(db.Model):
+    """Historial de préstamos: a quién salió, cuándo salió y cuándo regresó."""
+    __tablename__ = 'tool_loan'
+
+    id                   = db.Column(db.Integer, primary_key=True)
+    tool_id              = db.Column(db.Integer, db.ForeignKey('tool.id'), nullable=False)
+
+    # A quién se le prestó (empleado de AD17_RH o nombre libre)
+    employee_id          = db.Column(db.Integer, nullable=True)
+    employee_name        = db.Column(db.String(200), nullable=False)
+    area                 = db.Column(db.String(120))
+    fp_code              = db.Column(db.String(100))          # opcional
+
+    checkout_date        = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)  # cuándo salió
+    expected_return_date = db.Column(db.Date)                 # cuándo debería regresar
+    actual_return_date   = db.Column(db.DateTime)             # cuándo regresó (NULL = sigue afuera)
+    condition_on_return  = db.Column(db.String(30))           # bueno|regular|malo|dañada
+
+    delivered_by         = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)  # quién la entregó
+    received_by          = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)  # quién la recibió
+    reservation_id       = db.Column(db.Integer, db.ForeignKey('tool_reservation.id'), nullable=True)
+
+    notes                = db.Column(db.Text)
+    return_notes         = db.Column(db.Text)
+    created_at           = db.Column(db.DateTime, default=datetime.utcnow)
+
+    tool      = db.relationship('Tool', backref=db.backref('loans', order_by='ToolLoan.checkout_date.desc()'))
+    deliverer = db.relationship('User', foreign_keys=[delivered_by])
+    receiver  = db.relationship('User', foreign_keys=[received_by])
+
+    @property
+    def is_open(self):
+        return self.actual_return_date is None
+
+    @property
+    def is_overdue(self):
+        if self.actual_return_date or not self.expected_return_date:
+            return False
+        return self.expected_return_date < datetime.utcnow().date()
+
+    @property
+    def days_out(self):
+        end = self.actual_return_date or datetime.utcnow()
+        return max((end - self.checkout_date).days, 0)
+
+
+class ToolRepair(db.Model):
+    """Historial de reparaciones con su costo."""
+    __tablename__ = 'tool_repair'
+
+    id          = db.Column(db.Integer, primary_key=True)
+    tool_id     = db.Column(db.Integer, db.ForeignKey('tool.id'), nullable=False)
+
+    description = db.Column(db.Text, nullable=False)          # falla / trabajo realizado
+    provider    = db.Column(db.String(200))                   # taller o proveedor
+    cost        = db.Column(db.Float, default=0)
+    start_date  = db.Column(db.Date, nullable=False)
+    end_date    = db.Column(db.Date)                          # NULL mientras siga en proceso
+    status      = db.Column(db.String(30), default='en_proceso')  # en_proceso|completada|cancelada
+    notes       = db.Column(db.Text)
+
+    created_by  = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at  = db.Column(db.DateTime, default=datetime.utcnow)
+
+    tool    = db.relationship('Tool', backref=db.backref('repairs', order_by='ToolRepair.start_date.desc()'))
+    creator = db.relationship('User', foreign_keys=[created_by])
+
+
+class ToolReservation(db.Model):
+    """Apartado de una herramienta: debe estar lista cierto día para cierta área,
+    con la fecha comprometida de regreso para saber cuándo vuelve a estar libre.
+    No requiere FP."""
+    __tablename__ = 'tool_reservation'
+
+    id            = db.Column(db.Integer, primary_key=True)
+    tool_id       = db.Column(db.Integer, db.ForeignKey('tool.id'), nullable=False)
+
+    area          = db.Column(db.String(120), nullable=False)   # área que la aparta
+    responsible   = db.Column(db.String(200))                   # persona responsable (opcional)
+    employee_id   = db.Column(db.Integer, nullable=True)
+
+    start_date    = db.Column(db.Date, nullable=False)          # día en que debe estar lista
+    end_date      = db.Column(db.Date, nullable=False)          # día comprometido de regreso
+    purpose       = db.Column(db.Text)                          # para qué se necesita
+    status        = db.Column(db.String(30), default='pendiente')  # pendiente|en_uso|completada|cancelada
+    notes         = db.Column(db.Text)
+
+    requested_by  = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    cancelled_at  = db.Column(db.DateTime)
+    cancel_reason = db.Column(db.String(255))
+
+    tool      = db.relationship('Tool', backref=db.backref('reservations', order_by='ToolReservation.start_date'))
+    requester = db.relationship('User', foreign_keys=[requested_by])
+    loans     = db.relationship('ToolLoan', backref='reservation', foreign_keys='ToolLoan.reservation_id')
+
+    @property
+    def is_blocking(self):
+        """Ocupa la herramienta en su rango de fechas."""
+        return self.status in ('pendiente', 'en_uso')
+
+    @property
+    def days(self):
+        return (self.end_date - self.start_date).days + 1
+
+    @property
+    def status_label(self):
+        return {
+            'pendiente':  'Apartada',
+            'en_uso':     'En uso',
+            'completada': 'Completada',
+            'cancelada':  'Cancelada',
+        }.get(self.status, self.status or '—')

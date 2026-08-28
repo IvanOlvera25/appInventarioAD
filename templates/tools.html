@@ -1,0 +1,356 @@
+<!-- templates/tools.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Inventario de Herramientas{% endblock %}
+
+{% block content %}
+<!-- Tarjetas resumen -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex align-items-center">
+                <div class="rounded-circle d-flex align-items-center justify-content-center me-3"
+                     style="width:48px;height:48px;background:rgba(255,107,53,.12);color:#ff6b35;">
+                    <i class="fas fa-toolbox fa-lg"></i>
+                </div>
+                <div>
+                    <div class="h4 mb-0 fw-bold">{{ stats.total }}</div>
+                    <small class="text-muted">Herramientas</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex align-items-center">
+                <div class="rounded-circle d-flex align-items-center justify-content-center me-3"
+                     style="width:48px;height:48px;background:rgba(39,174,96,.12);color:#27ae60;">
+                    <i class="fas fa-check-circle fa-lg"></i>
+                </div>
+                <div>
+                    <div class="h4 mb-0 fw-bold text-success">{{ stats.disponible }}</div>
+                    <small class="text-muted">Disponibles</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex align-items-center">
+                <div class="rounded-circle d-flex align-items-center justify-content-center me-3"
+                     style="width:48px;height:48px;background:rgba(243,156,18,.12);color:#f39c12;">
+                    <i class="fas fa-hand-holding fa-lg"></i>
+                </div>
+                <div>
+                    <div class="h4 mb-0 fw-bold text-warning">{{ stats.prestada }}</div>
+                    <small class="text-muted">
+                        Prestadas
+                        {% if stats.vencidos %}
+                        <span class="badge bg-danger ms-1">{{ stats.vencidos }} vencidas</span>
+                        {% endif %}
+                    </small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body d-flex align-items-center">
+                <div class="rounded-circle d-flex align-items-center justify-content-center me-3"
+                     style="width:48px;height:48px;background:rgba(231,76,60,.12);color:#e74c3c;">
+                    <i class="fas fa-wrench fa-lg"></i>
+                </div>
+                <div>
+                    <div class="h4 mb-0 fw-bold text-danger">{{ stats.en_reparacion }}</div>
+                    <small class="text-muted">En reparación</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h5 class="mb-0"><i class="fas fa-toolbox me-2"></i>Inventario de Herramientas</h5>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('tool_reservations') }}" class="btn btn-outline-primary">
+                <i class="fas fa-calendar-check me-1"></i>Apartados
+            </a>
+            <button class="btn btn-outline-success" onclick="window.location='{{ url_for('export_tools') }}'">
+                <i class="fas fa-file-excel me-1"></i>Exportar
+            </button>
+            {% if has_perm('manage_tools') %}
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addToolModal">
+                <i class="fas fa-plus me-1"></i>Nueva Herramienta
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card-body">
+        <!-- Filtros -->
+        <form method="GET" class="row g-2 mb-4">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="search" placeholder="Código, nombre, serie, marca o modelo..."
+                       value="{{ request.args.get('search', '') }}">
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="status" onchange="this.form.submit()">
+                    <option value="">Todos los estados</option>
+                    <option value="disponible"    {% if request.args.get('status')=='disponible' %}selected{% endif %}>Disponible</option>
+                    <option value="prestada"      {% if request.args.get('status')=='prestada' %}selected{% endif %}>Prestada</option>
+                    <option value="en_reparacion" {% if request.args.get('status')=='en_reparacion' %}selected{% endif %}>En reparación</option>
+                    <option value="baja"          {% if request.args.get('status')=='baja' %}selected{% endif %}>Dada de baja</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="type" onchange="this.form.submit()">
+                    <option value="">Todos los tipos</option>
+                    {% for t in types %}
+                    <option value="{{ t }}" {% if request.args.get('type')==t %}selected{% endif %}>{{ t }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="condition" onchange="this.form.submit()">
+                    <option value="">Cualquier condición</option>
+                    <option value="nuevo"   {% if request.args.get('condition')=='nuevo' %}selected{% endif %}>Nuevo</option>
+                    <option value="bueno"   {% if request.args.get('condition')=='bueno' %}selected{% endif %}>Bueno</option>
+                    <option value="regular" {% if request.args.get('condition')=='regular' %}selected{% endif %}>Regular</option>
+                    <option value="malo"    {% if request.args.get('condition')=='malo' %}selected{% endif %}>Malo</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <button type="submit" class="btn btn-outline-primary w-100" title="Buscar">
+                    <i class="fas fa-search"></i>
+                </button>
+            </div>
+            <div class="col-md-1 d-flex align-items-center">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="show_baja" value="1" id="showBaja"
+                           onchange="this.form.submit()" {% if show_baja %}checked{% endif %}>
+                    <label class="form-check-label small" for="showBaja">Bajas</label>
+                </div>
+            </div>
+        </form>
+
+        {% if tools %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th style="width:70px;">Foto</th>
+                        <th>Herramienta</th>
+                        <th>No. Serie</th>
+                        <th>Tipo</th>
+                        <th>Estado</th>
+                        <th>Condición</th>
+                        <th>Disponible</th>
+                        {% if has_perm('view_costs') %}<th class="text-end">Costo</th>{% endif %}
+                        <th class="text-center" style="width:190px;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tool in tools %}
+                    {% set loan = tool.active_loan %}
+                    {% set avail = available_map.get(tool.id) %}
+                    <tr {% if not tool.is_active %}class="table-secondary opacity-75"{% endif %}>
+                        <td>
+                            {% if tool.photo %}
+                            <img src="{{ url_for('tool_photo', filename=tool.photo) }}" alt="{{ tool.name }}"
+                                 class="rounded" style="width:52px;height:52px;object-fit:cover;cursor:pointer;"
+                                 onclick="showPhoto('{{ url_for('tool_photo', filename=tool.photo) }}', '{{ tool.code }} — {{ tool.name|e }}')">
+                            {% else %}
+                            <div class="rounded d-flex align-items-center justify-content-center bg-light text-muted"
+                                 style="width:52px;height:52px;">
+                                <i class="fas fa-image"></i>
+                            </div>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{{ url_for('tool_detail', tool_id=tool.id) }}" class="text-decoration-none">
+                                <strong>{{ tool.name }}</strong>
+                            </a><br>
+                            <small class="text-muted">{{ tool.code }}
+                                {% if tool.brand or tool.model %}
+                                · {{ tool.brand or '' }} {{ tool.model or '' }}
+                                {% endif %}
+                            </small>
+                        </td>
+                        <td><code class="small">{{ tool.serial_number or '—' }}</code></td>
+                        <td>
+                            {% if tool.tool_type %}
+                            <span class="badge bg-light text-dark border">{{ tool.tool_type }}</span>
+                            {% else %}<span class="text-muted">—</span>{% endif %}
+                        </td>
+                        <td>
+                            {% if tool.status == 'disponible' %}
+                            <span class="badge bg-success"><i class="fas fa-check me-1"></i>Disponible</span>
+                            {% elif tool.status == 'prestada' %}
+                            <span class="badge bg-warning text-dark"><i class="fas fa-hand-holding me-1"></i>Prestada</span>
+                            {% if loan %}<br><small class="text-muted">a {{ loan.employee_name }}</small>{% endif %}
+                            {% elif tool.status == 'en_reparacion' %}
+                            <span class="badge bg-danger"><i class="fas fa-wrench me-1"></i>En reparación</span>
+                            {% else %}
+                            <span class="badge bg-secondary"><i class="fas fa-ban me-1"></i>Baja</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if tool.condition == 'nuevo' %}<span class="badge bg-primary">Nuevo</span>
+                            {% elif tool.condition == 'bueno' %}<span class="badge bg-success">Bueno</span>
+                            {% elif tool.condition == 'regular' %}<span class="badge bg-warning text-dark">Regular</span>
+                            {% elif tool.condition == 'malo' %}<span class="badge bg-danger">Malo</span>
+                            {% else %}<span class="text-muted">—</span>{% endif %}
+                        </td>
+                        <td>
+                            {% if tool.status == 'baja' %}
+                            <span class="text-muted small">—</span>
+                            {% elif avail %}
+                            <span class="text-warning small">
+                                <i class="fas fa-clock me-1"></i>{{ avail.strftime('%d/%m/%Y') }}
+                            </span>
+                            {% elif tool.status == 'en_reparacion' %}
+                            <span class="text-danger small"><i class="fas fa-question-circle me-1"></i>Sin fecha</span>
+                            {% else %}
+                            <span class="text-success small"><i class="fas fa-check me-1"></i>Ahora</span>
+                            {% endif %}
+                        </td>
+                        {% if has_perm('view_costs') %}
+                        <td class="text-end">{{ tool.cost|money_if_allowed }}</td>
+                        {% endif %}
+                        <td class="text-center">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('tool_detail', tool_id=tool.id) }}"
+                                   class="btn btn-outline-secondary" title="Ver ficha e historial">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                                {% if has_perm('reserve_tools') and tool.is_active %}
+                                <button class="btn btn-outline-primary" title="Apartar"
+                                        onclick="openReserve({{ tool.id }}, '{{ tool.code }}', '{{ tool.name|e }}')">
+                                    <i class="fas fa-calendar-plus"></i>
+                                </button>
+                                {% endif %}
+                                {% if has_perm('manage_tools') and tool.is_active %}
+                                {% if tool.status == 'disponible' %}
+                                <button class="btn btn-outline-warning" title="Prestar"
+                                        onclick="openLoan({{ tool.id }}, '{{ tool.code }}', '{{ tool.name|e }}')">
+                                    <i class="fas fa-hand-holding"></i>
+                                </button>
+                                {% elif tool.status == 'prestada' and loan %}
+                                <button class="btn btn-outline-success" title="Registrar devolución"
+                                        onclick="openReturn({{ loan.id }}, '{{ tool.code }}', '{{ loan.employee_name|e }}')">
+                                    <i class="fas fa-undo"></i>
+                                </button>
+                                {% endif %}
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="fas fa-toolbox fa-3x text-muted mb-3"></i>
+            <p class="text-muted mb-3">No hay herramientas que coincidan con los filtros.</p>
+            {% if has_perm('manage_tools') %}
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addToolModal">
+                <i class="fas fa-plus me-1"></i>Registrar la primera herramienta
+            </button>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% include 'partials/tool_modals.html' %}
+
+<!-- Modal: alta de herramienta -->
+{% if has_perm('manage_tools') %}
+<div class="modal fade" id="addToolModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <form method="POST" action="{{ url_for('add_tool') }}" enctype="multipart/form-data" class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-plus me-2"></i>Nueva Herramienta</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-8">
+                        <label class="form-label">Nombre <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" name="name" required
+                               placeholder="Ej. Rotomartillo 1/2&quot;">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">No. de Serie</label>
+                        <input type="text" class="form-control" name="serial_number" placeholder="Ej. SN-99A123">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Marca</label>
+                        <input type="text" class="form-control" name="brand" placeholder="Ej. DeWalt">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Modelo</label>
+                        <input type="text" class="form-control" name="model" placeholder="Ej. DCD996">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Tipo</label>
+                        <input type="text" class="form-control" name="tool_type" list="toolTypesList"
+                               placeholder="Ej. Eléctrica">
+                        <datalist id="toolTypesList">
+                            {% for t in types %}<option value="{{ t }}">{% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Condición</label>
+                        <select class="form-select" name="condition">
+                            <option value="nuevo">Nuevo</option>
+                            <option value="bueno" selected>Bueno</option>
+                            <option value="regular">Regular</option>
+                            <option value="malo">Malo</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Costo</label>
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            <input type="number" step="0.01" min="0" class="form-control" name="cost" placeholder="0.00">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Fecha de adquisición</label>
+                        <input type="date" class="form-control" name="acquisition_date" value="{{ today }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Ubicación / resguardo</label>
+                        <input type="text" class="form-control" name="location" placeholder="Ej. Almacén general">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Foto</label>
+                        <input type="file" class="form-control" name="photo" accept="image/*">
+                        <small class="text-muted">PNG, JPG, GIF o WEBP · máx. 16 MB</small>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Notas</label>
+                        <textarea class="form-control" name="notes" rows="2"
+                                  placeholder="Accesorios incluidos, observaciones..."></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i>Registrar</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const TOOLS_TODAY = "{{ today }}";
+</script>
+{% include 'partials/tool_scripts.html' %}
+{% endblock %}

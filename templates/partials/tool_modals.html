@@ -1,0 +1,335 @@
+<!-- templates/partials/tool_modals.html
+     Modales compartidos por tools.html, tool_detail.html y tool_reservations.html.
+     Todos operan sobre la herramienta cargada en el modal por los helpers de
+     partials/tool_scripts.html. -->
+
+<!-- ── Ver foto ─────────────────────────────────────────────────────────────── -->
+<div class="modal fade" id="photoModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="photoModalTitle">Foto</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="photoModalImg" src="" alt="" class="img-fluid rounded">
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if has_perm('reserve_tools') %}
+<!-- ── Apartar herramienta ──────────────────────────────────────────────────── -->
+<div class="modal fade" id="reserveModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="fas fa-calendar-plus me-2"></i>Apartar Herramienta</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-light border d-flex align-items-center mb-3">
+                    <i class="fas fa-toolbox me-2 text-primary"></i>
+                    <div><strong id="reserveToolCode">—</strong> <span id="reserveToolName" class="text-muted"></span></div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Área que la aparta <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="reserveArea" list="reserveAreasList"
+                               placeholder="Ej. Producción" required>
+                        <datalist id="reserveAreasList">
+                            {% for a in areas %}<option value="{{ a.name }}">{% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Responsable</label>
+                        <input type="text" class="form-control" id="reserveResponsible"
+                               placeholder="Quién la va a usar (opcional)">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Debe estar lista el <span class="text-danger">*</span></label>
+                        <input type="date" class="form-control" id="reserveStart" required
+                               onchange="checkReserveAvailability()">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Se regresa el <span class="text-danger">*</span></label>
+                        <input type="date" class="form-control" id="reserveEnd" required
+                               onchange="checkReserveAvailability()">
+                        <small class="text-muted">Con esto sabemos cuándo vuelve a estar libre.</small>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">¿Para qué se necesita?</label>
+                        <input type="text" class="form-control" id="reservePurpose"
+                               placeholder="Montaje, mantenimiento, evento... (opcional)">
+                    </div>
+                    <div class="col-12">
+                        <div id="reserveAvailability" class="small"></div>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Notas</label>
+                        <textarea class="form-control" id="reserveNotes" rows="2"></textarea>
+                    </div>
+                </div>
+
+                <!-- Compromisos existentes de la herramienta -->
+                <div class="mt-3">
+                    <h6 class="text-muted small text-uppercase mb-2">Fechas ya comprometidas</h6>
+                    <div id="reserveBusyList" class="small text-muted">Cargando...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="reserveSubmitBtn" onclick="submitReservation()">
+                    <i class="fas fa-calendar-check me-1"></i>Apartar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if has_perm('manage_tools') %}
+<!-- ── Registrar préstamo (salida) ──────────────────────────────────────────── -->
+<div class="modal fade" id="loanModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title"><i class="fas fa-hand-holding me-2"></i>Prestar Herramienta</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-light border d-flex align-items-center mb-3">
+                    <i class="fas fa-toolbox me-2 text-warning"></i>
+                    <div><strong id="loanToolCode">—</strong> <span id="loanToolName" class="text-muted"></span></div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label">Se le presta a <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="loanEmployeeName" list="employeesList"
+                               placeholder="Nombre del empleado" required>
+                        <datalist id="employeesList"></datalist>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Área</label>
+                        <input type="text" class="form-control" id="loanArea" list="loanAreasList">
+                        <datalist id="loanAreasList">
+                            {% for a in areas %}<option value="{{ a.name }}">{% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">FP <small class="text-muted">(opcional)</small></label>
+                        <input type="text" class="form-control" id="loanFpCode" placeholder="Ej. FP-1234">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Fecha de salida</label>
+                        <input type="date" class="form-control" id="loanCheckout">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Retorno esperado</label>
+                        <input type="date" class="form-control" id="loanExpectedReturn">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Notas</label>
+                        <textarea class="form-control" id="loanNotes" rows="2"
+                                  placeholder="Accesorios entregados, condiciones..."></textarea>
+                    </div>
+                </div>
+                <input type="hidden" id="loanReservationId" value="">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-warning" id="loanSubmitBtn" onclick="submitLoan()">
+                    <i class="fas fa-check me-1"></i>Registrar salida
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Registrar devolución ─────────────────────────────────────────────────── -->
+<div class="modal fade" id="returnModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="fas fa-undo me-2"></i>Registrar Devolución</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-light border mb-3">
+                    <strong id="returnToolCode">—</strong>
+                    <div class="small text-muted">Prestada a <span id="returnEmployee">—</span></div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Fecha de devolución</label>
+                        <input type="date" class="form-control" id="returnDate">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">¿En qué estado regresó?</label>
+                        <select class="form-select" id="returnCondition" onchange="toggleRepairFields()">
+                            <option value="bueno" selected>Bueno</option>
+                            <option value="regular">Regular</option>
+                            <option value="malo">Malo / dañada</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Notas de la devolución</label>
+                        <textarea class="form-control" id="returnNotes" rows="2"></textarea>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="returnSendToRepair"
+                                   onchange="toggleRepairFields()">
+                            <label class="form-check-label" for="returnSendToRepair">
+                                Mandar a reparación
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-12 d-none" id="returnRepairFields">
+                        <div class="border rounded p-3 bg-light">
+                            <div class="mb-2">
+                                <label class="form-label small">Falla detectada</label>
+                                <input type="text" class="form-control form-control-sm" id="returnRepairDescription">
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-md-7">
+                                    <label class="form-label small">Taller / proveedor</label>
+                                    <input type="text" class="form-control form-control-sm" id="returnRepairProvider">
+                                </div>
+                                <div class="col-md-5">
+                                    <label class="form-label small">Costo estimado</label>
+                                    <input type="number" step="0.01" min="0"
+                                           class="form-control form-control-sm" id="returnRepairCost">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-success" id="returnSubmitBtn" onclick="submitReturn()">
+                    <i class="fas fa-check me-1"></i>Registrar devolución
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Registrar reparación ─────────────────────────────────────────────────── -->
+<div class="modal fade" id="repairModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="fas fa-wrench me-2"></i>Registrar Reparación</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-light border mb-3">
+                    <strong id="repairToolCode">—</strong> <span id="repairToolName" class="text-muted"></span>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label">Falla o trabajo a realizar <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="repairDescription" rows="2" required
+                                  placeholder="Ej. No enciende, cambio de carbones"></textarea>
+                    </div>
+                    <div class="col-md-7">
+                        <label class="form-label">Taller / proveedor</label>
+                        <input type="text" class="form-control" id="repairProvider">
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label">Costo</label>
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            <input type="number" step="0.01" min="0" class="form-control" id="repairCost" placeholder="0.00">
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Fecha de entrada</label>
+                        <input type="date" class="form-control" id="repairStart">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Fecha de salida</label>
+                        <input type="date" class="form-control" id="repairEnd">
+                        <small class="text-muted">Déjala vacía si sigue en el taller.</small>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Notas</label>
+                        <textarea class="form-control" id="repairNotes" rows="2"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-danger" id="repairSubmitBtn" onclick="submitRepair()">
+                    <i class="fas fa-save me-1"></i>Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Cerrar reparación ────────────────────────────────────────────────────── -->
+<div class="modal fade" id="completeRepairModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-clipboard-check me-2"></i>Cerrar Reparación</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Fecha de salida del taller</label>
+                        <input type="date" class="form-control" id="completeRepairEnd">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Costo final</label>
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            <input type="number" step="0.01" min="0" class="form-control" id="completeRepairCost">
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Taller / proveedor</label>
+                        <input type="text" class="form-control" id="completeRepairProvider">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Condición al regresar</label>
+                        <select class="form-select" id="completeRepairCondition">
+                            <option value="">Sin cambio</option>
+                            <option value="nuevo">Nuevo</option>
+                            <option value="bueno">Bueno</option>
+                            <option value="regular">Regular</option>
+                            <option value="malo">Malo</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Notas</label>
+                        <textarea class="form-control" id="completeRepairNotes" rows="2"></textarea>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="completeRepairCancelled">
+                            <label class="form-check-label" for="completeRepairCancelled">
+                                No se reparó (cancelar la reparación)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="completeRepairBtn" onclick="submitCompleteRepair()">
+                    <i class="fas fa-check me-1"></i>Cerrar reparación
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}

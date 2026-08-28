@@ -1,0 +1,469 @@
+<!-- templates/partials/tool_scripts.html
+     Lógica compartida de los modales de herramientas. Se incluye después de
+     partials/tool_modals.html en las pantallas del módulo. -->
+<script>
+(function () {
+    // Estado del modal abierto en cada momento
+    var currentToolId = null;
+    var currentLoanId = null;
+    var currentRepairId = null;
+
+    var TODAY = (typeof TOOLS_TODAY !== 'undefined' && TOOLS_TODAY)
+        ? TOOLS_TODAY
+        : new Date().toISOString().slice(0, 10);
+
+    // ── Utilidades ────────────────────────────────────────────────────────────
+    function toast(message, ok) {
+        var el = document.createElement('div');
+        el.style.cssText = 'position:fixed;top:80px;right:20px;z-index:9999;padding:0.75rem 1.2rem;' +
+            'border-radius:8px;font-size:0.85rem;font-weight:600;max-width:420px;' +
+            'box-shadow:0 4px 16px rgba(0,0,0,0.15);transition:opacity 0.3s;';
+        el.style.background = ok ? '#d4edda' : '#f8d7da';
+        el.style.color = ok ? '#155724' : '#721c24';
+        el.style.border = '1.5px solid ' + (ok ? '#27ae60' : '#e74c3c');
+        el.textContent = message;
+        document.body.appendChild(el);
+        setTimeout(function () {
+            el.style.opacity = '0';
+            setTimeout(function () { el.remove(); }, 300);
+        }, 4000);
+    }
+
+    function val(id) {
+        var el = document.getElementById(id);
+        return el ? el.value.trim() : '';
+    }
+
+    function checked(id) {
+        var el = document.getElementById(id);
+        return !!(el && el.checked);
+    }
+
+    function show(id) {
+        var el = document.getElementById(id);
+        if (el) bootstrap.Modal.getOrCreateInstance(el).show();
+    }
+
+    function hide(id) {
+        var el = document.getElementById(id);
+        if (el) {
+            var m = bootstrap.Modal.getInstance(el);
+            if (m) m.hide();
+        }
+    }
+
+    function setText(id, text) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = text;
+    }
+
+    function busy(btnId, isBusy, label) {
+        var btn = document.getElementById(btnId);
+        if (!btn) return;
+        btn.disabled = isBusy;
+        if (isBusy) {
+            btn.dataset.original = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' + (label || 'Guardando...');
+        } else if (btn.dataset.original) {
+            btn.innerHTML = btn.dataset.original;
+        }
+    }
+
+    /* POST JSON y recarga la página si todo salió bien. */
+    function post(url, payload, btnId, onConflict) {
+        busy(btnId, true);
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (res) {
+                if (res.data.success) {
+                    toast(res.data.message || 'Listo', true);
+                    setTimeout(function () { window.location.reload(); }, 700);
+                    return;
+                }
+                busy(btnId, false);
+                if (res.data.conflict && typeof onConflict === 'function') {
+                    onConflict(res.data);
+                } else {
+                    toast(res.data.message || 'No se pudo completar la operación', false);
+                }
+            })
+            .catch(function (err) {
+                busy(btnId, false);
+                console.error(err);
+                toast('Error de conexión', false);
+            });
+    }
+
+    function fmt(dateStr) {
+        if (!dateStr) return '';
+        var p = dateStr.split('-');
+        return p[2] + '/' + p[1] + '/' + p[0];
+    }
+
+    // ── Foto ──────────────────────────────────────────────────────────────────
+    window.showPhoto = function (src, title) {
+        var img = document.getElementById('photoModalImg');
+        if (img) { img.src = src; img.alt = title || ''; }
+        setText('photoModalTitle', title || 'Foto');
+        show('photoModal');
+    };
+
+    // ── Apartados ─────────────────────────────────────────────────────────────
+    window.openReserve = function (toolId, code, name, defaults) {
+        currentToolId = toolId;
+        setText('reserveToolCode', code);
+        setText('reserveToolName', name ? '· ' + name : '');
+
+        var d = defaults || {};
+        var start = document.getElementById('reserveStart');
+        var end = document.getElementById('reserveEnd');
+        if (start) start.value = d.start || TODAY;
+        if (end) end.value = d.end || '';
+        ['reserveArea', 'reserveResponsible', 'reservePurpose', 'reserveNotes'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = d[id] || '';
+        });
+
+        var avail = document.getElementById('reserveAvailability');
+        if (avail) avail.innerHTML = '';
+
+        loadBusyRanges(toolId);
+        show('reserveModal');
+        checkReserveAvailability();
+    };
+
+    function loadBusyRanges(toolId) {
+        var box = document.getElementById('reserveBusyList');
+        if (!box) return;
+        box.innerHTML = 'Cargando...';
+
+        fetch('/api/tools/' + toolId + '/availability')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d.success || !d.busy_ranges || !d.busy_ranges.length) {
+                    box.innerHTML = '<span class="text-success">' +
+                        '<i class="fas fa-check-circle me-1"></i>Sin compromisos registrados.</span>';
+                    return;
+                }
+                box.innerHTML = d.busy_ranges.map(function (b) {
+                    var icon = b.kind === 'prestamo' ? 'fa-hand-holding' : 'fa-calendar-check';
+                    var color = b.kind === 'prestamo' ? 'warning' : 'primary';
+                    return '<div class="d-flex align-items-center mb-1">' +
+                        '<i class="fas ' + icon + ' text-' + color + ' me-2"></i>' +
+                        '<span>' + b.label + ' — <strong>' + fmt(b.start) + '</strong> a <strong>' +
+                        fmt(b.end) + '</strong></span></div>';
+                }).join('');
+            })
+            .catch(function () { box.innerHTML = '<span class="text-muted">No se pudo consultar.</span>'; });
+    }
+
+    /* Avisa en vivo si el rango elegido choca con otro compromiso. */
+    window.checkReserveAvailability = function () {
+        var box = document.getElementById('reserveAvailability');
+        if (!box || !currentToolId) return;
+
+        var start = val('reserveStart');
+        var end = val('reserveEnd');
+        if (!start || !end) { box.innerHTML = ''; return; }
+
+        if (end < start) {
+            box.innerHTML = '<div class="alert alert-warning py-2 mb-0">' +
+                '<i class="fas fa-exclamation-triangle me-1"></i>' +
+                'La fecha de regreso no puede ser anterior a la fecha en que se necesita.</div>';
+            return;
+        }
+
+        box.innerHTML = '<span class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>' +
+            'Verificando disponibilidad...</span>';
+
+        var qs = '?start_date=' + start + '&end_date=' + end;
+        fetch('/api/tools/' + currentToolId + '/availability' + qs)
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d.success) { box.innerHTML = ''; return; }
+                if (d.conflict) {
+                    box.innerHTML = '<div class="alert alert-danger py-2 mb-0">' +
+                        '<i class="fas fa-times-circle me-1"></i><strong>Ocupada:</strong> ' +
+                        d.conflict.label + ' del ' + fmt(d.conflict.start) + ' al ' + fmt(d.conflict.end) +
+                        (d.available_from ? '. Libre a partir del ' + fmt(d.available_from) + '.' : '') +
+                        '</div>';
+                } else {
+                    box.innerHTML = '<div class="alert alert-success py-2 mb-0">' +
+                        '<i class="fas fa-check-circle me-1"></i>Disponible en esas fechas.</div>';
+                }
+            })
+            .catch(function () { box.innerHTML = ''; });
+    };
+
+    window.submitReservation = function () {
+        if (!currentToolId) return;
+        var area = val('reserveArea');
+        var start = val('reserveStart');
+        var end = val('reserveEnd');
+
+        if (!area) { toast('Indica el área que aparta la herramienta', false); return; }
+        if (!start || !end) { toast('Indica las fechas de uso y regreso', false); return; }
+        if (end < start) { toast('La fecha de regreso no puede ser anterior', false); return; }
+
+        post('/api/tools/' + currentToolId + '/reservations', {
+            area: area,
+            responsible: val('reserveResponsible'),
+            start_date: start,
+            end_date: end,
+            purpose: val('reservePurpose'),
+            notes: val('reserveNotes')
+        }, 'reserveSubmitBtn', function (d) {
+            var box = document.getElementById('reserveAvailability');
+            if (box) {
+                box.innerHTML = '<div class="alert alert-danger py-2 mb-0">' +
+                    '<i class="fas fa-times-circle me-1"></i>' + d.message +
+                    (d.available_from ? ' Libre a partir del ' + fmt(d.available_from) + '.' : '') + '</div>';
+            }
+            toast(d.message, false);
+        });
+    };
+
+    window.cancelReservation = function (reservationId) {
+        if (!confirm('¿Cancelar este apartado? Las fechas quedarán libres.')) return;
+        var reason = prompt('Motivo de la cancelación (opcional):') || '';
+        post('/api/tools/reservations/' + reservationId + '/cancel', { reason: reason }, null);
+    };
+
+    window.deliverReservation = function (reservationId, responsible) {
+        var name = prompt('¿A quién se le entrega la herramienta?', responsible || '');
+        if (name === null) return;
+        post('/api/tools/reservations/' + reservationId + '/deliver',
+            { employee_name: (name || '').trim() }, null);
+    };
+
+    // ── Préstamos ─────────────────────────────────────────────────────────────
+    window.openLoan = function (toolId, code, name, opts) {
+        currentToolId = toolId;
+        setText('loanToolCode', code);
+        setText('loanToolName', name ? '· ' + name : '');
+
+        var o = opts || {};
+        var checkout = document.getElementById('loanCheckout');
+        if (checkout) checkout.value = TODAY;
+        ['loanEmployeeName', 'loanArea', 'loanFpCode', 'loanNotes', 'loanExpectedReturn'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        var emp = document.getElementById('loanEmployeeName');
+        if (emp && o.employee_name) emp.value = o.employee_name;
+        var area = document.getElementById('loanArea');
+        if (area && o.area) area.value = o.area;
+        var exp = document.getElementById('loanExpectedReturn');
+        if (exp && o.expected_return) exp.value = o.expected_return;
+        var resv = document.getElementById('loanReservationId');
+        if (resv) resv.value = o.reservation_id || '';
+
+        loadEmployees();
+        show('loanModal');
+    };
+
+    var employeesLoaded = false;
+    function loadEmployees() {
+        var list = document.getElementById('employeesList');
+        if (!list || employeesLoaded) return;
+        fetch('/api/employees/active')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d.success || !d.employees) return;
+                list.innerHTML = d.employees.map(function (e) {
+                    return '<option value="' + e.nombre + '">';
+                }).join('');
+                employeesLoaded = true;
+            })
+            .catch(function () { /* el campo sigue siendo de texto libre */ });
+    }
+
+    window.submitLoan = function () {
+        if (!currentToolId) return;
+        var name = val('loanEmployeeName');
+        if (!name) { toast('Indica a quién se le presta la herramienta', false); return; }
+
+        var checkout = val('loanCheckout');
+        var expected = val('loanExpectedReturn');
+        if (checkout && expected && expected < checkout) {
+            toast('El retorno esperado no puede ser anterior a la salida', false);
+            return;
+        }
+
+        post('/api/tools/' + currentToolId + '/loan', {
+            employee_name: name,
+            area: val('loanArea'),
+            fp_code: val('loanFpCode'),
+            checkout_date: checkout,
+            expected_return_date: expected,
+            reservation_id: val('loanReservationId'),
+            notes: val('loanNotes')
+        }, 'loanSubmitBtn');
+    };
+
+    window.openReturn = function (loanId, code, employeeName) {
+        currentLoanId = loanId;
+        setText('returnToolCode', code);
+        setText('returnEmployee', employeeName || '—');
+
+        var d = document.getElementById('returnDate');
+        if (d) d.value = TODAY;
+        var cond = document.getElementById('returnCondition');
+        if (cond) cond.value = 'bueno';
+        ['returnNotes', 'returnRepairDescription', 'returnRepairProvider', 'returnRepairCost']
+            .forEach(function (id) {
+                var el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+        var chk = document.getElementById('returnSendToRepair');
+        if (chk) chk.checked = false;
+        toggleRepairFields();
+
+        show('returnModal');
+    };
+
+    /* Al marcar la herramienta como dañada, se propone mandarla a reparación. */
+    window.toggleRepairFields = function () {
+        var cond = val('returnCondition');
+        var chk = document.getElementById('returnSendToRepair');
+        var fields = document.getElementById('returnRepairFields');
+        if (!fields) return;
+
+        if (cond === 'malo' && chk && !chk.dataset.touched) chk.checked = true;
+        fields.classList.toggle('d-none', !(chk && chk.checked));
+    };
+
+    var repairChk = document.getElementById('returnSendToRepair');
+    if (repairChk) {
+        repairChk.addEventListener('click', function () { this.dataset.touched = '1'; });
+    }
+
+    window.submitReturn = function () {
+        if (!currentLoanId) return;
+        var sendToRepair = checked('returnSendToRepair');
+        post('/api/tools/loans/' + currentLoanId + '/return', {
+            return_date: val('returnDate'),
+            condition_on_return: val('returnCondition'),
+            return_notes: val('returnNotes'),
+            send_to_repair: sendToRepair ? '1' : '',
+            repair_description: val('returnRepairDescription'),
+            repair_provider: val('returnRepairProvider'),
+            repair_cost: val('returnRepairCost')
+        }, 'returnSubmitBtn');
+    };
+
+    window.deleteLoan = function (loanId) {
+        if (!confirm('¿Eliminar este registro de préstamo? Esta acción no se puede deshacer.')) return;
+        post('/api/tools/loans/' + loanId + '/delete', {}, null);
+    };
+
+    // ── Reparaciones ──────────────────────────────────────────────────────────
+    window.openRepair = function (toolId, code, name) {
+        currentToolId = toolId;
+        setText('repairToolCode', code);
+        setText('repairToolName', name ? '· ' + name : '');
+
+        ['repairDescription', 'repairProvider', 'repairCost', 'repairEnd', 'repairNotes']
+            .forEach(function (id) {
+                var el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+        var start = document.getElementById('repairStart');
+        if (start) start.value = TODAY;
+
+        show('repairModal');
+    };
+
+    window.submitRepair = function () {
+        if (!currentToolId) return;
+        var description = val('repairDescription');
+        if (!description) { toast('Describe la falla o el trabajo realizado', false); return; }
+
+        var start = val('repairStart');
+        var end = val('repairEnd');
+        if (start && end && end < start) {
+            toast('La fecha de salida no puede ser anterior a la de entrada', false);
+            return;
+        }
+
+        post('/api/tools/' + currentToolId + '/repairs', {
+            description: description,
+            provider: val('repairProvider'),
+            cost: val('repairCost'),
+            start_date: start,
+            end_date: end,
+            notes: val('repairNotes')
+        }, 'repairSubmitBtn');
+    };
+
+    window.openCompleteRepair = function (repairId, provider, cost) {
+        currentRepairId = repairId;
+        var end = document.getElementById('completeRepairEnd');
+        if (end) end.value = TODAY;
+        var p = document.getElementById('completeRepairProvider');
+        if (p) p.value = provider || '';
+        var c = document.getElementById('completeRepairCost');
+        if (c) c.value = (cost !== undefined && cost !== null && cost !== '') ? cost : '';
+        var cond = document.getElementById('completeRepairCondition');
+        if (cond) cond.value = '';
+        var notes = document.getElementById('completeRepairNotes');
+        if (notes) notes.value = '';
+        var cancelled = document.getElementById('completeRepairCancelled');
+        if (cancelled) cancelled.checked = false;
+
+        show('completeRepairModal');
+    };
+
+    window.submitCompleteRepair = function () {
+        if (!currentRepairId) return;
+        post('/api/tools/repairs/' + currentRepairId + '/complete', {
+            end_date: val('completeRepairEnd'),
+            cost: val('completeRepairCost'),
+            provider: val('completeRepairProvider'),
+            condition: val('completeRepairCondition'),
+            notes: val('completeRepairNotes'),
+            cancelled: checked('completeRepairCancelled') ? '1' : ''
+        }, 'completeRepairBtn');
+    };
+
+    window.deleteRepair = function (repairId) {
+        if (!confirm('¿Eliminar este registro de reparación? Esta acción no se puede deshacer.')) return;
+        post('/api/tools/repairs/' + repairId + '/delete', {}, null);
+    };
+
+    // ── Baja / reactivación ───────────────────────────────────────────────────
+    window.toggleToolActive = function (toolId, isActive) {
+        var reason = '';
+        if (isActive) {
+            if (!confirm('¿Dar de baja esta herramienta? Se conserva todo su historial y se cancelan sus apartados vigentes.')) return;
+            reason = prompt('Motivo de la baja (opcional):') || '';
+        } else if (!confirm('¿Reactivar esta herramienta?')) {
+            return;
+        }
+        post('/api/tools/' + toolId + '/toggle-active', { reason: reason }, null);
+    };
+
+    window.deleteTool = function (toolId) {
+        if (!confirm('¿Eliminar definitivamente esta herramienta? Solo es posible si no tiene historial.')) return;
+        fetch('/api/tools/' + toolId + '/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}'
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.success) {
+                    toast(d.message, true);
+                    setTimeout(function () { window.location = '/tools'; }, 700);
+                } else {
+                    toast(d.message, false);
+                }
+            })
+            .catch(function () { toast('Error de conexión', false); });
+    };
+})();
+</script>

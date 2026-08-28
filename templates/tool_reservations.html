@@ -1,0 +1,280 @@
+<!-- templates/tool_reservations.html -->
+{% extends "base.html" %}
+
+{% block page_title %}Apartado de Herramientas{% endblock %}
+
+{% block content %}
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body d-flex align-items-center">
+                <div class="rounded-circle d-flex align-items-center justify-content-center me-3"
+                     style="width:48px;height:48px;background:rgba(13,110,253,.12);color:#0d6efd;">
+                    <i class="fas fa-calendar-check fa-lg"></i>
+                </div>
+                <div>
+                    <div class="h4 mb-0 fw-bold">{{ stats.vigentes }}</div>
+                    <small class="text-muted">Apartados vigentes</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body d-flex align-items-center">
+                <div class="rounded-circle d-flex align-items-center justify-content-center me-3"
+                     style="width:48px;height:48px;background:rgba(243,156,18,.12);color:#f39c12;">
+                    <i class="fas fa-truck-loading fa-lg"></i>
+                </div>
+                <div>
+                    <div class="h4 mb-0 fw-bold text-warning">{{ stats.hoy }}</div>
+                    <small class="text-muted">Deben entregarse hoy</small>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body d-flex align-items-center">
+                <div class="rounded-circle d-flex align-items-center justify-content-center me-3"
+                     style="width:48px;height:48px;background:rgba(231,76,60,.12);color:#e74c3c;">
+                    <i class="fas fa-exclamation-triangle fa-lg"></i>
+                </div>
+                <div>
+                    <div class="h4 mb-0 fw-bold text-danger">{{ stats.vencidos }}</div>
+                    <small class="text-muted">Pasados de fecha de regreso</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h5 class="mb-0"><i class="fas fa-calendar-check me-2"></i>Agenda de Apartados</h5>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('tools') }}" class="btn btn-outline-secondary">
+                <i class="fas fa-toolbox me-1"></i>Inventario
+            </a>
+            {% if has_perm('reserve_tools') %}
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#pickToolModal">
+                <i class="fas fa-plus me-1"></i>Nuevo Apartado
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card-body">
+        <form method="GET" class="row g-2 mb-4">
+            <div class="col-md-3">
+                <select class="form-select" name="status" onchange="this.form.submit()">
+                    <option value="vigentes"   {% if f_status=='vigentes' %}selected{% endif %}>Vigentes (apartados y en uso)</option>
+                    <option value="pendiente"  {% if f_status=='pendiente' %}selected{% endif %}>Solo apartados</option>
+                    <option value="en_uso"     {% if f_status=='en_uso' %}selected{% endif %}>Solo en uso</option>
+                    <option value="completada" {% if f_status=='completada' %}selected{% endif %}>Completados</option>
+                    <option value="cancelada"  {% if f_status=='cancelada' %}selected{% endif %}>Cancelados</option>
+                    <option value="todos"      {% if f_status=='todos' %}selected{% endif %}>Todos</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" name="area" onchange="this.form.submit()">
+                    <option value="">Todas las áreas</option>
+                    {% for a in areas %}
+                    <option value="{{ a.name }}" {% if f_area==a.name %}selected{% endif %}>{{ a.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <input type="date" class="form-control" name="date_from"
+                       value="{{ request.args.get('date_from', '') }}" title="Desde">
+            </div>
+            <div class="col-md-2">
+                <input type="date" class="form-control" name="date_to"
+                       value="{{ request.args.get('date_to', '') }}" title="Hasta">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-outline-primary w-100">
+                    <i class="fas fa-filter me-1"></i>Filtrar
+                </button>
+            </div>
+        </form>
+
+        {% if reservations %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>Herramienta</th>
+                        <th>Área</th>
+                        <th>Responsable</th>
+                        <th>Lista el</th>
+                        <th>Regresa el</th>
+                        <th>Estado</th>
+                        <th>Solicitó</th>
+                        <th class="text-center" style="width:130px;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in reservations %}
+                    {% set overdue = r.status == 'en_uso' and r.end_date < today %}
+                    {% set due_today = r.status == 'pendiente' and r.start_date == today %}
+                    {% set late_delivery = r.status == 'pendiente' and r.start_date < today %}
+                    <tr {% if overdue %}class="table-danger"{% elif due_today %}class="table-warning"{% endif %}>
+                        <td>
+                            <a href="{{ url_for('tool_detail', tool_id=r.tool.id) }}" class="text-decoration-none">
+                                <strong>{{ r.tool.name }}</strong>
+                            </a><br>
+                            <small class="text-muted">{{ r.tool.code }}
+                                {% if r.tool.serial_number %}· {{ r.tool.serial_number }}{% endif %}
+                            </small>
+                        </td>
+                        <td><span class="badge bg-info text-dark">{{ r.area }}</span></td>
+                        <td class="small">
+                            {{ r.responsible or '—' }}
+                            {% if r.purpose %}<br><small class="text-muted">{{ r.purpose }}</small>{% endif %}
+                        </td>
+                        <td class="small">
+                            {{ r.start_date.strftime('%d/%m/%Y') }}
+                            {% if due_today %}
+                            <br><span class="badge bg-warning text-dark">Hoy</span>
+                            {% elif late_delivery %}
+                            <br><span class="badge bg-danger">Sin entregar</span>
+                            {% endif %}
+                        </td>
+                        <td class="small">
+                            <span class="{{ 'text-danger fw-bold' if overdue else '' }}">
+                                {{ r.end_date.strftime('%d/%m/%Y') }}
+                            </span>
+                            <br><small class="text-muted">{{ r.days }} día(s)</small>
+                        </td>
+                        <td>
+                            {% if r.status == 'pendiente' %}
+                            <span class="badge bg-primary">Apartada</span>
+                            {% elif r.status == 'en_uso' %}
+                            <span class="badge bg-warning text-dark">En uso</span>
+                            {% if overdue %}<br><small class="text-danger">{{ (today - r.end_date).days }} días tarde</small>{% endif %}
+                            {% elif r.status == 'completada' %}
+                            <span class="badge bg-success">Completada</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Cancelada</span>
+                            {% if r.cancel_reason %}
+                            <i class="fas fa-info-circle text-muted ms-1" title="{{ r.cancel_reason }}"></i>
+                            {% endif %}
+                            {% endif %}
+                        </td>
+                        <td class="small">{{ r.requester.full_name if r.requester else '—' }}</td>
+                        <td class="text-center">
+                            <div class="btn-group btn-group-sm">
+                                {% if r.status == 'pendiente' and has_perm('manage_tools') %}
+                                <button class="btn btn-warning" title="Entregar herramienta"
+                                        onclick="deliverReservation({{ r.id }}, '{{ (r.responsible or '')|e }}')">
+                                    <i class="fas fa-hand-holding"></i>
+                                </button>
+                                {% endif %}
+                                {% if r.status == 'en_uso' %}
+                                {% set loan = r.tool.active_loan %}
+                                {% if loan and has_perm('manage_tools') %}
+                                <button class="btn btn-success" title="Registrar devolución"
+                                        onclick="openReturn({{ loan.id }}, '{{ r.tool.code }}', '{{ loan.employee_name|e }}')">
+                                    <i class="fas fa-undo"></i>
+                                </button>
+                                {% endif %}
+                                {% endif %}
+                                {% if r.status == 'pendiente' and (has_perm('manage_tools') or r.requested_by == current_user.id) %}
+                                <button class="btn btn-outline-danger" title="Cancelar apartado"
+                                        onclick="cancelReservation({{ r.id }})">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                                {% endif %}
+                                <a href="{{ url_for('tool_detail', tool_id=r.tool.id) }}"
+                                   class="btn btn-outline-secondary" title="Ver ficha">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="fas fa-calendar-check fa-3x text-muted mb-3"></i>
+            <p class="text-muted mb-3">No hay apartados que coincidan con los filtros.</p>
+            {% if has_perm('reserve_tools') %}
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#pickToolModal">
+                <i class="fas fa-plus me-1"></i>Apartar una herramienta
+            </button>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% include 'partials/tool_modals.html' %}
+
+<!-- Modal: elegir herramienta antes de apartar -->
+{% if has_perm('reserve_tools') %}
+<div class="modal fade" id="pickToolModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-toolbox me-2"></i>¿Qué herramienta vas a apartar?</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="text" class="form-control mb-3" id="pickToolSearch"
+                       placeholder="Buscar por código, nombre o serie..." onkeyup="filterPickList()">
+                <div class="list-group" id="pickToolList" style="max-height:340px;overflow-y:auto;">
+                    {% for t in tools %}
+                    <button type="button"
+                            class="list-group-item list-group-item-action d-flex justify-content-between align-items-center pick-tool-item"
+                            data-search="{{ (t.code ~ ' ' ~ t.name ~ ' ' ~ (t.serial_number or ''))|lower }}"
+                            onclick="pickTool({{ t.id }}, '{{ t.code }}', '{{ t.name|e }}')">
+                        <span>
+                            <strong>{{ t.name }}</strong><br>
+                            <small class="text-muted">{{ t.code }}{% if t.serial_number %} · {{ t.serial_number }}{% endif %}</small>
+                        </span>
+                        {% if t.status == 'disponible' %}
+                        <span class="badge bg-success">Disponible</span>
+                        {% elif t.status == 'prestada' %}
+                        <span class="badge bg-warning text-dark">Prestada</span>
+                        {% else %}
+                        <span class="badge bg-danger">En reparación</span>
+                        {% endif %}
+                    </button>
+                    {% endfor %}
+                </div>
+                <small class="text-muted d-block mt-2">
+                    Puedes apartar una herramienta aunque hoy esté prestada: el sistema valida que las
+                    fechas no se traslapen con otro compromiso.
+                </small>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const TOOLS_TODAY = "{{ today }}";
+</script>
+{% include 'partials/tool_scripts.html' %}
+<script>
+    /* Filtra la lista de selección de herramienta del modal de apartado. */
+    function filterPickList() {
+        var q = (document.getElementById('pickToolSearch').value || '').toLowerCase();
+        document.querySelectorAll('.pick-tool-item').forEach(function (item) {
+            item.style.display = item.dataset.search.indexOf(q) !== -1 ? '' : 'none';
+        });
+    }
+
+    /* Cierra el selector y abre el modal de apartado con la herramienta elegida. */
+    function pickTool(id, code, name) {
+        var picker = bootstrap.Modal.getInstance(document.getElementById('pickToolModal'));
+        if (picker) picker.hide();
+        setTimeout(function () { openReserve(id, code, name); }, 300);
+    }
+</script>
+{% endblock %}

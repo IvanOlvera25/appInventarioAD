@@ -1,5 +1,5 @@
 # app.py - Versión corregida para manejar migraciones
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, current_app
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, send_from_directory, current_app
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -15,7 +15,7 @@ import tempfile
 import pymysql
 import pymysql.cursors
 from contextlib import contextmanager
-from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog, SystemConfig, WarehouseLocation
+from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog, SystemConfig, WarehouseLocation, Tool, ToolLoan, ToolRepair, ToolReservation
 from functools import wraps
 import secrets  # <- si estás generando códigos de verificación
 from sqlalchemy import text
@@ -48,6 +48,8 @@ app.config['CACHE_DEFAULT_TIMEOUT'] = 60  # 60 segundos de cache por defecto
 # Configuración para archivos
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'xlsx', 'xls', 'csv'}
+ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+TOOL_PHOTOS_FOLDER = os.path.join(UPLOAD_FOLDER, 'herramientas')
 
 # Departamentos estáticos (cámbialos si necesitas)
 # Deja esto UNA sola vez en el archivo (quita las otras variantes)
@@ -99,6 +101,8 @@ def inject_globals():
 # Asegurarse de que el directorio existe
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
+if not os.path.exists(TOOL_PHOTOS_FOLDER):
+    os.makedirs(TOOL_PHOTOS_FOLDER)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
@@ -231,6 +235,100 @@ with app.app_context():
                 if not _fr_has:
                     _conn2.execute(_text2(_fr_ddl))
                     print(f"  ✅ Columna '{_fr_col}' agregada a fabric_roll")
+
+            # -- Módulo de herramientas: tool / tool_reservation / tool_repair / tool_loan --
+            # Sin FK a nivel de motor (igual que audit_log): las relaciones se resuelven
+            # en SQLAlchemy y así el orden de creación nunca bloquea el arranque.
+            _conn2.execute(_text2("""
+                CREATE TABLE IF NOT EXISTS `tool` (
+                    `id`               INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `code`             VARCHAR(50) NOT NULL UNIQUE,
+                    `name`             VARCHAR(200) NOT NULL,
+                    `serial_number`    VARCHAR(120) DEFAULT NULL,
+                    `brand`            VARCHAR(120) DEFAULT NULL,
+                    `model`            VARCHAR(120) DEFAULT NULL,
+                    `tool_type`        VARCHAR(100) DEFAULT NULL,
+                    `status`           VARCHAR(30) DEFAULT 'disponible',
+                    `condition`        VARCHAR(30) DEFAULT 'bueno',
+                    `cost`             FLOAT DEFAULT 0,
+                    `acquisition_date` DATE DEFAULT NULL,
+                    `photo`            VARCHAR(255) DEFAULT NULL,
+                    `location`         VARCHAR(120) DEFAULT NULL,
+                    `notes`            TEXT,
+                    `is_active`        TINYINT(1) NOT NULL DEFAULT 1,
+                    `created_at`       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    `created_by`       INT DEFAULT NULL,
+                    INDEX idx_tool_status (`status`),
+                    INDEX idx_tool_serial (`serial_number`),
+                    INDEX idx_tool_type (`tool_type`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+
+            _conn2.execute(_text2("""
+                CREATE TABLE IF NOT EXISTS `tool_reservation` (
+                    `id`            INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `tool_id`       INT NOT NULL,
+                    `area`          VARCHAR(120) NOT NULL,
+                    `responsible`   VARCHAR(200) DEFAULT NULL,
+                    `employee_id`   INT DEFAULT NULL,
+                    `start_date`    DATE NOT NULL,
+                    `end_date`      DATE NOT NULL,
+                    `purpose`       TEXT,
+                    `status`        VARCHAR(30) DEFAULT 'pendiente',
+                    `notes`         TEXT,
+                    `requested_by`  INT NOT NULL,
+                    `created_at`    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    `cancelled_at`  DATETIME DEFAULT NULL,
+                    `cancel_reason` VARCHAR(255) DEFAULT NULL,
+                    INDEX idx_resv_tool (`tool_id`),
+                    INDEX idx_resv_status (`status`),
+                    INDEX idx_resv_dates (`start_date`, `end_date`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+
+            _conn2.execute(_text2("""
+                CREATE TABLE IF NOT EXISTS `tool_repair` (
+                    `id`          INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `tool_id`     INT NOT NULL,
+                    `description` TEXT NOT NULL,
+                    `provider`    VARCHAR(200) DEFAULT NULL,
+                    `cost`        FLOAT DEFAULT 0,
+                    `start_date`  DATE NOT NULL,
+                    `end_date`    DATE DEFAULT NULL,
+                    `status`      VARCHAR(30) DEFAULT 'en_proceso',
+                    `notes`       TEXT,
+                    `created_by`  INT DEFAULT NULL,
+                    `created_at`  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_repair_tool (`tool_id`),
+                    INDEX idx_repair_status (`status`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+
+            _conn2.execute(_text2("""
+                CREATE TABLE IF NOT EXISTS `tool_loan` (
+                    `id`                   INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `tool_id`              INT NOT NULL,
+                    `employee_id`          INT DEFAULT NULL,
+                    `employee_name`        VARCHAR(200) NOT NULL,
+                    `area`                 VARCHAR(120) DEFAULT NULL,
+                    `fp_code`              VARCHAR(100) DEFAULT NULL,
+                    `checkout_date`        DATETIME NOT NULL,
+                    `expected_return_date` DATE DEFAULT NULL,
+                    `actual_return_date`   DATETIME DEFAULT NULL,
+                    `condition_on_return`  VARCHAR(30) DEFAULT NULL,
+                    `delivered_by`         INT DEFAULT NULL,
+                    `received_by`          INT DEFAULT NULL,
+                    `reservation_id`       INT DEFAULT NULL,
+                    `notes`                TEXT,
+                    `return_notes`         TEXT,
+                    `created_at`           DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_loan_tool (`tool_id`),
+                    INDEX idx_loan_open (`tool_id`, `actual_return_date`),
+                    INDEX idx_loan_expected (`expected_return_date`),
+                    INDEX idx_loan_reservation (`reservation_id`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            print("  ✅ Tablas del módulo de herramientas verificadas/creadas")
 
             _conn2.commit()
     except Exception as _e2:
@@ -1598,18 +1696,21 @@ atexit.register(stop_scheduler)
 ROLE_PERMISSIONS = {
     'requisitador': {
         'view_inventory', 'create_requisition', 'list_requisitions',
-        'view_project_deliveries', 'view_movements_readonly'
+        'view_project_deliveries', 'view_movements_readonly',
+        'view_tools', 'reserve_tools'
     },
     'almacenista': {
         'view_inventory', 'create_requisition', 'list_requisitions',
         'view_project_deliveries', 'view_movements_readonly',
-        'register_movements', 'view_material_usage_charts'
+        'register_movements', 'view_material_usage_charts',
+        'view_tools', 'reserve_tools', 'manage_tools'
     },
     'admin': {
         '*', 'view_inventory', 'create_requisition', 'list_requisitions',
         'view_project_deliveries', 'view_movements_readonly',
         'register_movements', 'view_material_usage_charts',
-        'view_costs', 'edit_records', 'edit_materials', 'delete_movement'
+        'view_costs', 'edit_records', 'edit_materials', 'delete_movement',
+        'view_tools', 'reserve_tools', 'manage_tools', 'delete_tools'
     }
 }
 
@@ -8630,6 +8731,1301 @@ def admin_delete_location(loc_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(e)})
+
+
+
+# ==============================================================================
+# ===== INVENTARIO DE HERRAMIENTAS =============================================
+# ==============================================================================
+# Secciones:
+#   1. Helpers (código, foto, estado, disponibilidad, traslapes)
+#   2. Páginas (listado, ficha, agenda de apartados, foto)
+#   3. API de herramientas (alta, edición, baja)
+#   4. API de préstamos (salida / devolución)
+#   5. API de reparaciones
+#   6. API de apartados (con validación de traslape)
+# ==============================================================================
+
+TOOL_STATUSES    = ('disponible', 'prestada', 'en_reparacion', 'baja')
+TOOL_CONDITIONS  = ('nuevo', 'bueno', 'regular', 'malo')
+
+
+# ── 1. Helpers ────────────────────────────────────────────────────────────────
+
+def _next_tool_code():
+    """Genera el siguiente código consecutivo HERR-0001."""
+    last = (Tool.query
+            .filter(Tool.code.like('HERR-%'))
+            .order_by(Tool.id.desc())
+            .first())
+    n = 1
+    if last and last.code:
+        try:
+            n = int(last.code.split('-')[-1]) + 1
+        except (ValueError, IndexError):
+            n = (Tool.query.count() or 0) + 1
+    # Evitar colisiones si alguien insertó códigos a mano
+    while Tool.query.filter_by(code=f'HERR-{n:04d}').first():
+        n += 1
+    return f'HERR-{n:04d}'
+
+
+def _allowed_image(filename):
+    return ('.' in filename and
+            filename.rsplit('.', 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS)
+
+
+def _save_tool_photo(file_storage, tool_code):
+    """Guarda la foto en uploads/herramientas y devuelve el nombre del archivo.
+    Devuelve None si no se envió archivo; lanza ValueError si el formato no sirve."""
+    if not file_storage or not file_storage.filename:
+        return None
+    if not _allowed_image(file_storage.filename):
+        raise ValueError('Formato de imagen no permitido. Usa PNG, JPG, GIF o WEBP.')
+
+    ext = file_storage.filename.rsplit('.', 1)[1].lower()
+    stamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+    filename = secure_filename(f'{tool_code}_{stamp}.{ext}')
+    file_storage.save(os.path.join(TOOL_PHOTOS_FOLDER, filename))
+    return filename
+
+
+def _delete_tool_photo(filename):
+    if not filename:
+        return
+    try:
+        path = os.path.join(TOOL_PHOTOS_FOLDER, filename)
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception as e:
+        app.logger.warning(f'No se pudo borrar la foto {filename}: {e}')
+
+
+def _parse_date(value):
+    """'2026-08-27' → date. Devuelve None si viene vacío o mal formado."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value).strip(), '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+def _parse_float(value, default=0.0):
+    try:
+        if value is None or str(value).strip() == '':
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _refresh_tool_status(tool):
+    """Recalcula el estado operativo a partir de préstamos y reparaciones abiertos.
+    No toca las herramientas dadas de baja."""
+    if tool.status == 'baja':
+        return tool.status
+
+    open_repair = (ToolRepair.query
+                   .filter_by(tool_id=tool.id, status='en_proceso')
+                   .first())
+    if open_repair:
+        tool.status = 'en_reparacion'
+        return tool.status
+
+    open_loan = (ToolLoan.query
+                 .filter_by(tool_id=tool.id, actual_return_date=None)
+                 .first())
+    tool.status = 'prestada' if open_loan else 'disponible'
+    return tool.status
+
+
+def _tool_busy_ranges(tool_id, exclude_reservation_id=None):
+    """Rangos de fechas en los que la herramienta está comprometida:
+    apartados vigentes + préstamos abiertos con fecha esperada de retorno."""
+    ranges = []
+
+    q = ToolReservation.query.filter(
+        ToolReservation.tool_id == tool_id,
+        ToolReservation.status.in_(['pendiente', 'en_uso'])
+    )
+    if exclude_reservation_id:
+        q = q.filter(ToolReservation.id != exclude_reservation_id)
+
+    listed_reservations = set()
+    for r in q.all():
+        listed_reservations.add(r.id)
+        ranges.append({
+            'kind': 'apartado',
+            'start': r.start_date,
+            'end': r.end_date,
+            'label': f'Apartada por {r.area}',
+            'reservation_id': r.id
+        })
+
+    for l in ToolLoan.query.filter_by(tool_id=tool_id, actual_return_date=None).all():
+        # Un préstamo entregado desde un apartado ya está representado por el rango de
+        # ese apartado; y si el apartado es el que se está reprogramando, su préstamo
+        # tampoco cuenta (si no, el apartado chocaría contra sí mismo).
+        if l.reservation_id and (l.reservation_id in listed_reservations
+                                 or l.reservation_id == exclude_reservation_id):
+            continue
+        start = l.checkout_date.date()
+        end = l.expected_return_date or start
+        ranges.append({
+            'kind': 'prestamo',
+            'start': start,
+            'end': max(end, start),
+            'label': f'Prestada a {l.employee_name}',
+            'loan_id': l.id
+        })
+
+    return sorted(ranges, key=lambda r: r['start'])
+
+
+def _find_reservation_conflict(tool_id, start_date, end_date, exclude_reservation_id=None):
+    """Devuelve el primer rango que se traslapa con [start_date, end_date], o None.
+    Dos rangos se traslapan si inicio_a <= fin_b y fin_a >= inicio_b."""
+    for busy in _tool_busy_ranges(tool_id, exclude_reservation_id):
+        if start_date <= busy['end'] and end_date >= busy['start']:
+            return busy
+    return None
+
+
+def _tool_available_from(tool):
+    """Fecha a partir de la cual la herramienta vuelve a estar libre.
+    None = disponible desde hoy."""
+    if tool.status == 'baja':
+        return None
+
+    open_repair = next((r for r in tool.repairs if r.status == 'en_proceso'), None)
+    if open_repair:
+        # Si la reparación no tiene fecha estimada de salida, no podemos prometer una fecha
+        return open_repair.end_date
+
+    ranges = _tool_busy_ranges(tool.id)
+    today = datetime.utcnow().date()
+    # Solo importan los compromisos que siguen vigentes hoy o a futuro
+    vigentes = [r for r in ranges if r['end'] >= today]
+    if not vigentes:
+        return None
+    return max(r['end'] for r in vigentes) + timedelta(days=1)
+
+
+def _tool_areas():
+    """Áreas configuradas en el catálogo de ubicaciones (tipo 'area')."""
+    try:
+        return (WarehouseLocation.query
+                .filter_by(location_type='area', is_active=True)
+                .order_by(WarehouseLocation.sort_order, WarehouseLocation.name)
+                .all())
+    except Exception:
+        return []
+
+
+def _tool_to_dict(tool):
+    can_see_cost = has_perm(current_user, 'view_costs')
+    available_from = _tool_available_from(tool)
+    return {
+        'id': tool.id,
+        'code': tool.code,
+        'name': tool.name,
+        'serial_number': tool.serial_number or '',
+        'brand': tool.brand or '',
+        'model': tool.model or '',
+        'tool_type': tool.tool_type or '',
+        'status': tool.status,
+        'status_label': tool.status_label,
+        'condition': tool.condition,
+        'condition_label': tool.condition_label,
+        'cost': tool.cost if can_see_cost else None,
+        'acquisition_date': tool.acquisition_date.strftime('%Y-%m-%d') if tool.acquisition_date else '',
+        'photo_url': url_for('tool_photo', filename=tool.photo) if tool.photo else None,
+        'location': tool.location or '',
+        'notes': tool.notes or '',
+        'available_from': available_from.strftime('%Y-%m-%d') if available_from else None,
+        'total_repair_cost': tool.total_repair_cost if can_see_cost else None,
+    }
+
+
+# ── 2. Páginas ────────────────────────────────────────────────────────────────
+
+@app.route('/tools')
+@login_required
+@permission_required('view_tools')
+def tools():
+    """Listado del inventario de herramientas con filtros."""
+    search      = (request.args.get('search') or '').strip()
+    f_status    = (request.args.get('status') or '').strip()
+    f_type      = (request.args.get('type') or '').strip()
+    f_condition = (request.args.get('condition') or '').strip()
+    show_baja   = request.args.get('show_baja') == '1'
+
+    query = Tool.query
+    if not show_baja:
+        query = query.filter(Tool.is_active == True)  # noqa: E712
+    if search:
+        like = f'%{search}%'
+        query = query.filter(db.or_(
+            Tool.code.like(like),
+            Tool.name.like(like),
+            Tool.serial_number.like(like),
+            Tool.brand.like(like),
+            Tool.model.like(like),
+        ))
+    if f_status:
+        query = query.filter(Tool.status == f_status)
+    if f_type:
+        query = query.filter(Tool.tool_type == f_type)
+    if f_condition:
+        query = query.filter(Tool.condition == f_condition)
+
+    tools_list = query.order_by(Tool.code).all()
+
+    # Fecha de liberación por herramienta (para la columna "Disponible")
+    available_map = {t.id: _tool_available_from(t) for t in tools_list}
+
+    # Tipos existentes, para poblar el filtro y el datalist del formulario
+    types = [t[0] for t in db.session.query(Tool.tool_type)
+             .filter(Tool.tool_type.isnot(None), Tool.tool_type != '')
+             .distinct().order_by(Tool.tool_type).all()]
+
+    # Contadores del encabezado
+    base = Tool.query.filter(Tool.is_active == True)  # noqa: E712
+    stats = {
+        'total':         base.count(),
+        'disponible':    base.filter(Tool.status == 'disponible').count(),
+        'prestada':      base.filter(Tool.status == 'prestada').count(),
+        'en_reparacion': base.filter(Tool.status == 'en_reparacion').count(),
+    }
+
+    # Préstamos vencidos (siguen afuera y ya pasó la fecha comprometida)
+    today = datetime.utcnow().date()
+    stats['vencidos'] = (ToolLoan.query
+                         .filter(ToolLoan.actual_return_date.is_(None),
+                                 ToolLoan.expected_return_date.isnot(None),
+                                 ToolLoan.expected_return_date < today)
+                         .count())
+
+    return render_template('tools.html',
+                           tools=tools_list,
+                           available_map=available_map,
+                           types=types,
+                           stats=stats,
+                           areas=_tool_areas(),
+                           today=today,
+                           statuses=TOOL_STATUSES,
+                           conditions=TOOL_CONDITIONS,
+                           show_baja=show_baja)
+
+
+@app.route('/tools/<int:tool_id>')
+@login_required
+@permission_required('view_tools')
+def tool_detail(tool_id):
+    """Ficha de la herramienta: datos, foto, historial de préstamos,
+    historial de reparaciones y apartados."""
+    tool = Tool.query.get_or_404(tool_id)
+
+    loans = (ToolLoan.query
+             .filter_by(tool_id=tool.id)
+             .order_by(ToolLoan.checkout_date.desc())
+             .all())
+    repairs = (ToolRepair.query
+               .filter_by(tool_id=tool.id)
+               .order_by(ToolRepair.start_date.desc())
+               .all())
+    reservations = (ToolReservation.query
+                    .filter_by(tool_id=tool.id)
+                    .order_by(ToolReservation.start_date.desc())
+                    .all())
+
+    today = datetime.utcnow().date()
+    return render_template('tool_detail.html',
+                           tool=tool,
+                           loans=loans,
+                           repairs=repairs,
+                           reservations=reservations,
+                           active_loan=next((l for l in loans if l.actual_return_date is None), None),
+                           open_repair=next((r for r in repairs if r.status == 'en_proceso'), None),
+                           available_from=_tool_available_from(tool),
+                           busy_ranges=_tool_busy_ranges(tool.id),
+                           areas=_tool_areas(),
+                           today=today,
+                           types=[t[0] for t in db.session.query(Tool.tool_type)
+                                  .filter(Tool.tool_type.isnot(None), Tool.tool_type != '')
+                                  .distinct().all()],
+                           statuses=TOOL_STATUSES,
+                           conditions=TOOL_CONDITIONS)
+
+
+@app.route('/tools/reservations')
+@login_required
+@permission_required('view_tools')
+def tool_reservations():
+    """Agenda de apartados: qué herramienta está comprometida, para qué área,
+    desde cuándo y hasta cuándo."""
+    f_status = (request.args.get('status') or 'vigentes').strip()
+    f_area   = (request.args.get('area') or '').strip()
+    f_from   = _parse_date(request.args.get('date_from'))
+    f_to     = _parse_date(request.args.get('date_to'))
+
+    query = ToolReservation.query.join(Tool)
+
+    if f_status == 'vigentes':
+        query = query.filter(ToolReservation.status.in_(['pendiente', 'en_uso']))
+    elif f_status and f_status != 'todos':
+        query = query.filter(ToolReservation.status == f_status)
+
+    if f_area:
+        query = query.filter(ToolReservation.area == f_area)
+    if f_from:
+        query = query.filter(ToolReservation.end_date >= f_from)
+    if f_to:
+        query = query.filter(ToolReservation.start_date <= f_to)
+
+    reservations = query.order_by(ToolReservation.start_date, Tool.code).all()
+
+    today = datetime.utcnow().date()
+    stats = {
+        'vigentes':  ToolReservation.query.filter(ToolReservation.status.in_(['pendiente', 'en_uso'])).count(),
+        'hoy':       ToolReservation.query.filter(ToolReservation.status == 'pendiente',
+                                                  ToolReservation.start_date == today).count(),
+        'vencidos':  ToolReservation.query.filter(ToolReservation.status == 'en_uso',
+                                                  ToolReservation.end_date < today).count(),
+    }
+
+    # Herramientas seleccionables al crear un apartado desde esta pantalla
+    selectable = (Tool.query
+                  .filter(Tool.is_active == True, Tool.status != 'baja')  # noqa: E712
+                  .order_by(Tool.code)
+                  .all())
+
+    return render_template('tool_reservations.html',
+                           reservations=reservations,
+                           stats=stats,
+                           areas=_tool_areas(),
+                           tools=selectable,
+                           today=today,
+                           f_status=f_status,
+                           f_area=f_area)
+
+
+@app.route('/tools/photo/<path:filename>')
+@login_required
+def tool_photo(filename):
+    """Sirve la foto de una herramienta desde uploads/herramientas."""
+    return send_from_directory(os.path.abspath(TOOL_PHOTOS_FOLDER), filename)
+
+
+# ── 3. API de herramientas ────────────────────────────────────────────────────
+
+@app.route('/tools/add', methods=['POST'])
+@login_required
+@permission_required('manage_tools')
+def add_tool():
+    """Alta de herramienta (formulario multipart: incluye la foto)."""
+    try:
+        name = (request.form.get('name') or '').strip()
+        if not name:
+            flash('El nombre de la herramienta es obligatorio', 'danger')
+            return redirect(url_for('tools'))
+
+        serial = (request.form.get('serial_number') or '').strip() or None
+        if serial and Tool.query.filter_by(serial_number=serial).first():
+            flash(f'Ya existe una herramienta con el número de serie {serial}', 'warning')
+            return redirect(url_for('tools'))
+
+        code = _next_tool_code()
+
+        try:
+            photo = _save_tool_photo(request.files.get('photo'), code)
+        except ValueError as e:
+            flash(str(e), 'danger')
+            return redirect(url_for('tools'))
+
+        condition = (request.form.get('condition') or 'bueno').strip()
+        tool = Tool(
+            code=code,
+            name=name,
+            serial_number=serial,
+            brand=(request.form.get('brand') or '').strip() or None,
+            model=(request.form.get('model') or '').strip() or None,
+            tool_type=(request.form.get('tool_type') or '').strip() or None,
+            condition=condition if condition in TOOL_CONDITIONS else 'bueno',
+            status='disponible',
+            cost=_parse_float(request.form.get('cost')),
+            acquisition_date=_parse_date(request.form.get('acquisition_date')),
+            photo=photo,
+            location=(request.form.get('location') or '').strip() or None,
+            notes=(request.form.get('notes') or '').strip() or None,
+            created_by=current_user.id
+        )
+        db.session.add(tool)
+        db.session.flush()
+
+        log_change('tool', tool.id, 'CREATE', notes=f'Alta de herramienta {code} - {name}')
+        db.session.commit()
+
+        flash(f'Herramienta {code} registrada correctamente', 'success')
+        return redirect(url_for('tool_detail', tool_id=tool.id))
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error creando herramienta: {e}')
+        flash(f'Error al registrar la herramienta: {e}', 'danger')
+        return redirect(url_for('tools'))
+
+
+@app.route('/tools/<int:tool_id>/edit', methods=['POST'])
+@login_required
+@permission_required('manage_tools')
+def edit_tool(tool_id):
+    """Edición de los datos de la herramienta."""
+    tool = Tool.query.get_or_404(tool_id)
+    try:
+        name = (request.form.get('name') or '').strip()
+        if not name:
+            flash('El nombre de la herramienta es obligatorio', 'danger')
+            return redirect(url_for('tool_detail', tool_id=tool.id))
+
+        serial = (request.form.get('serial_number') or '').strip() or None
+        if serial:
+            dup = Tool.query.filter(Tool.serial_number == serial, Tool.id != tool.id).first()
+            if dup:
+                flash(f'El número de serie {serial} ya está asignado a {dup.code}', 'warning')
+                return redirect(url_for('tool_detail', tool_id=tool.id))
+
+        condition = (request.form.get('condition') or tool.condition).strip()
+        new_values = {
+            'name':             name,
+            'serial_number':    serial,
+            'brand':            (request.form.get('brand') or '').strip() or None,
+            'model':            (request.form.get('model') or '').strip() or None,
+            'tool_type':        (request.form.get('tool_type') or '').strip() or None,
+            'condition':        condition if condition in TOOL_CONDITIONS else tool.condition,
+            'cost':             _parse_float(request.form.get('cost'), tool.cost or 0),
+            'acquisition_date': _parse_date(request.form.get('acquisition_date')),
+            'location':         (request.form.get('location') or '').strip() or None,
+            'notes':            (request.form.get('notes') or '').strip() or None,
+        }
+
+        changed = {f: (getattr(tool, f), v) for f, v in new_values.items()}
+        for field, value in new_values.items():
+            setattr(tool, field, value)
+
+        # Reemplazo de foto (opcional)
+        new_photo_file = request.files.get('photo')
+        if new_photo_file and new_photo_file.filename:
+            try:
+                new_photo = _save_tool_photo(new_photo_file, tool.code)
+            except ValueError as e:
+                db.session.rollback()
+                flash(str(e), 'danger')
+                return redirect(url_for('tool_detail', tool_id=tool.id))
+            old_photo = tool.photo
+            tool.photo = new_photo
+            changed['photo'] = (old_photo, new_photo)
+            _delete_tool_photo(old_photo)
+
+        log_change('tool', tool.id, 'UPDATE', changed_fields=changed,
+                   notes=f'Edición de {tool.code}')
+        db.session.commit()
+
+        flash('Herramienta actualizada', 'success')
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error editando herramienta {tool_id}: {e}')
+        flash(f'Error al actualizar: {e}', 'danger')
+
+    return redirect(url_for('tool_detail', tool_id=tool_id))
+
+
+@app.route('/api/tools/<int:tool_id>/toggle-active', methods=['POST'])
+@login_required
+@permission_required('manage_tools')
+def toggle_tool_active(tool_id):
+    """Da de baja (o reactiva) una herramienta. La baja conserva todo el historial."""
+    tool = Tool.query.get_or_404(tool_id)
+    try:
+        data = request.get_json(silent=True) or {}
+
+        if tool.is_active:
+            if tool.active_loan:
+                return jsonify({'success': False,
+                                'message': 'No se puede dar de baja: la herramienta está prestada. '
+                                           'Registra la devolución primero.'}), 400
+            tool.is_active = False
+            tool.status = 'baja'
+            reason = (data.get('reason') or '').strip()
+            if reason:
+                tool.notes = f'{tool.notes}\n[Baja] {reason}' if tool.notes else f'[Baja] {reason}'
+            # Cancelar apartados futuros que ya no se podrán cumplir
+            for r in ToolReservation.query.filter(
+                    ToolReservation.tool_id == tool.id,
+                    ToolReservation.status.in_(['pendiente', 'en_uso'])).all():
+                r.status = 'cancelada'
+                r.cancelled_at = datetime.utcnow()
+                r.cancel_reason = 'Herramienta dada de baja'
+            msg = f'{tool.code} dada de baja'
+        else:
+            tool.is_active = True
+            tool.status = 'disponible'
+            _refresh_tool_status(tool)
+            msg = f'{tool.code} reactivada'
+
+        log_change('tool', tool.id, 'UPDATE',
+                   changed_fields={'is_active': (not tool.is_active, tool.is_active)},
+                   notes=msg)
+        db.session.commit()
+        return jsonify({'success': True, 'message': msg, 'is_active': tool.is_active})
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error en baja/alta de herramienta {tool_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tools/<int:tool_id>/delete', methods=['POST', 'DELETE'])
+@login_required
+@permission_required('delete_tools')
+def delete_tool(tool_id):
+    """Borrado definitivo. Solo si la herramienta no tiene historial;
+    en cualquier otro caso se debe usar la baja lógica."""
+    tool = Tool.query.get_or_404(tool_id)
+    try:
+        loans = ToolLoan.query.filter_by(tool_id=tool.id).count()
+        repairs = ToolRepair.query.filter_by(tool_id=tool.id).count()
+        reservations = ToolReservation.query.filter_by(tool_id=tool.id).count()
+
+        if loans or repairs or reservations:
+            return jsonify({
+                'success': False,
+                'message': (f'{tool.code} tiene historial ({loans} préstamos, {repairs} reparaciones, '
+                            f'{reservations} apartados). Usa "Dar de baja" para conservarlo.')
+            }), 400
+
+        code, photo = tool.code, tool.photo
+        log_change('tool', tool.id, 'DELETE', notes=f'Eliminación de {code}')
+        db.session.delete(tool)
+        db.session.commit()
+        _delete_tool_photo(photo)
+
+        return jsonify({'success': True, 'message': f'{code} eliminada'})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error eliminando herramienta {tool_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tools/<int:tool_id>/details')
+@login_required
+@permission_required('view_tools')
+def api_tool_details(tool_id):
+    """Datos de la herramienta + sus rangos ocupados (para modales y validaciones)."""
+    tool = Tool.query.get_or_404(tool_id)
+    data = _tool_to_dict(tool)
+    data['busy_ranges'] = [{
+        'kind': b['kind'],
+        'label': b['label'],
+        'start': b['start'].strftime('%Y-%m-%d'),
+        'end': b['end'].strftime('%Y-%m-%d'),
+    } for b in _tool_busy_ranges(tool.id)]
+    return jsonify({'success': True, 'tool': data})
+
+
+@app.route('/api/tools/list')
+@login_required
+@permission_required('view_tools')
+def api_tools_list():
+    """Lista compacta para dropdowns."""
+    only_available = request.args.get('only_available') == '1'
+    query = Tool.query.filter(Tool.is_active == True)  # noqa: E712
+    if only_available:
+        query = query.filter(Tool.status == 'disponible')
+    return jsonify({
+        'success': True,
+        'tools': [{
+            'id': t.id,
+            'code': t.code,
+            'name': t.name,
+            'status': t.status,
+            'status_label': t.status_label,
+            'serial_number': t.serial_number or '',
+        } for t in query.order_by(Tool.code).all()]
+    })
+
+
+@app.route('/api/tools/export')
+@login_required
+@permission_required('view_tools')
+def export_tools():
+    """Exporta el inventario de herramientas a Excel (inventario + historiales)."""
+    tools_list = Tool.query.order_by(Tool.code).all()
+    can_see_cost = has_perm(current_user, 'view_costs')
+
+    inventario = []
+    for t in tools_list:
+        row = {
+            'Código': t.code,
+            'Nombre': t.name,
+            'No. Serie': t.serial_number or '',
+            'Marca': t.brand or '',
+            'Modelo': t.model or '',
+            'Tipo': t.tool_type or '',
+            'Estado': t.status_label,
+            'Condición': t.condition_label,
+            'Fecha Adquisición': t.acquisition_date.strftime('%Y-%m-%d') if t.acquisition_date else '',
+            'Ubicación': t.location or '',
+            'Activa': 'Sí' if t.is_active else 'No',
+        }
+        if can_see_cost:
+            row['Costo'] = t.cost or 0
+            row['Costo Reparaciones'] = t.total_repair_cost
+        inventario.append(row)
+
+    prestamos = []
+    for l in ToolLoan.query.order_by(ToolLoan.checkout_date.desc()).all():
+        prestamos.append({
+            'Herramienta': l.tool.code if l.tool else '',
+            'Nombre': l.tool.name if l.tool else '',
+            'Prestada a': l.employee_name,
+            'Área': l.area or '',
+            'FP': l.fp_code or '',
+            'Salió': l.checkout_date.strftime('%Y-%m-%d %H:%M'),
+            'Retorno Esperado': l.expected_return_date.strftime('%Y-%m-%d') if l.expected_return_date else '',
+            'Regresó': l.actual_return_date.strftime('%Y-%m-%d %H:%M') if l.actual_return_date else '',
+            'Estado Devolución': l.condition_on_return or '',
+            'Días Fuera': l.days_out,
+            'Notas': l.notes or '',
+        })
+
+    reparaciones = []
+    for r in ToolRepair.query.order_by(ToolRepair.start_date.desc()).all():
+        row = {
+            'Herramienta': r.tool.code if r.tool else '',
+            'Nombre': r.tool.name if r.tool else '',
+            'Descripción': r.description,
+            'Proveedor': r.provider or '',
+            'Inicio': r.start_date.strftime('%Y-%m-%d') if r.start_date else '',
+            'Fin': r.end_date.strftime('%Y-%m-%d') if r.end_date else '',
+            'Estado': r.status,
+        }
+        if can_see_cost:
+            row['Costo'] = r.cost or 0
+        reparaciones.append(row)
+
+    apartados = []
+    for a in ToolReservation.query.order_by(ToolReservation.start_date.desc()).all():
+        apartados.append({
+            'Herramienta': a.tool.code if a.tool else '',
+            'Nombre': a.tool.name if a.tool else '',
+            'Área': a.area,
+            'Responsable': a.responsible or '',
+            'Requerida Desde': a.start_date.strftime('%Y-%m-%d'),
+            'Regresa': a.end_date.strftime('%Y-%m-%d'),
+            'Estado': a.status_label,
+            'Motivo': a.purpose or '',
+            'Solicitó': a.requester.full_name if a.requester else '',
+        })
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'inventario_herramientas_{timestamp}.xlsx'
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+    with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+        pd.DataFrame(inventario).to_excel(writer, index=False, sheet_name='Herramientas')
+        pd.DataFrame(prestamos).to_excel(writer, index=False, sheet_name='Préstamos')
+        pd.DataFrame(reparaciones).to_excel(writer, index=False, sheet_name='Reparaciones')
+        pd.DataFrame(apartados).to_excel(writer, index=False, sheet_name='Apartados')
+
+    return send_file(filepath, as_attachment=True, download_name=filename)
+
+
+# ── 4. API de préstamos ───────────────────────────────────────────────────────
+
+@app.route('/api/tools/<int:tool_id>/loan', methods=['POST'])
+@login_required
+@permission_required('manage_tools')
+def register_tool_loan(tool_id):
+    """Registra la salida de una herramienta: a quién, cuándo salió y cuándo debe volver."""
+    tool = Tool.query.get_or_404(tool_id)
+    try:
+        data = request.get_json(silent=True) or request.form
+
+        if not tool.is_active or tool.status == 'baja':
+            return jsonify({'success': False, 'message': f'{tool.code} está dada de baja'}), 400
+        if tool.active_loan:
+            return jsonify({'success': False,
+                            'message': f'{tool.code} ya está prestada a {tool.active_loan.employee_name}'}), 400
+        if tool.open_repair:
+            return jsonify({'success': False, 'message': f'{tool.code} está en reparación'}), 400
+
+        employee_name = (data.get('employee_name') or '').strip()
+        if not employee_name:
+            return jsonify({'success': False, 'message': 'Indica a quién se le presta la herramienta'}), 400
+
+        employee_id = data.get('employee_id')
+        try:
+            employee_id = int(employee_id) if employee_id else None
+        except (TypeError, ValueError):
+            employee_id = None
+
+        checkout = _parse_date(data.get('checkout_date'))
+        checkout_dt = (datetime.combine(checkout, datetime.utcnow().time())
+                       if checkout else datetime.utcnow())
+        expected = _parse_date(data.get('expected_return_date'))
+        if expected and expected < checkout_dt.date():
+            return jsonify({'success': False,
+                            'message': 'La fecha de retorno no puede ser anterior a la de salida'}), 400
+
+        reservation_id = data.get('reservation_id')
+        reservation = None
+        if reservation_id:
+            reservation = ToolReservation.query.get(int(reservation_id))
+
+        loan = ToolLoan(
+            tool_id=tool.id,
+            employee_id=employee_id,
+            employee_name=employee_name,
+            area=(data.get('area') or '').strip() or None,
+            fp_code=(data.get('fp_code') or '').strip() or None,
+            checkout_date=checkout_dt,
+            expected_return_date=expected,
+            delivered_by=current_user.id,
+            reservation_id=reservation.id if reservation else None,
+            notes=(data.get('notes') or '').strip() or None
+        )
+        db.session.add(loan)
+
+        if reservation and reservation.status == 'pendiente':
+            reservation.status = 'en_uso'
+
+        tool.status = 'prestada'
+        db.session.flush()
+
+        log_change('tool_loan', loan.id, 'CREATE',
+                   notes=f'Préstamo de {tool.code} a {employee_name}')
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f'{tool.code} entregada a {employee_name}',
+            'loan_id': loan.id
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error registrando préstamo de herramienta {tool_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tools/loans/<int:loan_id>/return', methods=['POST'])
+@login_required
+@permission_required('manage_tools')
+def return_tool_loan(loan_id):
+    """Registra la devolución: cuándo regresó y en qué estado."""
+    loan = ToolLoan.query.get_or_404(loan_id)
+    try:
+        if loan.actual_return_date:
+            return jsonify({'success': False, 'message': 'Este préstamo ya fue devuelto'}), 400
+
+        data = request.get_json(silent=True) or request.form
+
+        return_date = _parse_date(data.get('return_date'))
+        return_dt = (datetime.combine(return_date, datetime.utcnow().time())
+                     if return_date else datetime.utcnow())
+        if return_dt < loan.checkout_date:
+            return jsonify({'success': False,
+                            'message': 'La fecha de devolución no puede ser anterior a la de salida'}), 400
+
+        condition = (data.get('condition_on_return') or 'bueno').strip()
+        loan.actual_return_date = return_dt
+        loan.condition_on_return = condition
+        loan.received_by = current_user.id
+        loan.return_notes = (data.get('return_notes') or '').strip() or None
+
+        tool = loan.tool
+        # El estado físico de la herramienta se actualiza con lo observado al recibirla
+        if condition in TOOL_CONDITIONS:
+            tool.condition = condition
+
+        # Cerrar el apartado que originó el préstamo
+        if loan.reservation and loan.reservation.status == 'en_uso':
+            loan.reservation.status = 'completada'
+
+        # ¿Entra directo a reparación?
+        if str(data.get('send_to_repair') or '').lower() in ('1', 'true', 'on', 'yes'):
+            repair = ToolRepair(
+                tool_id=tool.id,
+                description=(data.get('repair_description') or
+                             f'Daño reportado al devolver el préstamo #{loan.id}'),
+                start_date=return_dt.date(),
+                status='en_proceso',
+                cost=_parse_float(data.get('repair_cost')),
+                provider=(data.get('repair_provider') or '').strip() or None,
+                created_by=current_user.id
+            )
+            db.session.add(repair)
+            db.session.flush()
+
+        _refresh_tool_status(tool)
+
+        log_change('tool_loan', loan.id, 'UPDATE',
+                   changed_fields={'actual_return_date': (None, return_dt.strftime('%Y-%m-%d %H:%M'))},
+                   notes=f'Devolución de {tool.code} por {loan.employee_name}')
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f'Devolución registrada. {tool.code}: {tool.status_label}',
+            'tool_status': tool.status
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error registrando devolución {loan_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tools/loans/<int:loan_id>/delete', methods=['POST', 'DELETE'])
+@login_required
+@permission_required('delete_tools')
+def delete_tool_loan(loan_id):
+    """Elimina un registro de préstamo capturado por error (solo admin)."""
+    loan = ToolLoan.query.get_or_404(loan_id)
+    try:
+        tool = loan.tool
+        log_change('tool_loan', loan.id, 'DELETE',
+                   notes=f'Eliminación de préstamo de {tool.code} a {loan.employee_name}')
+        db.session.delete(loan)
+        db.session.flush()
+        _refresh_tool_status(tool)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Préstamo eliminado'})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error eliminando préstamo {loan_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ── 5. API de reparaciones ────────────────────────────────────────────────────
+
+@app.route('/api/tools/<int:tool_id>/repairs', methods=['POST'])
+@login_required
+@permission_required('manage_tools')
+def register_tool_repair(tool_id):
+    """Manda la herramienta a reparación (o registra una reparación ya cerrada)."""
+    tool = Tool.query.get_or_404(tool_id)
+    try:
+        data = request.get_json(silent=True) or request.form
+
+        description = (data.get('description') or '').strip()
+        if not description:
+            return jsonify({'success': False, 'message': 'Describe la falla o el trabajo realizado'}), 400
+
+        if tool.active_loan:
+            return jsonify({'success': False,
+                            'message': f'{tool.code} está prestada. Registra la devolución primero.'}), 400
+        if tool.open_repair:
+            return jsonify({'success': False, 'message': f'{tool.code} ya tiene una reparación en proceso'}), 400
+
+        start = _parse_date(data.get('start_date')) or datetime.utcnow().date()
+        end = _parse_date(data.get('end_date'))
+        if end and end < start:
+            return jsonify({'success': False,
+                            'message': 'La fecha de fin no puede ser anterior a la de inicio'}), 400
+
+        # Si viene fecha de fin, la reparación se registra ya cerrada
+        status = 'completada' if end else 'en_proceso'
+
+        repair = ToolRepair(
+            tool_id=tool.id,
+            description=description,
+            provider=(data.get('provider') or '').strip() or None,
+            cost=_parse_float(data.get('cost')),
+            start_date=start,
+            end_date=end,
+            status=status,
+            notes=(data.get('notes') or '').strip() or None,
+            created_by=current_user.id
+        )
+        db.session.add(repair)
+        db.session.flush()
+
+        condition = (data.get('condition') or '').strip()
+        if condition in TOOL_CONDITIONS:
+            tool.condition = condition
+
+        _refresh_tool_status(tool)
+
+        log_change('tool_repair', repair.id, 'CREATE',
+                   notes=f'Reparación de {tool.code}: {description[:80]}')
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': (f'Reparación registrada. {tool.code}: {tool.status_label}'),
+            'repair_id': repair.id,
+            'tool_status': tool.status
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error registrando reparación de {tool_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tools/repairs/<int:repair_id>/complete', methods=['POST'])
+@login_required
+@permission_required('manage_tools')
+def complete_tool_repair(repair_id):
+    """Cierra una reparación en proceso con su costo final."""
+    repair = ToolRepair.query.get_or_404(repair_id)
+    try:
+        if repair.status != 'en_proceso':
+            return jsonify({'success': False, 'message': 'Esta reparación ya está cerrada'}), 400
+
+        data = request.get_json(silent=True) or request.form
+
+        end = _parse_date(data.get('end_date')) or datetime.utcnow().date()
+        if end < repair.start_date:
+            return jsonify({'success': False,
+                            'message': 'La fecha de fin no puede ser anterior a la de inicio'}), 400
+
+        cancelled = str(data.get('cancelled') or '').lower() in ('1', 'true', 'on', 'yes')
+
+        old_cost = repair.cost
+        repair.end_date = end
+        repair.status = 'cancelada' if cancelled else 'completada'
+        if data.get('cost') is not None and str(data.get('cost')).strip() != '':
+            repair.cost = _parse_float(data.get('cost'), repair.cost or 0)
+        if (data.get('provider') or '').strip():
+            repair.provider = data.get('provider').strip()
+        if (data.get('notes') or '').strip():
+            repair.notes = data.get('notes').strip()
+
+        tool = repair.tool
+        condition = (data.get('condition') or '').strip()
+        if condition in TOOL_CONDITIONS:
+            tool.condition = condition
+        _refresh_tool_status(tool)
+
+        log_change('tool_repair', repair.id, 'UPDATE',
+                   changed_fields={'status': ('en_proceso', repair.status),
+                                   'cost': (old_cost, repair.cost)},
+                   notes=f'Cierre de reparación de {tool.code}')
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f'Reparación cerrada. {tool.code}: {tool.status_label}',
+            'tool_status': tool.status
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error cerrando reparación {repair_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tools/repairs/<int:repair_id>/delete', methods=['POST', 'DELETE'])
+@login_required
+@permission_required('delete_tools')
+def delete_tool_repair(repair_id):
+    """Elimina un registro de reparación capturado por error (solo admin)."""
+    repair = ToolRepair.query.get_or_404(repair_id)
+    try:
+        tool = repair.tool
+        log_change('tool_repair', repair.id, 'DELETE',
+                   notes=f'Eliminación de reparación de {tool.code}')
+        db.session.delete(repair)
+        db.session.flush()
+        _refresh_tool_status(tool)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Reparación eliminada'})
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error eliminando reparación {repair_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+# ── 6. API de apartados ───────────────────────────────────────────────────────
+
+@app.route('/api/tools/<int:tool_id>/availability')
+@login_required
+@permission_required('view_tools')
+def api_tool_availability(tool_id):
+    """Rangos ocupados de la herramienta y, si se piden fechas, si hay traslape."""
+    tool = Tool.query.get_or_404(tool_id)
+
+    start = _parse_date(request.args.get('start_date'))
+    end = _parse_date(request.args.get('end_date'))
+    exclude = request.args.get('exclude_reservation_id')
+    exclude = int(exclude) if exclude and exclude.isdigit() else None
+
+    busy = _tool_busy_ranges(tool.id, exclude)
+    available_from = _tool_available_from(tool)
+
+    conflict = None
+    if start and end and end >= start:
+        found = _find_reservation_conflict(tool.id, start, end, exclude)
+        if found:
+            conflict = {
+                'label': found['label'],
+                'start': found['start'].strftime('%Y-%m-%d'),
+                'end': found['end'].strftime('%Y-%m-%d'),
+            }
+
+    return jsonify({
+        'success': True,
+        'tool': {'id': tool.id, 'code': tool.code, 'name': tool.name,
+                 'status': tool.status, 'status_label': tool.status_label},
+        'available_from': available_from.strftime('%Y-%m-%d') if available_from else None,
+        'busy_ranges': [{
+            'kind': b['kind'],
+            'label': b['label'],
+            'start': b['start'].strftime('%Y-%m-%d'),
+            'end': b['end'].strftime('%Y-%m-%d'),
+        } for b in busy],
+        'conflict': conflict,
+        'is_free': conflict is None if (start and end) else None
+    })
+
+
+@app.route('/api/tools/<int:tool_id>/reservations', methods=['POST'])
+@login_required
+@permission_required('reserve_tools')
+def create_tool_reservation(tool_id):
+    """Aparta una herramienta para un área en un rango de fechas.
+    No requiere FP: solo el día en que debe estar lista y el día en que regresa."""
+    tool = Tool.query.get_or_404(tool_id)
+    try:
+        data = request.get_json(silent=True) or request.form
+
+        if not tool.is_active or tool.status == 'baja':
+            return jsonify({'success': False, 'message': f'{tool.code} está dada de baja'}), 400
+
+        area = (data.get('area') or '').strip()
+        if not area:
+            return jsonify({'success': False, 'message': 'Indica el área que aparta la herramienta'}), 400
+
+        start = _parse_date(data.get('start_date'))
+        end = _parse_date(data.get('end_date'))
+        if not start or not end:
+            return jsonify({'success': False,
+                            'message': 'Indica la fecha en que se necesita y la fecha de regreso'}), 400
+        if end < start:
+            return jsonify({'success': False,
+                            'message': 'La fecha de regreso no puede ser anterior a la fecha en que se necesita'}), 400
+
+        conflict = _find_reservation_conflict(tool.id, start, end)
+        if conflict:
+            return jsonify({
+                'success': False,
+                'conflict': True,
+                'message': (f"{tool.code} no está libre en esas fechas: {conflict['label']} "
+                            f"del {conflict['start'].strftime('%d/%m/%Y')} "
+                            f"al {conflict['end'].strftime('%d/%m/%Y')}."),
+                'available_from': (_tool_available_from(tool).strftime('%Y-%m-%d')
+                                   if _tool_available_from(tool) else None)
+            }), 409
+
+        employee_id = data.get('employee_id')
+        try:
+            employee_id = int(employee_id) if employee_id else None
+        except (TypeError, ValueError):
+            employee_id = None
+
+        reservation = ToolReservation(
+            tool_id=tool.id,
+            area=area,
+            responsible=(data.get('responsible') or '').strip() or None,
+            employee_id=employee_id,
+            start_date=start,
+            end_date=end,
+            purpose=(data.get('purpose') or '').strip() or None,
+            notes=(data.get('notes') or '').strip() or None,
+            status='pendiente',
+            requested_by=current_user.id
+        )
+        db.session.add(reservation)
+        db.session.flush()
+
+        log_change('tool_reservation', reservation.id, 'CREATE',
+                   notes=f'Apartado de {tool.code} para {area} '
+                         f'({start.strftime("%d/%m/%Y")} → {end.strftime("%d/%m/%Y")})')
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': (f'{tool.code} apartada para {area} del {start.strftime("%d/%m/%Y")} '
+                        f'al {end.strftime("%d/%m/%Y")}'),
+            'reservation_id': reservation.id
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error creando apartado de {tool_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tools/reservations/<int:reservation_id>/update', methods=['POST'])
+@login_required
+@permission_required('reserve_tools')
+def update_tool_reservation(reservation_id):
+    """Reprograma un apartado. Quien lo creó, los almacenistas y los admins pueden moverlo."""
+    reservation = ToolReservation.query.get_or_404(reservation_id)
+    try:
+        if not (reservation.requested_by == current_user.id or has_perm(current_user, 'manage_tools')):
+            return jsonify({'success': False, 'message': 'Solo quien creó el apartado puede modificarlo'}), 403
+        if reservation.status in ('completada', 'cancelada'):
+            return jsonify({'success': False, 'message': 'Este apartado ya está cerrado'}), 400
+
+        data = request.get_json(silent=True) or request.form
+
+        start = _parse_date(data.get('start_date')) or reservation.start_date
+        end = _parse_date(data.get('end_date')) or reservation.end_date
+        if end < start:
+            return jsonify({'success': False,
+                            'message': 'La fecha de regreso no puede ser anterior a la fecha en que se necesita'}), 400
+
+        conflict = _find_reservation_conflict(reservation.tool_id, start, end,
+                                              exclude_reservation_id=reservation.id)
+        if conflict:
+            return jsonify({
+                'success': False,
+                'conflict': True,
+                'message': (f"No se puede reprogramar: {conflict['label']} "
+                            f"del {conflict['start'].strftime('%d/%m/%Y')} "
+                            f"al {conflict['end'].strftime('%d/%m/%Y')}.")
+            }), 409
+
+        changed = {
+            'start_date': (reservation.start_date, start),
+            'end_date': (reservation.end_date, end),
+        }
+        reservation.start_date = start
+        reservation.end_date = end
+
+        # Si la herramienta ya se entregó, el préstamo abierto hereda la nueva fecha de
+        # regreso; de lo contrario quedaría marcado como vencido contra una fecha vieja.
+        if reservation.status == 'en_uso':
+            open_loan = next((l for l in reservation.loans if l.actual_return_date is None), None)
+            if open_loan:
+                changed['loan_expected_return'] = (open_loan.expected_return_date, end)
+                open_loan.expected_return_date = end
+
+        if (data.get('area') or '').strip():
+            changed['area'] = (reservation.area, data.get('area').strip())
+            reservation.area = data.get('area').strip()
+        if data.get('responsible') is not None:
+            reservation.responsible = (data.get('responsible') or '').strip() or None
+        if data.get('purpose') is not None:
+            reservation.purpose = (data.get('purpose') or '').strip() or None
+        if data.get('notes') is not None:
+            reservation.notes = (data.get('notes') or '').strip() or None
+
+        log_change('tool_reservation', reservation.id, 'UPDATE', changed_fields=changed,
+                   notes=f'Reprogramación del apartado de {reservation.tool.code}')
+        db.session.commit()
+
+        return jsonify({'success': True, 'message': 'Apartado actualizado'})
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error actualizando apartado {reservation_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tools/reservations/<int:reservation_id>/cancel', methods=['POST'])
+@login_required
+@permission_required('reserve_tools')
+def cancel_tool_reservation(reservation_id):
+    """Cancela un apartado y libera las fechas."""
+    reservation = ToolReservation.query.get_or_404(reservation_id)
+    try:
+        if not (reservation.requested_by == current_user.id or has_perm(current_user, 'manage_tools')):
+            return jsonify({'success': False, 'message': 'Solo quien creó el apartado puede cancelarlo'}), 403
+        if reservation.status in ('completada', 'cancelada'):
+            return jsonify({'success': False, 'message': 'Este apartado ya está cerrado'}), 400
+        if reservation.status == 'en_uso':
+            return jsonify({'success': False,
+                            'message': 'La herramienta ya fue entregada. Registra la devolución.'}), 400
+
+        data = request.get_json(silent=True) or {}
+        reservation.status = 'cancelada'
+        reservation.cancelled_at = datetime.utcnow()
+        reservation.cancel_reason = (data.get('reason') or '').strip() or None
+
+        log_change('tool_reservation', reservation.id, 'UPDATE',
+                   changed_fields={'status': ('pendiente', 'cancelada')},
+                   notes=f'Cancelación del apartado de {reservation.tool.code}')
+        db.session.commit()
+
+        return jsonify({'success': True, 'message': 'Apartado cancelado'})
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error cancelando apartado {reservation_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/tools/reservations/<int:reservation_id>/deliver', methods=['POST'])
+@login_required
+@permission_required('manage_tools')
+def deliver_tool_reservation(reservation_id):
+    """Entrega la herramienta apartada: crea el préstamo y marca el apartado como en uso."""
+    reservation = ToolReservation.query.get_or_404(reservation_id)
+    try:
+        if reservation.status != 'pendiente':
+            return jsonify({'success': False,
+                            'message': f'El apartado está {reservation.status_label.lower()}'}), 400
+
+        tool = reservation.tool
+        if tool.active_loan:
+            return jsonify({'success': False,
+                            'message': f'{tool.code} sigue prestada a {tool.active_loan.employee_name}'}), 400
+        if tool.open_repair:
+            return jsonify({'success': False, 'message': f'{tool.code} está en reparación'}), 400
+
+        data = request.get_json(silent=True) or request.form
+        employee_name = ((data.get('employee_name') or '').strip()
+                         or reservation.responsible
+                         or f'Área {reservation.area}')
+
+        loan = ToolLoan(
+            tool_id=tool.id,
+            employee_id=data.get('employee_id') or reservation.employee_id,
+            employee_name=employee_name,
+            area=reservation.area,
+            checkout_date=datetime.utcnow(),
+            expected_return_date=reservation.end_date,
+            delivered_by=current_user.id,
+            reservation_id=reservation.id,
+            notes=(data.get('notes') or '').strip() or None
+        )
+        db.session.add(loan)
+
+        reservation.status = 'en_uso'
+        tool.status = 'prestada'
+        db.session.flush()
+
+        log_change('tool_loan', loan.id, 'CREATE',
+                   notes=f'Entrega de {tool.code} desde el apartado #{reservation.id}')
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f'{tool.code} entregada a {employee_name}',
+            'loan_id': loan.id
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error entregando apartado {reservation_id}: {e}')
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 
 
 # Comando para ejecutar desde la línea de comandos

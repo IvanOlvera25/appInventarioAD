@@ -347,6 +347,18 @@
                 <i class="fas fa-exchange-alt"></i><span>Movimientos</span>
             </a>
 
+            {% if has_perm('view_tools') %}
+            <div class="section-header">Herramientas</div>
+            <a class="nav-link {{ 'active' if request.path.startswith('/tools') and not request.path.startswith('/tools/reservations') else '' }}"
+                href="{{ url_for('tools') }}" title="Herramientas">
+                <i class="fas fa-toolbox"></i><span>Herramientas</span>
+            </a>
+            <a class="nav-link {{ 'active' if request.path.startswith('/tools/reservations') else '' }}"
+                href="{{ url_for('tool_reservations') }}" title="Apartado de Herramientas">
+                <i class="fas fa-calendar-check"></i><span>Apartados</span>
+            </a>
+            {% endif %}
+
             {% if current_user.role != 'requisitador' or current_user.is_leader %}
             <a class="nav-link" href="{{ url_for('reports') }}" title="Reportes">
                 <i class="fas fa-chart-line"></i><span>Reportes</span>
