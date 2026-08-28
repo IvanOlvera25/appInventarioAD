@@ -15,6 +15,7 @@ import tempfile
 import pymysql
 import pymysql.cursors
 from contextlib import contextmanager
+from utils import now_mx, today_mx
 from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog, SystemConfig, WarehouseLocation, Tool, ToolLoan, ToolRepair, ToolReservation
 from functools import wraps
 import secrets  # <- si estás generando códigos de verificación
@@ -90,7 +91,7 @@ def inject_globals():
 
     return {
         'moment': datetime,
-        'now': datetime.utcnow(),
+        'now': now_mx(),
         'departments': departments,
         'categories': categories,
         'units': units,
@@ -380,7 +381,7 @@ def load_user(user_id):
 def inject_datetime():
     return {
         'moment': datetime,
-        'now': datetime.utcnow()
+        'now': now_mx()
     }
 
 # Función para verificar si la base de datos necesita migración
@@ -687,7 +688,7 @@ def create_system_alert(alert_type, message, severity='info', target_user_id=Non
             severity=severity,
             target_user_id=target_user_id,
             request_id=request_id,
-            created_at=datetime.utcnow()
+            created_at=now_mx()
         )
         db.session.add(alert)
         db.session.commit()
@@ -713,7 +714,7 @@ def notify_leaders(department, alert_type, message, severity='info', request_id=
                 severity=severity,
                 target_user_id=leader.id,
                 request_id=request_id,
-                created_at=datetime.utcnow()
+                created_at=now_mx()
             )
             db.session.add(alert)
         if leaders:
@@ -1067,7 +1068,7 @@ def _hydrate_local_from_remote(local_material, remote_row):
 
     # Actualizar timestamp
     if hasattr(local_material, 'updated_at'):
-        local_material.updated_at = datetime.utcnow()
+        local_material.updated_at = now_mx()
 def sync_materials_from_remote():
     """Sincronizar materiales desde la base de datos remota con logging mejorado"""
     try:
@@ -1286,7 +1287,7 @@ def write_minmax_to_remote():
         conn = pymysql.connect(**connection_params)
         try:
             with conn.cursor() as cursor:
-                now = datetime.now(timezone.utc)
+                now = now_mx()
 
                 for mat in local_materials:
                     try:
@@ -1400,7 +1401,7 @@ def write_materials_to_remote():
         conn = pymysql.connect(**connection_params)
         try:
             with conn.cursor() as cursor:
-                now = datetime.now(timezone.utc)
+                now = now_mx()
 
                 for mat in local_materials:
                     try:
@@ -1514,7 +1515,7 @@ def write_stocks_to_remote():
                         'error': 'Tabla Stocks no existe. Ejecutar: python create_stocks_table.py create'
                     }
 
-                now = datetime.now(timezone.utc)
+                now = now_mx()
 
                 for mat in local_materials:
                     try:
@@ -1628,7 +1629,7 @@ def scheduled_sync():
     """Tarea programada para sincronización bidireccional COMPLETA"""
     with app.app_context():
         try:
-            now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            now = now_mx().strftime('%Y-%m-%d %H:%M:%S')
             app.logger.info(f"🔄 [{now}] Ejecutando sincronización bidireccional...")
 
             # ========== LECTURA: BD Remota → Local ==========
@@ -1765,7 +1766,7 @@ def seed_verification_codes_fixed():
                     INSERT INTO verification_code (code, role, expires_at, used_by, is_active, created_at)
                     VALUES (:code, :role, NULL, NULL, 1, :created)
                 """),
-                {"code": code, "role": role, "created": datetime.utcnow()}
+                {"code": code, "role": role, "created": now_mx()}
             )
     db.session.commit()
     print("✅ Códigos de verificación fijos insertados o actualizados.")
@@ -1938,7 +1939,7 @@ def api_sync_categories():
 
             if existing:
                 existing.name = name
-                existing.synced_at = datetime.utcnow()
+                existing.synced_at = now_mx()
                 synced += 1
             else:
                 # Verificar si es categoría de telas
@@ -1948,7 +1949,7 @@ def api_sync_categories():
                     remote_id=remote_id,
                     name=name,
                     is_fabric=is_fabric,
-                    synced_at=datetime.utcnow()
+                    synced_at=now_mx()
                 )
                 db.session.add(new_cat)
                 created += 1
@@ -1998,14 +1999,14 @@ def api_sync_units():
             if existing:
                 existing.name = name
                 existing.abbreviation = abbr
-                existing.synced_at = datetime.utcnow()
+                existing.synced_at = now_mx()
                 synced += 1
             else:
                 new_unit = Unit(
                     remote_id=remote_id,
                     name=name,
                     abbreviation=abbr,
-                    synced_at=datetime.utcnow()
+                    synced_at=now_mx()
                 )
                 db.session.add(new_unit)
                 created += 1
@@ -2230,7 +2231,7 @@ def dashboard():
         pending_requests = Request.query.filter_by(status='pendiente').count()
 
     # Materiales sin movimiento en 6 meses
-    six_months_ago = datetime.utcnow() - timedelta(days=180)
+    six_months_ago = now_mx() - timedelta(days=180)
     no_movement_materials = Material.query.filter(
         (Material.last_movement < six_months_ago) | (Material.last_movement.is_(None))
     ).count()
@@ -2747,7 +2748,7 @@ def search_fp():
                 try:
                     # Crear el proyecto localmente
                     from datetime import date, timedelta
-                    today = date.today()
+                    today = today_mx()
 
                     new_project = Project(
                         fp_code=fp_value,
@@ -3435,7 +3436,7 @@ def export_requests():
 
         # Crear archivo Excel
         df = pd.DataFrame(export_data)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = now_mx().strftime('%Y%m%d_%H%M%S')
         filename = f'requisiciones_{timestamp}.xlsx'
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
@@ -3502,7 +3503,7 @@ def export_selected_requests():
         if not os.path.exists(app.config['UPLOAD_FOLDER']):
             os.makedirs(app.config['UPLOAD_FOLDER'])
             
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = now_mx().strftime('%Y%m%d_%H%M%S')
         filename = f'requisiciones_seleccion_{timestamp}.xlsx'
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
@@ -3528,7 +3529,7 @@ def print_request(request_id):
         flash('No tiene permisos para ver esta requisición.', 'danger')
         return redirect(url_for('home'))
 
-    return render_template('print_request.html', request=req, now=datetime.now())
+    return render_template('print_request.html', request=req, now=now_mx())
 
 
 @app.route('/api/projects/<fp_code>/export-report')
@@ -3682,7 +3683,7 @@ def export_project_report(fp_code):
                 ws.column_dimensions[column_letter].width = adjusted_width
 
         # Guardar archivo
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = now_mx().strftime('%Y%m%d_%H%M%S')
         filename = f'proyecto_{fp_code}_{timestamp}.xlsx'
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
@@ -3723,7 +3724,7 @@ def generate_project_summary(project_id):
         summary.total_requests = total_requests
         summary.total_materials = total_materials
         summary.total_cost = total_cost
-        summary.last_updated = datetime.utcnow()
+        summary.last_updated = now_mx()
 
         db.session.commit()
 
@@ -3781,7 +3782,7 @@ def request_cancellation(request_id):
         
     try:
         req.cancellation_requested = True
-        req.cancellation_requested_at = datetime.utcnow()
+        req.cancellation_requested_at = now_mx()
         req.cancellation_requester_id = current_user.id
         db.session.commit()
 
@@ -3887,7 +3888,7 @@ def api_request_cancellation(id):
 
         req.cancellation_requested = True
         req.cancellation_requested_by = current_user.id
-        req.cancellation_requested_at = datetime.utcnow()
+        req.cancellation_requested_at = now_mx()
         db.session.commit()
 
         # === ALERTA DEL SISTEMA: Solicitud de cancelación (para todos) ===
@@ -3947,7 +3948,7 @@ def recalculate_request_status(req):
     statuses = [i.item_status for i in items]
 
     # Verificar retornos pendientes
-    today = datetime.utcnow().date()
+    today = now_mx().date()
     for item in items:
         if item.will_return and item.return_expected_date:
             if today > item.return_expected_date and not item.actual_return_date:
@@ -4436,7 +4437,7 @@ def approve_reject_request():
 
         if action == 'approve':
             req.status = 'aprobada'
-            req.approved_at = datetime.utcnow()
+            req.approved_at = now_mx()
             req.approved_by = current_user.id
 
             # Si es requisición por incidencia, marcar como prioritaria
@@ -4547,7 +4548,7 @@ def reports():
     ).order_by(Material.last_movement.desc()).all()
 
     # Materiales sin movimiento en 6 meses
-    six_months_ago = datetime.utcnow() - timedelta(days=180)
+    six_months_ago = now_mx() - timedelta(days=180)
     no_movement = Material.query.filter(
         (Material.last_movement < six_months_ago) | (Material.last_movement.is_(None))
     ).order_by(Material.last_movement.desc()).all()
@@ -4617,7 +4618,7 @@ def leader_dashboard():
         department = current_user.department
         scope_all = False
 
-    today = datetime.utcnow().date()
+    today = now_mx().date()
     start_month = today.replace(day=1)
     next_month = (start_month + timedelta(days=32)).replace(day=1)
 
@@ -4699,9 +4700,9 @@ def leader_dashboard():
                 'when': r.created_at}
     def _mv_entry(m):
         try:
-            when = datetime.combine(m.fecha, m.hora) if (m.fecha and m.hora) else datetime.utcnow()
+            when = datetime.combine(m.fecha, m.hora) if (m.fecha and m.hora) else now_mx()
         except Exception:
-            when = datetime.utcnow()
+            when = now_mx()
         return {'type': 'movement', 'title': f"Movimiento: {m.movement_type.capitalize()}",
                 'subtitle': f"{m.idm} - {m.personal or 'N/A'}", 'when': when}
 
@@ -4732,7 +4733,7 @@ def leader_dashboard():
     }
 
     period_label = start_month.strftime('%B %Y')
-    now = datetime.utcnow()
+    now = now_mx()
 
     return render_template(
         'leader_dashboard.html',
@@ -4863,7 +4864,7 @@ def import_movements():
     try:
         # Guardar archivo temporalmente
         filename = secure_filename(file.filename)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = now_mx().strftime('%Y%m%d_%H%M%S')
         filename = f"{timestamp}_{filename}"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
@@ -4909,20 +4910,20 @@ def import_movements():
                 # Procesar fecha y hora
                 try:
                     if pd.isna(row['Fecha']):
-                        fecha = datetime.now().date()
+                        fecha = now_mx().date()
                     else:
                         fecha = pd.to_datetime(row['Fecha']).date()
 
                     if pd.isna(row['Hora']):
-                        hora = datetime.now().time()
+                        hora = now_mx().time()
                     else:
                         if isinstance(row['Hora'], str):
                             hora = datetime.strptime(row['Hora'], '%H:%M').time()
                         else:
                             hora = row['Hora']
                 except Exception as e:
-                    fecha = datetime.now().date()
-                    hora = datetime.now().time()
+                    fecha = now_mx().date()
+                    hora = now_mx().time()
                     errors.append(f"Fila {index + 2}: Error en fecha/hora, usando valores actuales")
 
                 # Crear movimiento
@@ -4950,7 +4951,7 @@ def import_movements():
                     material.current_stock -= movement.quantity
                 # Para retorno, no se actualiza automáticamente el stock
 
-                material.last_movement = datetime.utcnow()
+                material.last_movement = now_mx()
                 imported_count += 1
 
             except Exception as e:
@@ -4996,7 +4997,7 @@ def download_movements_template():
     df = pd.DataFrame(template_data)
 
     # Crear archivo temporal
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    timestamp = now_mx().strftime('%Y%m%d_%H%M%S')
     filename = f'plantilla_movimientos_{timestamp}.xlsx'
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
@@ -5070,8 +5071,8 @@ def disable_material(material_id):
                 quantity=-qty_to_transfer,
                 notes=f'Transferencia por deshabilitar material → {dest.name} ({dest.code})',
                 user_id=current_user.id,
-                fecha=datetime.utcnow().date(),
-                hora=datetime.utcnow().time(),
+                fecha=now_mx().date(),
+                hora=now_mx().time(),
             )
             db.session.add(mov_out)
 
@@ -5082,8 +5083,8 @@ def disable_material(material_id):
                 quantity=qty_to_transfer,
                 notes=f'Transferencia recibida de material deshabilitado: {material.name} ({material.code})',
                 user_id=current_user.id,
-                fecha=datetime.utcnow().date(),
-                hora=datetime.utcnow().time(),
+                fecha=now_mx().date(),
+                hora=now_mx().time(),
             )
             db.session.add(mov_in)
 
@@ -5093,7 +5094,7 @@ def disable_material(material_id):
 
         # Deshabilitar material
         material.is_active = False
-        material.disabled_at = datetime.utcnow()
+        material.disabled_at = now_mx()
         db.session.commit()
 
         return jsonify({
@@ -5211,7 +5212,7 @@ def edit_material(material_id):
             material.is_consumible = bool(request.form.get('is_consumible'))
 
             # Actualizar timestamp de modificación
-            material.updated_at = datetime.utcnow()
+            material.updated_at = now_mx()
 
             # === AUDIT LOG ===
             log_change('material', material.id, 'UPDATE', {
@@ -5414,14 +5415,14 @@ def add_stock_api(material_id):
             fp_code=fp_code if fp_code else None,
             user_id=current_user.id,
             notes=' | '.join(full_notes) if full_notes else None,
-            created_at=datetime.utcnow(),
-            fecha=datetime.utcnow().date(),
-            hora=datetime.utcnow().time()
+            created_at=now_mx(),
+            fecha=now_mx().date(),
+            hora=now_mx().time()
         )
 
         # Actualizar stock del material
         material.current_stock += quantity
-        material.last_movement = datetime.utcnow()
+        material.last_movement = now_mx()
 
         db.session.add(movement)
         db.session.commit()
@@ -5475,7 +5476,7 @@ def adjust_material_stock(material_id):
         }), 400
 
     try:
-        now = datetime.utcnow()
+        now = now_mx()
         idm = f"AJU-{now.strftime('%y%m%d')}-{StockMovement.query.count() + 1:04d}"
 
         movement = StockMovement(
@@ -5535,7 +5536,7 @@ def get_material_details(material_id):
                                            .order_by(StockMovement.created_at.desc()).first()
 
         # Movimientos de los últimos 30 días
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        thirty_days_ago = now_mx() - timedelta(days=30)
         recent_entries = StockMovement.query.filter(
             StockMovement.material_id == material_id,
             StockMovement.movement_type == 'entrada',
@@ -5780,7 +5781,7 @@ def export_movements():
 
     # Crear archivo Excel
     df = pd.DataFrame(export_data)
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    timestamp = now_mx().strftime('%Y%m%d_%H%M%S')
     filename = f'movimientos_stock_{timestamp}.xlsx'
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
@@ -5808,7 +5809,7 @@ def register_entry():
 
         # Generar IDM único
         last_id = StockMovement.query.count()
-        idm = f"ENT-{datetime.utcnow().strftime('%y%m%d')}-{last_id + 1:04d}"
+        idm = f"ENT-{now_mx().strftime('%y%m%d')}-{last_id + 1:04d}"
 
         movement = StockMovement(
             idm=idm,
@@ -5818,8 +5819,8 @@ def register_entry():
             rollos=int(data.get('rollos', 0)),
             area=data.get('location') or data.get('area'),
             unit_cost=material.unit_cost, # Costo automático del catálogo
-            fecha=datetime.utcnow().date(), # Fecha automática
-            hora=datetime.utcnow().time(), # Hora automática
+            fecha=now_mx().date(), # Fecha automática
+            hora=now_mx().time(), # Hora automática
             personal=current_user.username, # Personal loggeado
             user_id=current_user.id,
             notes=data.get('notes'),
@@ -5828,7 +5829,7 @@ def register_entry():
         db.session.add(movement)
 
         material.current_stock += quantity
-        material.last_movement = datetime.utcnow()
+        material.last_movement = now_mx()
         db.session.commit()
 
         return jsonify({'success': True, 'message': 'Entrada registrada exitosamente.'})
@@ -6027,7 +6028,7 @@ def register_exit():
 
         # Generar IDM único para la salida
         last_id = StockMovement.query.count()
-        idm = f"SAL-{datetime.utcnow().strftime('%y%m%d')}-{last_id + 1:04d}"
+        idm = f"SAL-{now_mx().strftime('%y%m%d')}-{last_id + 1:04d}"
 
         movement = StockMovement(
             idm=idm,
@@ -6036,8 +6037,8 @@ def register_exit():
             quantity=quantity,
             fp_code=fp_code,
             area=department,  # ✅ Guardar el department en el campo area
-            fecha=datetime.utcnow().date(),
-            hora=datetime.utcnow().time(),
+            fecha=now_mx().date(),
+            hora=now_mx().time(),
             personal=current_user.username,
             user_id=current_user.id,
             notes=f"Solicitante: {data.get('requester', 'N/A')}. {data.get('notes', '')}",
@@ -6048,7 +6049,7 @@ def register_exit():
 
         # Actualizar stock del material
         material.current_stock -= quantity
-        material.last_movement = datetime.utcnow()
+        material.last_movement = now_mx()
 
         # Actualizar quantity_delivered en RequestItem
         project = Project.query.filter_by(fp_code=fp_code).first()
@@ -6283,7 +6284,7 @@ def register_exit_multiple():
                         continue
                     # Descontar directamente del stock
                     material.current_stock -= quantity
-                    material.last_movement = datetime.utcnow()
+                    material.last_movement = now_mx()
                 else:
                     # Salida normal: calcular abastecida_pendiente desde quantity_supplied
                     req_items = db.session.query(RequestItem)\
@@ -6319,7 +6320,7 @@ def register_exit_multiple():
 
                     # Descontar del stock
                     material.current_stock -= quantity
-                    material.last_movement = datetime.utcnow()
+                    material.last_movement = now_mx()
 
                     # Actualizar quantity_delivered en RequestItem
                     if req_items:
@@ -6327,7 +6328,7 @@ def register_exit_multiple():
 
                 # Generar IDM único
                 last_id = StockMovement.query.count()
-                idm = f"SAL-{datetime.utcnow().strftime('%y%m%d')}-{last_id + 1:04d}"
+                idm = f"SAL-{now_mx().strftime('%y%m%d')}-{last_id + 1:04d}"
 
                 if is_free_exit:
                     notes_prefix = f"Salida Libre. Solicitante: {requester_name}. "
@@ -6347,8 +6348,8 @@ def register_exit_multiple():
                     quantity=quantity,
                     fp_code=fp_code,
                     area=movement_area,
-                    fecha=datetime.utcnow().date(),
-                    hora=datetime.utcnow().time(),
+                    fecha=now_mx().date(),
+                    hora=now_mx().time(),
                     personal=deliverer_name,
                     user_id=current_user.id,
                     notes=f"{notes_prefix}{notes}",
@@ -6504,7 +6505,7 @@ def register_return():
 
         # Generar IDM para el retorno
         last_id = StockMovement.query.count()
-        idm = f"RET-{datetime.utcnow().strftime('%y%m%d')}-{last_id + 1:04d}"
+        idm = f"RET-{now_mx().strftime('%y%m%d')}-{last_id + 1:04d}"
 
         # Crear movimiento de retorno con la cantidad correspondiente
         return_movement = StockMovement(
@@ -6513,8 +6514,8 @@ def register_return():
             movement_type='retorno',
             quantity=return_quantity,
             fp_code=fp_code,
-            fecha=datetime.now().date(),
-            hora=datetime.now().time(),
+            fecha=now_mx().date(),
+            hora=now_mx().time(),
             personal=current_user.username,
             area='',
             reference_type='devolucion',
@@ -6551,7 +6552,7 @@ def register_return():
             for ri in all_items:
                 ri.item_status = 'retornado'
 
-        material.last_movement = datetime.utcnow()
+        material.last_movement = now_mx()
         db.session.commit()
 
         return jsonify({'success': True, 'message': 'Retorno registrado exitosamente. Los items han sido marcados como retornados.'})
@@ -6622,7 +6623,7 @@ def cleanup_temp_files(response):
     try:
         upload_folder = app.config['UPLOAD_FOLDER']
         if os.path.exists(upload_folder):
-            now = datetime.now()
+            now = now_mx()
             for filename in os.listdir(upload_folder):
                 filepath = os.path.join(upload_folder, filename)
                 if os.path.isfile(filepath):
@@ -6687,7 +6688,7 @@ def init_db():
                 ('ADM-7890AA', 'admin'),
             ]
             for code, role in seeds:
-                db.session.add(VerificationCode(code=code, role=role, expires_at=datetime.utcnow()+timedelta(days=90)))
+                db.session.add(VerificationCode(code=code, role=role, expires_at=now_mx()+timedelta(days=90)))
             db.session.commit()
 
 
@@ -6800,8 +6801,8 @@ def init_db():
                         quantity=material.max_stock * 0.6,  # 60% del stock máximo
                         rollos=i+1 if material.is_fabric_roll else 0,
                         fp_code='FP-2025-001',
-                        fecha=datetime.now().date(),
-                        hora=datetime.now().time(),
+                        fecha=now_mx().date(),
+                        hora=now_mx().time(),
                         personal='María Rodríguez',
                         area='Almacén',
                         unit_cost=material.unit_cost,
@@ -6813,7 +6814,7 @@ def init_db():
 
                     # Actualizar stock del material
                     material.current_stock = material.max_stock * 0.6
-                    material.last_movement = datetime.utcnow()
+                    material.last_movement = now_mx()
 
                 # Crear algunas salidas de ejemplo
                 if operador_user and len(materials) >= 3:
@@ -6824,8 +6825,8 @@ def init_db():
                         quantity=50,
                         rollos=0,
                         fp_code='FP-2025-001',
-                        fecha=datetime.now().date(),
-                        hora=datetime.now().time(),
+                        fecha=now_mx().date(),
+                        hora=now_mx().time(),
                         personal='Carlos López',
                         area='Producción',
                         user_id=operador_user.id,
@@ -6842,8 +6843,8 @@ def init_db():
                         quantity=25,
                         rollos=1,
                         fp_code='FP-2025-002',
-                        fecha=datetime.now().date(),
-                        hora=datetime.now().time(),
+                        fecha=now_mx().date(),
+                        hora=now_mx().time(),
                         personal='Ana Martínez',
                         area='Confección',
                         user_id=operador_user.id,
@@ -6861,8 +6862,8 @@ def init_db():
                         quantity=10,
                         rollos=0,
                         fp_code='FP-2025-001',
-                        fecha=datetime.now().date(),
-                        hora=datetime.now().time(),
+                        fecha=now_mx().date(),
+                        hora=now_mx().time(),
                         personal='Carlos López',
                         area='Producción',
                         user_id=operador_user.id,
@@ -6993,7 +6994,7 @@ def register():
             ).first()
 
             if db_code_record:
-                if db_code_record.expires_at and db_code_record.expires_at < datetime.utcnow():
+                if db_code_record.expires_at and db_code_record.expires_at < now_mx():
                     flash('El código de verificación ha expirado. Solicita uno nuevo al administrador.', 'danger')
                     return redirect(url_for('register'))
                 role_from_code = db_code_record.role
@@ -7096,7 +7097,7 @@ def manage_verification_codes():
             vc = VerificationCode(
                 code=code,
                 role=role,
-                expires_at=datetime.utcnow()+timedelta(days=days)
+                expires_at=now_mx()+timedelta(days=days)
             )
             db.session.add(vc)
             new_codes.append(code)
@@ -7188,7 +7189,7 @@ def create_consumible():
                 notes='Stock inicial al crear consumible'
             )
             db.session.add(movement)
-            consumible.last_movement = datetime.utcnow()
+            consumible.last_movement = now_mx()
 
         db.session.commit()
 
@@ -7223,7 +7224,7 @@ def add_consumible_stock():
 
         # Actualizar stock
         consumible.current_stock += quantity
-        consumible.last_movement = datetime.utcnow()
+        consumible.last_movement = now_mx()
 
         # Actualizar costo unitario si se proporciona
         if unit_cost > 0:
@@ -7281,7 +7282,7 @@ def consume_stock():
 
         # Actualizar stock
         consumible.current_stock -= quantity
-        consumible.last_movement = datetime.utcnow()
+        consumible.last_movement = now_mx()
 
         # Crear movimiento de stock
         movement = StockMovement(
@@ -7433,7 +7434,7 @@ def create_bulk_purchase_order():
         db.session.commit()
 
         # Generar número de orden maestra
-        master_order = f"ORD-MASIVA-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        master_order = f"ORD-MASIVA-{now_mx().strftime('%Y%m%d%H%M%S')}"
 
         return jsonify({
             'success': True,
@@ -7500,7 +7501,7 @@ def export_consumibles():
         return jsonify({
             'success': True,
             'data': export_data,
-            'filename': f'consumibles_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
+            'filename': f'consumibles_{now_mx().strftime("%Y%m%d_%H%M%S")}.xlsx'
         })
 
     except Exception as e:
@@ -7759,7 +7760,7 @@ def api_fabric_roll_defaults():
     default_width = get_default_width_for_material(material_id)
 
     # Sugerencia de número de rollo tipo ROL-YYYYMMDD-### (secuencial del día)
-    today_prefix = f"ROL-{datetime.utcnow().strftime('%Y%m%d')}-"
+    today_prefix = f"ROL-{now_mx().strftime('%Y%m%d')}-"
     seq = FabricRoll.query.filter(FabricRoll.roll_number.like(f"{today_prefix}%")).count() + 1
     suggested_roll_number = f"{today_prefix}{seq:03d}"
 
@@ -7812,14 +7813,14 @@ def api_create_fabric_roll():
             status=_roll_status(total_length, total_length),
             location=location,
             provisioned_by_client=provisioned_by_client,
-            created_at=datetime.utcnow(),
+            created_at=now_mx(),
             created_by=current_user.id
         )
         db.session.add(roll)
 
         # Actualizar stock del material (metros)
         material.current_stock = (material.current_stock or 0) + total_length
-        material.last_movement = datetime.utcnow()
+        material.last_movement = now_mx()
 
         # Registrar movimiento de ENTRADA por alta de rollo
         mv = StockMovement(
@@ -7831,8 +7832,8 @@ def api_create_fabric_roll():
             user_id=current_user.id,
             personal=current_user.username,
             area='Almacén',
-            fecha=datetime.utcnow().date(),
-            hora=datetime.utcnow().time(),
+            fecha=now_mx().date(),
+            hora=now_mx().time(),
             notes=f'Alta de rollo {roll_number} (ancho {width} cm)'
         )
         db.session.add(mv)
@@ -7904,7 +7905,7 @@ def api_cut_fabric_roll():
 
         # Marcar fecha de término cuando el rollo se agota
         if (roll.remaining_length or 0) <= 0.001 and not roll.finished_at:
-            roll.finished_at = datetime.utcnow()
+            roll.finished_at = now_mx()
         elif (roll.remaining_length or 0) > 0.001:
             # Si por un ajuste vuelve a tener longitud, limpiar la fecha de término
             roll.finished_at = None
@@ -7912,7 +7913,7 @@ def api_cut_fabric_roll():
         # Actualizar stock del material
         material = roll.material
         material.current_stock = (material.current_stock or 0) - cut_length
-        material.last_movement = datetime.utcnow()
+        material.last_movement = now_mx()
 
         # === ACTUALIZAR quantity_delivered EN LOS RequestItems (solo Producción) ===
         if reason == 'produccion' and fp_code:
@@ -7975,8 +7976,8 @@ def api_cut_fabric_roll():
             user_id=current_user.id,
             personal=current_user.username,
             area=area if area else 'Producción',
-            fecha=datetime.utcnow().date(),
-            hora=datetime.utcnow().time(),
+            fecha=now_mx().date(),
+            hora=now_mx().time(),
             notes=mot
         )
         db.session.add(mv)
@@ -8066,7 +8067,7 @@ def api_delete_fabric_roll(roll_id):
         material = roll.material
         if roll.remaining_length and roll.remaining_length > 0:
             material.current_stock = (material.current_stock or 0) - roll.remaining_length
-            material.last_movement = datetime.utcnow()
+            material.last_movement = now_mx()
             # Registrar como AJUSTE de inventario (cantidad negativa = salida)
             mv = StockMovement(
                 material_id=material.id,
@@ -8077,8 +8078,8 @@ def api_delete_fabric_roll(roll_id):
                 user_id=current_user.id,
                 personal=current_user.username,
                 area='Almacén',
-                fecha=datetime.utcnow().date(),
-                hora=datetime.utcnow().time(),
+                fecha=now_mx().date(),
+                hora=now_mx().time(),
                 notes=f'Eliminación de rollo {roll.roll_number} — ajuste de inventario por {roll.remaining_length} m'
             )
             db.session.add(mv)
@@ -8197,7 +8198,7 @@ def admin_toggle_stock_check():
         new_value = '0' if cfg.value == '1' else '1'
         cfg.value = new_value
         cfg.updated_by = current_user.id
-        cfg.updated_at = datetime.utcnow()
+        cfg.updated_at = now_mx()
         db.session.commit()
 
         enabled = new_value == '1'
@@ -8227,7 +8228,7 @@ def admin_toggle_free_exit():
         new_value = '0' if cfg.value == '1' else '1'
         cfg.value = new_value
         cfg.updated_by = current_user.id
-        cfg.updated_at = datetime.utcnow()
+        cfg.updated_at = now_mx()
         db.session.commit()
 
         enabled = new_value == '1'
@@ -8302,7 +8303,7 @@ def admin_add_category():
             description=description if description else None,
             is_fabric=is_fabric,
             is_active=True,
-            synced_at=datetime.utcnow()
+            synced_at=now_mx()
         )
 
         db.session.add(category)
@@ -8346,7 +8347,7 @@ def admin_edit_category(category_id):
         category.description = description if description else None
         category.is_fabric = is_fabric
         category.is_active = is_active
-        category.synced_at = datetime.utcnow()
+        category.synced_at = now_mx()
 
         db.session.commit()
         flash(f'Categoría "{name}" actualizada', 'success')
@@ -8496,7 +8497,7 @@ def api_export_fabric_rolls():
                 'Notas': r.notes or ''
             })
         df = pd.DataFrame(data)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = now_mx().strftime('%Y%m%d_%H%M%S')
         filename = f'rollos_tela_{timestamp}.xlsx'
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         df.to_excel(filepath, index=False, sheet_name='Rollos')
@@ -8784,7 +8785,7 @@ def _save_tool_photo(file_storage, tool_code):
         raise ValueError('Formato de imagen no permitido. Usa PNG, JPG, GIF o WEBP.')
 
     ext = file_storage.filename.rsplit('.', 1)[1].lower()
-    stamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+    stamp = now_mx().strftime('%Y%m%d%H%M%S')
     filename = secure_filename(f'{tool_code}_{stamp}.{ext}')
     file_storage.save(os.path.join(TOOL_PHOTOS_FOLDER, filename))
     return filename
@@ -8904,7 +8905,7 @@ def _tool_available_from(tool):
         return open_repair.end_date
 
     ranges = _tool_busy_ranges(tool.id)
-    today = datetime.utcnow().date()
+    today = now_mx().date()
     # Solo importan los compromisos que siguen vigentes hoy o a futuro
     vigentes = [r for r in ranges if r['end'] >= today]
     if not vigentes:
@@ -9000,7 +9001,7 @@ def tools():
     }
 
     # Préstamos vencidos (siguen afuera y ya pasó la fecha comprometida)
-    today = datetime.utcnow().date()
+    today = now_mx().date()
     stats['vencidos'] = (ToolLoan.query
                          .filter(ToolLoan.actual_return_date.is_(None),
                                  ToolLoan.expected_return_date.isnot(None),
@@ -9040,7 +9041,7 @@ def tool_detail(tool_id):
                     .order_by(ToolReservation.start_date.desc())
                     .all())
 
-    today = datetime.utcnow().date()
+    today = now_mx().date()
     return render_template('tool_detail.html',
                            tool=tool,
                            loans=loans,
@@ -9086,7 +9087,7 @@ def tool_reservations():
 
     reservations = query.order_by(ToolReservation.start_date, Tool.code).all()
 
-    today = datetime.utcnow().date()
+    today = now_mx().date()
     stats = {
         'vigentes':  ToolReservation.query.filter(ToolReservation.status.in_(['pendiente', 'en_uso'])).count(),
         'hoy':       ToolReservation.query.filter(ToolReservation.status == 'pendiente',
@@ -9265,7 +9266,7 @@ def toggle_tool_active(tool_id):
                     ToolReservation.tool_id == tool.id,
                     ToolReservation.status.in_(['pendiente', 'en_uso'])).all():
                 r.status = 'cancelada'
-                r.cancelled_at = datetime.utcnow()
+                r.cancelled_at = now_mx()
                 r.cancel_reason = 'Herramienta dada de baja'
             msg = f'{tool.code} dada de baja'
         else:
@@ -9429,7 +9430,7 @@ def export_tools():
             'Solicitó': a.requester.full_name if a.requester else '',
         })
 
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    timestamp = now_mx().strftime('%Y%m%d_%H%M%S')
     filename = f'inventario_herramientas_{timestamp}.xlsx'
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
 
@@ -9472,8 +9473,8 @@ def register_tool_loan(tool_id):
             employee_id = None
 
         checkout = _parse_date(data.get('checkout_date'))
-        checkout_dt = (datetime.combine(checkout, datetime.utcnow().time())
-                       if checkout else datetime.utcnow())
+        checkout_dt = (datetime.combine(checkout, now_mx().time())
+                       if checkout else now_mx())
         expected = _parse_date(data.get('expected_return_date'))
         if expected and expected < checkout_dt.date():
             return jsonify({'success': False,
@@ -9533,8 +9534,8 @@ def return_tool_loan(loan_id):
         data = request.get_json(silent=True) or request.form
 
         return_date = _parse_date(data.get('return_date'))
-        return_dt = (datetime.combine(return_date, datetime.utcnow().time())
-                     if return_date else datetime.utcnow())
+        return_dt = (datetime.combine(return_date, now_mx().time())
+                     if return_date else now_mx())
         if return_dt < loan.checkout_date:
             return jsonify({'success': False,
                             'message': 'La fecha de devolución no puede ser anterior a la de salida'}), 400
@@ -9630,7 +9631,7 @@ def register_tool_repair(tool_id):
         if tool.open_repair:
             return jsonify({'success': False, 'message': f'{tool.code} ya tiene una reparación en proceso'}), 400
 
-        start = _parse_date(data.get('start_date')) or datetime.utcnow().date()
+        start = _parse_date(data.get('start_date')) or now_mx().date()
         end = _parse_date(data.get('end_date'))
         if end and end < start:
             return jsonify({'success': False,
@@ -9688,7 +9689,7 @@ def complete_tool_repair(repair_id):
 
         data = request.get_json(silent=True) or request.form
 
-        end = _parse_date(data.get('end_date')) or datetime.utcnow().date()
+        end = _parse_date(data.get('end_date')) or now_mx().date()
         if end < repair.start_date:
             return jsonify({'success': False,
                             'message': 'La fecha de fin no puede ser anterior a la de inicio'}), 400
@@ -9955,7 +9956,7 @@ def cancel_tool_reservation(reservation_id):
 
         data = request.get_json(silent=True) or {}
         reservation.status = 'cancelada'
-        reservation.cancelled_at = datetime.utcnow()
+        reservation.cancelled_at = now_mx()
         reservation.cancel_reason = (data.get('reason') or '').strip() or None
 
         log_change('tool_reservation', reservation.id, 'UPDATE',
@@ -9999,7 +10000,7 @@ def deliver_tool_reservation(reservation_id):
             employee_id=data.get('employee_id') or reservation.employee_id,
             employee_name=employee_name,
             area=reservation.area,
-            checkout_date=datetime.utcnow(),
+            checkout_date=now_mx(),
             expected_return_date=reservation.end_date,
             delivered_by=current_user.id,
             reservation_id=reservation.id,

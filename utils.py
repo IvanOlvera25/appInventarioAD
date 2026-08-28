@@ -1,9 +1,37 @@
 # utils.py - Funciones auxiliares para el sistema de almacén
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import flash
 import re
 import os
+
+# ===== Zona horaria de operación =====
+# Toda la app (registros, reportes, historiales) trabaja en hora de la Ciudad de
+# México. Antes se usaba datetime.utcnow(), que en el servidor daba UTC y hacía
+# que los movimientos aparecieran 6 horas adelantados.
+try:
+    from zoneinfo import ZoneInfo
+    TZ_MX = ZoneInfo('America/Mexico_City')
+except Exception:
+    # Si el servidor no trae la base de datos de zonas horarias, se usa el offset
+    # fijo: México eliminó el horario de verano en 2022, así que CDMX es UTC-6
+    # todo el año.
+    TZ_MX = timezone(timedelta(hours=-6))
+
+
+def now_mx():
+    """Fecha y hora actual en la Ciudad de México, sin tzinfo.
+
+    Se devuelve "naive" a propósito: las columnas de la base son DATETIME sin
+    zona, así que lo que se guarda y lo que se muestra están ambos en hora local
+    de CDMX. Es el reemplazo directo de datetime.utcnow() y datetime.now().
+    """
+    return datetime.now(TZ_MX).replace(tzinfo=None)
+
+
+def today_mx():
+    """Fecha de hoy en la Ciudad de México. Reemplazo de date.today()."""
+    return now_mx().date()
 
 def validate_material_code(code):
     """
@@ -53,7 +81,7 @@ def generate_request_number():
     """
     Genera un número único de requisición
     """
-    today = datetime.utcnow()
+    today = now_mx()
     # Importar aquí para evitar circular imports
     from app import Request
     
@@ -67,7 +95,7 @@ def generate_purchase_request_number():
     """
     Genera un número único de solicitud de compra
     """
-    today = datetime.utcnow()
+    today = now_mx()
     # Importar aquí para evitar circular imports
     from app import PurchaseRequest
     
@@ -81,7 +109,7 @@ def check_materials_without_movement(months=6):
     """
     Encuentra materiales sin movimiento en los últimos X meses
     """
-    cutoff_date = datetime.utcnow() - timedelta(days=months * 30)
+    cutoff_date = now_mx() - timedelta(days=months * 30)
     # Importar aquí para evitar circular imports
     from app import Material
     
@@ -123,7 +151,7 @@ def update_material_stock(material_id, quantity, movement_type):
     else:
         return False, "Tipo de movimiento inválido"
     
-    material.last_movement = datetime.utcnow()
+    material.last_movement = now_mx()
     db.session.commit()
     
     return True, "Stock actualizado correctamente"
@@ -302,7 +330,7 @@ def backup_database():
     """
     import shutil
     
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    timestamp = now_mx().strftime('%Y%m%d_%H%M%S')
     backup_filename = f"almacen_backup_{timestamp}.db"
     
     try:
@@ -318,7 +346,7 @@ def clean_old_movements(days=365):
     # Importar aquí para evitar circular imports
     from app import StockMovement, db
     
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    cutoff_date = now_mx() - timedelta(days=days)
     
     old_movements = StockMovement.query.filter(
         StockMovement.created_at < cutoff_date

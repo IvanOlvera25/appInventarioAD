@@ -1,6 +1,8 @@
 # models.py
 from datetime import datetime, timedelta
 
+from utils import now_mx
+
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 
@@ -18,7 +20,7 @@ class User(UserMixin, db.Model):
     is_leader = db.Column(db.Boolean, default=False)
     is_verified = db.Column(db.Boolean, default=False)
     verified_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_mx)
     # Asociación con empleado de AD17_RH
     employee_id   = db.Column(db.Integer, nullable=True)   # id en AD17_RH.empleados_activos
     employee_name = db.Column(db.String(200), nullable=True)  # caché del nombre del empleado
@@ -33,7 +35,7 @@ class Department(db.Model):
     code = db.Column(db.String(20), unique=True)              # opcional (p.ej. PROD, MANT)
     name = db.Column(db.String(120), unique=True, nullable=False)
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_mx)
 
 class Project(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -45,7 +47,7 @@ class Project(db.Model):
     analysis_date = db.Column(db.Date) # Fecha analisis
     client = db.Column(db.String(150)) # Cliente del proyecto
     status = db.Column(db.String(50), default='activo')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_mx)
 
 
 # ===== Modelos sincronizados con BD Remota =====
@@ -57,7 +59,7 @@ class Category(db.Model):
     description = db.Column(db.String(255))
     is_fabric = db.Column(db.Boolean, default=False)  # True si es categoría de telas
     is_active = db.Column(db.Boolean, default=True)
-    synced_at = db.Column(db.DateTime, default=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, default=now_mx)
 
 
 class Unit(db.Model):
@@ -67,7 +69,7 @@ class Unit(db.Model):
     name = db.Column(db.String(50), nullable=False)
     abbreviation = db.Column(db.String(20))
     is_active = db.Column(db.Boolean, default=True)
-    synced_at = db.Column(db.DateTime, default=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, default=now_mx)
 
 
 class Material(db.Model):
@@ -94,7 +96,7 @@ class Material(db.Model):
     is_pre_recycled = db.Column(db.Boolean, default=False)  # Es material pre-reciclado
     recycled_from_id = db.Column(db.Integer, db.ForeignKey('material.id'), nullable=True)  # Material origen
     # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_mx)
     last_movement = db.Column(db.DateTime)
     is_consumible = db.Column(db.Boolean, default=False)
     is_active = db.Column(db.Boolean, default=True)   # False = deshabilitado (baja lógica)
@@ -117,7 +119,7 @@ class FabricRoll(db.Model):
     location = db.Column(db.String(100), default='Almacén de Telas')
     provisioned_by_client = db.Column(db.String(200))
     # Historial del rollo
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)  # Cuándo se registró
+    created_at = db.Column(db.DateTime, default=now_mx)  # Cuándo se registró
     created_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)  # Quién lo registró
     finished_at = db.Column(db.DateTime, nullable=True)  # Cuándo se terminó (agotó)
     material = db.relationship('Material', backref='fabric_rolls')
@@ -144,7 +146,7 @@ class Request(db.Model):
     status = db.Column(db.String(50), default='pendiente')
     has_returns = db.Column(db.Boolean, default=False)  # Si tiene devoluciones
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_mx)
     approved_at = db.Column(db.DateTime)
     approved_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     # Campos para solicitud de cancelación
@@ -196,7 +198,7 @@ class ProjectSummary(db.Model):
     total_requests = db.Column(db.Integer, default=0)
     total_materials = db.Column(db.Integer, default=0)
     total_cost = db.Column(db.Float, default=0)
-    last_updated = db.Column(db.DateTime, default=datetime.utcnow)
+    last_updated = db.Column(db.DateTime, default=now_mx)
 
     project = db.relationship('Project', backref='summary')
 
@@ -221,8 +223,8 @@ class StockMovement(db.Model):
     fabric_roll_id = db.Column(db.Integer, db.ForeignKey('fabric_roll.id'), nullable=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)  # Fecha creación
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # Fecha modificación
+    created_at = db.Column(db.DateTime, default=now_mx)  # Fecha creación
+    updated_at = db.Column(db.DateTime, default=now_mx, onupdate=now_mx)  # Fecha modificación
     returned = db.Column(db.Boolean, default=False)
     return_date = db.Column(db.DateTime)
     return_quantity = db.Column(db.Float, default=0)
@@ -244,7 +246,7 @@ class PurchaseRequest(db.Model):
     supplier = db.Column(db.String(200))
     purchase_date = db.Column(db.Date)
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_mx)
 
     material = db.relationship('Material', backref='purchase_requests')
     requester = db.relationship('User', backref='purchase_requests')
@@ -258,7 +260,7 @@ class SystemAlert(db.Model):
     target_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)  # NULL = para todos
     request_id = db.Column(db.Integer, db.ForeignKey('request.id'), nullable=True)
     is_read = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_mx)
 
     target_user = db.relationship('User', foreign_keys=[target_user_id])
     request = db.relationship('Request', foreign_keys=[request_id])
@@ -272,7 +274,7 @@ class VerificationCode(db.Model):
     expires_at = db.Column(db.DateTime)                              # opcional
     used_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_mx)
 
     user = db.relationship('User', foreign_keys=[used_by])
 
@@ -293,7 +295,7 @@ class AuditLog(db.Model):
     old_value   = db.Column(db.Text)                           # Valor anterior (str)
     new_value   = db.Column(db.Text)                           # Valor nuevo (str)
     changed_by  = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    changed_at  = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    changed_at  = db.Column(db.DateTime, default=now_mx, nullable=False)
     ip_address  = db.Column(db.String(45))                     # IPv4 / IPv6
     notes       = db.Column(db.Text)                           # Contexto adicional (número req, etc.)
 
@@ -312,7 +314,7 @@ class SystemConfig(db.Model):
     key        = db.Column(db.String(100), unique=True, nullable=False)
     value      = db.Column(db.String(255), nullable=False, default='0')
     updated_by = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=now_mx, onupdate=now_mx)
 
     author = db.relationship('User', foreign_keys=[updated_by])
 
@@ -332,7 +334,7 @@ class WarehouseLocation(db.Model):
     location_type = db.Column(db.String(20), nullable=False, default='almacen')  # 'almacen' | 'area'
     is_active     = db.Column(db.Boolean, default=True)
     sort_order    = db.Column(db.Integer, default=0)   # para ordenar en el dropdown
-    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at    = db.Column(db.DateTime, default=now_mx)
 
     __table_args__ = (
         db.UniqueConstraint('name', 'location_type', name='uq_location_name_type'),
@@ -367,7 +369,7 @@ class Tool(db.Model):
     notes            = db.Column(db.Text)
 
     is_active        = db.Column(db.Boolean, default=True)                     # baja lógica
-    created_at       = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at       = db.Column(db.DateTime, default=now_mx)
     created_by       = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
 
     creator = db.relationship('User', foreign_keys=[created_by])
@@ -418,7 +420,7 @@ class ToolLoan(db.Model):
     area                 = db.Column(db.String(120))
     fp_code              = db.Column(db.String(100))          # opcional
 
-    checkout_date        = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)  # cuándo salió
+    checkout_date        = db.Column(db.DateTime, default=now_mx, nullable=False)  # cuándo salió
     expected_return_date = db.Column(db.Date)                 # cuándo debería regresar
     actual_return_date   = db.Column(db.DateTime)             # cuándo regresó (NULL = sigue afuera)
     condition_on_return  = db.Column(db.String(30))           # bueno|regular|malo|dañada
@@ -429,7 +431,7 @@ class ToolLoan(db.Model):
 
     notes                = db.Column(db.Text)
     return_notes         = db.Column(db.Text)
-    created_at           = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at           = db.Column(db.DateTime, default=now_mx)
 
     tool      = db.relationship('Tool', backref=db.backref('loans', order_by='ToolLoan.checkout_date.desc()'))
     deliverer = db.relationship('User', foreign_keys=[delivered_by])
@@ -443,11 +445,11 @@ class ToolLoan(db.Model):
     def is_overdue(self):
         if self.actual_return_date or not self.expected_return_date:
             return False
-        return self.expected_return_date < datetime.utcnow().date()
+        return self.expected_return_date < now_mx().date()
 
     @property
     def days_out(self):
-        end = self.actual_return_date or datetime.utcnow()
+        end = self.actual_return_date or now_mx()
         return max((end - self.checkout_date).days, 0)
 
 
@@ -467,7 +469,7 @@ class ToolRepair(db.Model):
     notes       = db.Column(db.Text)
 
     created_by  = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
-    created_at  = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at  = db.Column(db.DateTime, default=now_mx)
 
     tool    = db.relationship('Tool', backref=db.backref('repairs', order_by='ToolRepair.start_date.desc()'))
     creator = db.relationship('User', foreign_keys=[created_by])
@@ -493,7 +495,7 @@ class ToolReservation(db.Model):
     notes         = db.Column(db.Text)
 
     requested_by  = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at    = db.Column(db.DateTime, default=now_mx)
     cancelled_at  = db.Column(db.DateTime)
     cancel_reason = db.Column(db.String(255))
 
