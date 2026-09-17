@@ -150,7 +150,10 @@
                                     <div class="btn-group btn-group-sm">
                                         {% if current_user.role != 'requisitador' and roll.remaining_length and roll.remaining_length > 0.001 %}
                                         <button class="btn btn-outline-primary" title="Cortar tela"
-                                            onclick="cutFabric({{ roll.id }}, '{{ roll.roll_number }}', {{ roll.remaining_length }}); bootstrap.Modal.getOrCreateInstance(document.getElementById('cutFabricModal')).show()">
+                                            data-roll-id="{{ roll.id }}"
+                                            data-material-id="{{ roll.material_id }}"
+                                            data-remaining="{{ roll.remaining_length }}"
+                                            onclick="cutFabric(this); bootstrap.Modal.getOrCreateInstance(document.getElementById('cutFabricModal')).show()">
                                             <i class="fas fa-cut"></i>
                                         </button>
                                         {% endif %}
@@ -448,8 +451,10 @@
                             <label class="form-label">FP</label>
                             <div class="input-group">
                                 <input type="text" class="form-control" id="cutFpCode" name="fp_code"
-                                    placeholder="Ej: FP-2025-001"
-                                    oninput="resetFpSearch()">
+                                    placeholder="Ej: FP-2025-001" autocomplete="off"
+                                    oninput="resetFpSearch()"
+                                    onchange="searchFpInfo()"
+                                    onkeydown="if (event.key === 'Enter') { event.preventDefault(); searchFpInfo(); }">
                                 <button class="btn btn-outline-secondary" type="button"
                                     onclick="searchFpInfo()">Buscar</button>
                             </div>
@@ -493,7 +498,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-warning" onclick="processCut()">
+                <button type="button" class="btn btn-warning" id="processCutBtn" onclick="processCut()">
                     <i class="fas fa-cut me-1"></i>Procesar Corte
                 </button>
             </div>
@@ -540,38 +545,31 @@
 {% block scripts %}
 <script>
     let currentRollRemainingLength = 0;
+    const NO_REQ_ALERT_DEFAULT_HTML = document.getElementById('noRequisitionAlert').innerHTML;
     
-    function cutFabric(rollId, rollNumber, remainingLength) {
-        document.getElementById('cutRollId').value = rollId;
-        
-        // Find material_id by row
-        try {
-            const btn = document.querySelector(`button[data-roll-id="${rollId}"]`);
-            if (btn) {
-                const tr = btn.closest('tr');
-                const materialCode = tr.querySelector('td:nth-child(2) strong').innerText;
-                const materialsList = Array.from(document.getElementById('materialSelect').options);
-                const matOpt = materialsList.find(o => o.text.includes(materialCode));
-                if (matOpt) {
-                    document.getElementById('cutMaterialId').value = matOpt.value;
-                }
-            }
-        } catch(e) {}
-        
+    function cutFabric(btn) {
+        const d = btn.dataset;
+        const remainingLength = parseFloat(d.remaining) || 0;
+
+        document.getElementById('cutRollId').value = d.rollId;
+        // El material viene directo del rollo (antes se buscaba por nombre en el
+        // select de "Agregar rollo", que solo lista materiales de categoría Telas;
+        // si no coincidía se quedaba el material del rollo anterior o vacío y
+        // /production-info no devolvía las áreas del FP).
+        document.getElementById('cutMaterialId').value = d.materialId || '';
+
         currentRollRemainingLength = remainingLength;
         document.getElementById('maxLength').textContent = remainingLength;
         document.getElementById('cutLength').max = remainingLength;
         document.getElementById('cutLength').value = '';
+        document.getElementById('cutLength').setCustomValidity('');
+        document.getElementById('cutLength').classList.remove('is-invalid');
+        document.getElementById('cutNotes').value = '';
 
         // Reset production fields
         document.getElementById('cutReason').value = '';
         document.getElementById('cutFpCode').value = '';
-        document.getElementById('fpProjectInfo').innerHTML = '';
-        document.getElementById('cutArea').innerHTML = '<option value="">Seleccione un FP primero...</option>';
-        document.getElementById('productionPendingLimit').innerHTML = '';
-        document.getElementById('noRequisitionAlert').style.display = 'none';
-        _fpPendingTotal = 0;   // reset
-        handleCutReasonChange();
+        handleCutReasonChange();   // reason vacío → oculta y limpia FP/área
     }
 
     function saveRoll() {
@@ -603,22 +601,35 @@
 
     function processCut() {
         const form = document.getElementById('cutFabricForm');
-        const formData = new FormData(form);
-
-        const cutLength = parseFloat(document.getElementById('cutLength').value);
-        const maxLength = parseFloat(document.getElementById('maxLength').textContent);
+        const reason = document.getElementById('cutReason').value;
+        const fpCode = document.getElementById('cutFpCode').value.trim();
 
         if (!form.checkValidity()) {
             form.reportValidity();
             return;
         }
 
+        // Un corte para Producción siempre debe llevar FP (el backend también lo exige)
+        if (reason === 'produccion' && !fpCode) {
+            document.getElementById('cutFpCode').focus();
+            alert('Debe indicar la FP para un corte de Producción');
+            return;
+        }
+
+        const cutLength = parseFloat(document.getElementById('cutLength').value);
+        const maxLength = parseFloat(document.getElementById('maxLength').textContent);
+
         if (cutLength > maxLength) {
             alert('La longitud de corte excede la disponible');
             return;
         }
 
+        // FormData se arma justo antes de enviar, con los valores finales del formulario
+        const formData = new FormData(form);
+
         if (confirm(`¿Confirma el corte de ${cutLength} metros?`)) {
+            const btn = document.getElementById('processCutBtn');
+            btn.disabled = true;
             fetch('/api/fabric-rolls/cut', {
                 method: 'POST',
                 body: formData
@@ -629,10 +640,12 @@
                         alert('Corte registrado exitosamente');
                         location.reload();
                     } else {
+                        btn.disabled = false;
                         alert('Error: ' + (data.message || 'No se pudo registrar el corte'));
                     }
                 })
                 .catch(error => {
+                    btn.disabled = false;
                     console.error('Error:', error);
                     alert('Error al procesar corte');
                 });
@@ -725,15 +738,26 @@
     // Variable interna: total pendiente del FP buscado
     let _fpPendingTotal = 0;
     let _fpHasRequisition = true;
+    let _lastSearchedFp = null;   // último FP con resultado cargado (evita búsquedas repetidas)
+
+    const AREA_SELECT_DEFAULT_HTML = `
+        <label class="form-label">Área</label>
+        <select class="form-select" id="cutArea" name="area">
+            <option value="">Seleccione un FP primero...</option>
+        </select>
+        <div id="productionPendingLimit" class="form-text mt-1 text-warning"></div>
+    `;
 
     function resetFpSearch() {
         // Limpiar resultado anterior al tipear nuevo FP
         _fpPendingTotal = 0;
         _fpHasRequisition = true;
+        _lastSearchedFp = null;
         document.getElementById('fpProjectInfo').innerHTML = '';
-        document.getElementById('noRequisitionAlert').style.display = 'none';
-        document.getElementById('cutArea').innerHTML = '<option value="">Seleccione un FP primero...</option>';
-        document.getElementById('productionPendingLimit').innerHTML = '';
+        const noReqAlert = document.getElementById('noRequisitionAlert');
+        noReqAlert.style.display = 'none';
+        noReqAlert.innerHTML = NO_REQ_ALERT_DEFAULT_HTML;
+        document.getElementById('areaContainer').innerHTML = AREA_SELECT_DEFAULT_HTML;
         applyMaxLimit();
     }
 
@@ -765,15 +789,16 @@
         if (reason === 'produccion') {
             prodFields.style.display = 'block';
             document.getElementById('cutFpCode').required = true;
-            document.getElementById('cutArea').required = false; // Área ya no es obligatoria
         } else {
             prodFields.style.display = 'none';
             document.getElementById('cutFpCode').required = false;
-            document.getElementById('cutArea').required = false;
 
-            // Para cualquier otra razón el límite es la longitud del rollo
-            _fpPendingTotal = 0;
-            document.getElementById('productionPendingLimit').innerHTML = '';
+            // Para cualquier otra razón no aplica FP ni área: limpiar los campos ocultos
+            // para que no viajen en el formulario, y el límite es la longitud del rollo.
+            if (document.getElementById('cutFpCode').value) {
+                document.getElementById('cutFpCode').value = '';
+            }
+            resetFpSearch();
         }
         applyMaxLimit();
     }
@@ -782,18 +807,30 @@
         const fpCode    = document.getElementById('cutFpCode').value.trim();
         const materialId = document.getElementById('cutMaterialId').value;
         const infoDiv   = document.getElementById('fpProjectInfo');
-        const areaSelect = document.getElementById('cutArea');
-        const limitDiv  = document.getElementById('productionPendingLimit');
         const noReqAlert = document.getElementById('noRequisitionAlert');
+        const areaContainer = document.getElementById('areaContainer');
+        const freeExitEnabled = {{ 'true' if free_exit_enabled else 'false' }};
 
         if (!fpCode) return;
+        // Ya se cargó este FP (p. ej. change + clic en Buscar): no repetir
+        if (fpCode === _lastSearchedFp) return;
 
-        infoDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando...';
+        // Estado limpio antes de cada búsqueda
+        areaContainer.innerHTML = AREA_SELECT_DEFAULT_HTML;
         noReqAlert.style.display = 'none';
+        noReqAlert.innerHTML = NO_REQ_ALERT_DEFAULT_HTML;
+        infoDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando...';
 
         try {
             const res = await fetch(`/api/fabric-rolls/production-info?fp_code=${encodeURIComponent(fpCode)}&material_id=${materialId || ''}`);
             const data = await res.json();
+
+            // Si el usuario cambió el FP mientras se buscaba, descartar esta respuesta
+            if (document.getElementById('cutFpCode').value.trim() !== fpCode) return;
+            _lastSearchedFp = fpCode;
+
+            const areaSelect = document.getElementById('cutArea');
+            const limitDiv   = document.getElementById('productionPendingLimit');
 
             if (!data.success) {
                 infoDiv.innerHTML = `<span class="text-danger">${data.message}</span>`;
@@ -809,9 +846,6 @@
                 (data.client ? ` · Cliente: ${data.client}` : '');
 
             // ¿Existe alguna requisición de este material?
-            const freeExitEnabled = {{ 'true' if free_exit_enabled else 'false' }};
-            const areaContainer = document.getElementById('areaContainer');
-            
             if (!data.has_requisition && !freeExitEnabled) {
                 noReqAlert.style.display = 'block';
                 areaSelect.innerHTML = '<option value="">Sin requisiciones</option>';
@@ -826,7 +860,7 @@
                     <i class="fas fa-info-circle me-1"></i>
                     <strong>Modo Salida Libre:</strong> No hay requisición registrada.
                     <span class="text-muted">Ingrese el área manualmente. El límite es la longitud del rollo.</span>`;
-                
+
                 // Cambiar select por dropdown de áreas (cargado desde BD)
                 const _areaOpts = await _getFreeAreaOptions();
                 areaContainer.innerHTML = `
@@ -876,39 +910,35 @@
                 return;
             }
 
-            // Asegurar que el contenedor vuelva a ser select si sí hay data (por si se reemplazó antes)
-            areaContainer.innerHTML = `
-                <label class="form-label">Área</label>
-                <select class="form-select" id="cutArea" name="area">
-                    <option value="">Seleccione un FP primero...</option>
-                </select>
-                <div id="productionPendingLimit" class="form-text mt-1 text-warning"></div>
-            `;
-            // Readquiere referencia al select y al limitDiv después del innerHTML
-            const newAreaSelect = document.getElementById('cutArea');
-            const newLimitDiv = document.getElementById('productionPendingLimit');
-
-            _fpPendingTotal   = data.total_pending || 0;
+            _fpPendingTotal = data.total_pending || 0;
 
             // Poblar select de áreas
-            newAreaSelect.innerHTML = '';
+            areaSelect.innerHTML = '';
             if (data.areas && data.areas.length > 0) {
-                newAreaSelect.innerHTML = '<option value="">Seleccionar área (opcional)...</option>';
+                areaSelect.innerHTML = '<option value="">Seleccionar área (opcional)...</option>';
                 data.areas.forEach(a => {
                     const opt = document.createElement('option');
                     opt.value = a.area;
                     opt.text  = `${a.area} (Pendiente: ${a.pending}m)`;
                     opt.dataset.pending = a.pending;
-                    newAreaSelect.appendChild(opt);
+                    areaSelect.appendChild(opt);
                 });
 
                 // Mostrar límite global aún si no seleccionan área
                 const globalLimit = Math.min(_fpPendingTotal, currentRollRemainingLength);
-                newLimitDiv.innerHTML = `Total abastecido pendiente: <strong>${_fpPendingTotal}m</strong>.
+                limitDiv.innerHTML = `Total abastecido pendiente: <strong>${_fpPendingTotal}m</strong>.
                     Límite de corte ajustado a <strong>${globalLimit.toFixed(2)}m</strong>.`;
+
+                // Si el FP solo tiene un área con material pendiente, dejarla seleccionada
+                // para que la salida quede registrada con su área.
+                if (data.areas.length === 1) {
+                    areaSelect.selectedIndex = 1;
+                    areaSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                    return;
+                }
             } else {
-                newAreaSelect.innerHTML = '<option value="">Todo el material ya fue entregado</option>';
-                newLimitDiv.innerHTML = '<span class="text-muted">No hay material abastecido pendiente de entrega en este proyecto.</span>';
+                areaSelect.innerHTML = '<option value="">Todo el material ya fue entregado</option>';
+                limitDiv.innerHTML = '<span class="text-muted">No hay material abastecido pendiente de entrega en este proyecto.</span>';
                 _fpPendingTotal = 0;
             }
 
@@ -918,7 +948,7 @@
             infoDiv.innerHTML = `<span class="text-danger">Error de red</span>`;
         }
     }
-    
+
     // Al seleccionar un área: ajustar límite al pendiente de esa área específica
     document.addEventListener('change', function (e) {
         if (e.target && e.target.id === 'cutArea') {

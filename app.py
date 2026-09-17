@@ -7865,6 +7865,11 @@ def api_cut_fabric_roll():
         if not reason:
             return jsonify({'success': False, 'message': 'Debe seleccionar un motivo de corte'}), 400
 
+        # Un corte para Producción siempre lleva FP: sin ella la salida queda sin
+        # proyecto ni área y no descuenta lo abastecido de la requisición.
+        if reason == 'produccion' and not fp_code:
+            return jsonify({'success': False, 'message': 'Debe indicar la FP para un corte de Producción'}), 400
+
         # Ajuste de inventario solo para admins
         if reason == 'ajuste' and current_user.role != 'admin':
             return jsonify({'success': False, 'message': 'Solo los administradores pueden hacer ajustes de inventario'}), 403
