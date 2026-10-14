@@ -7856,9 +7856,10 @@ CUT_REASON_LABELS = {
     'ajuste':      'Ajuste de Inventario',
 }
 
-# Motivos en los que la tela sale hacia un proyecto: sin FP el metraje queda
-# fuera de todo costeo, así que se rechaza el corte.
-CUT_REASONS_REQUIRING_FP = {'produccion', 'muestra', 'defecto'}
+# Todo corte sale de la tela de algún proyecto, incluida la merma: sin FP el
+# metraje queda fuera de todo costeo, así que se rechaza el corte. El único
+# motivo exento es el ajuste de inventario, que no es una salida de material.
+CUT_REASONS_REQUIRING_FP = {'produccion', 'muestra', 'defecto', 'desperdicio'}
 
 # Área a registrar cuando el corte no lleva un área real de destino. Antes todos
 # caían en 'Producción', lo que hacía parecer que una merma o un ajuste había

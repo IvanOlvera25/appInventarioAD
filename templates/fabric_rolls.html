@@ -789,7 +789,7 @@
         produccion:  { fp: 'required', areas: 'requisicion' },
         muestra:     { fp: 'required', areas: 'libre' },
         defecto:     { fp: 'required', areas: 'libre' },
-        desperdicio: { fp: 'optional', areas: 'none' },
+        desperdicio: { fp: 'required', areas: 'none' },
         ajuste:      { fp: 'none',     areas: 'none' },
         '':          { fp: 'none',     areas: 'none' },
     };
@@ -815,6 +815,9 @@
             fpInput.required = (rule.fp === 'required');
             document.getElementById('cutFpRequiredMark').style.display =
                 (rule.fp === 'required') ? '' : 'none';
+            // Desperdicio no tiene área destino: el backend la registra como el motivo
+            document.getElementById('areaContainer').style.display =
+                (rule.areas === 'none') ? 'none' : '';
             // El motivo cambia qué áreas aplican, así que se recarga la búsqueda
             const fp = fpInput.value.trim();
             resetFpSearch();
@@ -865,19 +868,22 @@
             infoDiv.innerHTML = `<strong>${data.project_name}</strong>` +
                 (data.client ? ` · Cliente: ${data.client}` : '');
 
-            // Muestra / Material Defectuoso: se cargan al proyecto, pero no
-            // consumen lo abastecido de la requisición, así que el área se elige
-            // libremente y el límite es la longitud del rollo.
-            if (cutReasonRule(document.getElementById('cutReason').value).areas === 'libre') {
-                const _areaOptsFree = await _getFreeAreaOptions();
-                areaContainer.innerHTML = `
-                    <label class="form-label">Área destino</label>
-                    <select class="form-select" id="cutArea" name="area">
-                        <option value="">Seleccionar área (opcional)...</option>
-                        ${_areaOptsFree}
-                    </select>
-                    <div id="productionPendingLimit" class="form-text mt-1 text-warning"></div>
-                `;
+            // Solo Producción consume lo abastecido de la requisición. Muestra,
+            // Defectuoso y Desperdicio se cargan al proyecto pero no descuentan
+            // la requisición, así que su límite es la longitud del rollo.
+            const areasMode = cutReasonRule(document.getElementById('cutReason').value).areas;
+            if (areasMode !== 'requisicion') {
+                if (areasMode === 'libre') {
+                    const _areaOptsFree = await _getFreeAreaOptions();
+                    areaContainer.innerHTML = `
+                        <label class="form-label">Área destino</label>
+                        <select class="form-select" id="cutArea" name="area">
+                            <option value="">Seleccionar área (opcional)...</option>
+                            ${_areaOptsFree}
+                        </select>
+                        <div id="productionPendingLimit" class="form-text mt-1 text-warning"></div>
+                    `;
+                }
                 _fpPendingTotal = 0;
                 applyMaxLimit();
                 return;
