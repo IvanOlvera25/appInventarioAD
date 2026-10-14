@@ -7847,6 +7847,31 @@ def api_create_fabric_roll():
 
 # ======== API: CORTE DE ROLLO ========
 
+# Etiqueta visible de cada motivo de corte.
+CUT_REASON_LABELS = {
+    'produccion':  'Producción',
+    'muestra':     'Muestra',
+    'desperdicio': 'Desperdicio',
+    'defecto':     'Material Defectuoso',
+    'ajuste':      'Ajuste de Inventario',
+}
+
+# Motivos en los que la tela sale hacia un proyecto: sin FP el metraje queda
+# fuera de todo costeo, así que se rechaza el corte.
+CUT_REASONS_REQUIRING_FP = {'produccion', 'muestra', 'defecto'}
+
+# Área a registrar cuando el corte no lleva un área real de destino. Antes todos
+# caían en 'Producción', lo que hacía parecer que una merma o un ajuste había
+# salido a producción.
+CUT_REASON_DEFAULT_AREA = {
+    'produccion':  'Producción',
+    'muestra':     'Muestra',
+    'desperdicio': 'Desperdicio',
+    'defecto':     'Material Defectuoso',
+    'ajuste':      'Ajuste de Inventario',
+}
+
+
 @app.route('/api/fabric-rolls/cut', methods=['POST'])
 @login_required
 @permission_required('register_movements')
@@ -7865,10 +7890,17 @@ def api_cut_fabric_roll():
         if not reason:
             return jsonify({'success': False, 'message': 'Debe seleccionar un motivo de corte'}), 400
 
-        # Un corte para Producción siempre lleva FP: sin ella la salida queda sin
-        # proyecto ni área y no descuenta lo abastecido de la requisición.
-        if reason == 'produccion' and not fp_code:
-            return jsonify({'success': False, 'message': 'Debe indicar la FP para un corte de Producción'}), 400
+        # La tela que sale hacia un proyecto siempre lleva FP: sin ella el metraje
+        # queda sin proyecto al que cargarse y no descuenta lo abastecido.
+        if reason in CUT_REASONS_REQUIRING_FP and not fp_code:
+            return jsonify({
+                'success': False,
+                'message': f'Debe indicar la FP para un corte de {CUT_REASON_LABELS.get(reason, reason)}'
+            }), 400
+
+        # Un ajuste de inventario no sale a ningún proyecto.
+        if reason == 'ajuste':
+            fp_code = ''
 
         # Ajuste de inventario solo para admins
         if reason == 'ajuste' and current_user.role != 'admin':
@@ -7917,6 +7949,7 @@ def api_cut_fabric_roll():
 
         # Actualizar stock del material
         material = roll.material
+        previous_stock = round(material.current_stock or 0, 4)
         material.current_stock = (material.current_stock or 0) - cut_length
         material.last_movement = now_mx()
 
@@ -7951,17 +7984,10 @@ def api_cut_fabric_roll():
                 elif any(s in ('abastecido', 'entregado') for s in statuses):
                     req.status = 'en_progreso'
 
-        # Movimiento de SALIDA por corte de rollo
+        # Movimiento de inventario por el corte (salida, o ajuste si ese es el motivo)
         mot = f'Corte rollo {roll.roll_number}'
         if reason:
-            reason_labels = {
-                'produccion': 'Producción',
-                'muestra': 'Muestra',
-                'desperdicio': 'Desperdicio',
-                'defecto': 'Material Defectuoso',
-                'ajuste': 'Ajuste de Inventario'
-            }
-            mot += f' · Motivo: {reason_labels.get(reason, reason)}'
+            mot += f' · Motivo: {CUT_REASON_LABELS.get(reason, reason)}'
         if fp_code:
             mot += f' · FP: {fp_code}'
         if area:
@@ -7969,18 +7995,27 @@ def api_cut_fabric_roll():
         if notes:
             mot += f' · {notes}'
 
+        # Un ajuste de inventario NO es una salida de material: se registra como
+        # 'ajuste' (cantidad negativa + stock previo, igual que el ajuste manual)
+        # para que no infle las salidas ni los reportes por proyecto.
+        is_adjustment = (reason == 'ajuste')
+
         mv = StockMovement(
             material_id=material.id,
-            movement_type='salida',
-            quantity=cut_length,
+            movement_type='ajuste' if is_adjustment else 'salida',
+            quantity=-cut_length if is_adjustment else cut_length,
+            previous_stock=previous_stock if is_adjustment else None,
             rollos=0,
             fp_code=fp_code if fp_code else None,
+            unit_cost=material.unit_cost,
             reference_type='corte_rollo',
             reference_id=roll.id,       # Vínculo directo al rollo para actualizaciones futuras
             fabric_roll_id=roll.id,     # FK explícita al rollo de origen (para mostrar/filtrar)
             user_id=current_user.id,
             personal=current_user.username,
-            area=area if area else 'Producción',
+            # Sin área explícita se usa la del motivo; antes todo caía en
+            # 'Producción' y una merma parecía material entregado a producción.
+            area=area if area else CUT_REASON_DEFAULT_AREA.get(reason, 'Almacén'),
             fecha=now_mx().date(),
             hora=now_mx().time(),
             notes=mot
@@ -8535,8 +8570,12 @@ def roll_history(roll_id):
         )
     ).order_by(StockMovement.created_at.asc()).all()
 
-    # Total cortado/salido del rollo
-    total_cut = sum((m.quantity or 0) for m in movements if m.movement_type == 'salida')
+    # Total cortado/salido del rollo. Los ajustes de corte se guardan con
+    # cantidad negativa, pero también son metros que salieron del rollo.
+    total_cut = sum(
+        abs(m.quantity or 0) for m in movements
+        if m.movement_type == 'salida' or (m.movement_type == 'ajuste' and (m.quantity or 0) < 0)
+    )
 
     # Datos de proyecto para mostrar nombre/cliente junto al FP
     fp_codes = {m.fp_code for m in movements if m.fp_code}

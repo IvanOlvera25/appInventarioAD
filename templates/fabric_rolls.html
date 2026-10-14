@@ -448,7 +448,7 @@
 
                     <div id="productionFields" style="display: none;">
                         <div class="mb-3">
-                            <label class="form-label">FP</label>
+                            <label class="form-label">FP <span class="text-danger" id="cutFpRequiredMark">*</span></label>
                             <div class="input-group">
                                 <input type="text" class="form-control" id="cutFpCode" name="fp_code"
                                     placeholder="Ej: FP-2025-001" autocomplete="off"
@@ -609,10 +609,11 @@
             return;
         }
 
-        // Un corte para Producción siempre debe llevar FP (el backend también lo exige)
-        if (reason === 'produccion' && !fpCode) {
+        // La tela que sale hacia un proyecto siempre lleva FP (el backend también lo exige)
+        if (cutReasonRule(reason).fp === 'required' && !fpCode) {
+            const label = document.getElementById('cutReason').selectedOptions[0].text;
             document.getElementById('cutFpCode').focus();
-            alert('Debe indicar la FP para un corte de Producción');
+            alert(`Debe indicar la FP para un corte de ${label}`);
             return;
         }
 
@@ -781,28 +782,47 @@
         }
     }
 
-    // Lógica dinámica para modal de corte
+    // Lógica dinámica para modal de corte.
+    // Qué pide cada motivo: la tela que sale hacia un proyecto siempre lleva FP,
+    // si no el metraje queda sin proyecto al que cargarse.
+    const CUT_REASON_RULES = {
+        produccion:  { fp: 'required', areas: 'requisicion' },
+        muestra:     { fp: 'required', areas: 'libre' },
+        defecto:     { fp: 'required', areas: 'libre' },
+        desperdicio: { fp: 'optional', areas: 'none' },
+        ajuste:      { fp: 'none',     areas: 'none' },
+        '':          { fp: 'none',     areas: 'none' },
+    };
+
+    function cutReasonRule(reason) {
+        return CUT_REASON_RULES[reason] || CUT_REASON_RULES[''];
+    }
+
     function handleCutReasonChange() {
-        const reason    = document.getElementById('cutReason').value;
+        const reason = document.getElementById('cutReason').value;
+        const rule   = cutReasonRule(reason);
         const prodFields = document.getElementById('productionFields');
+        const fpInput    = document.getElementById('cutFpCode');
 
-        if (reason === 'produccion') {
-            prodFields.style.display = 'block';
-            document.getElementById('cutFpCode').required = true;
-        } else {
+        if (rule.fp === 'none') {
             prodFields.style.display = 'none';
-            document.getElementById('cutFpCode').required = false;
-
-            // Para cualquier otra razón no aplica FP ni área: limpiar los campos ocultos
-            // para que no viajen en el formulario, y el límite es la longitud del rollo.
-            if (document.getElementById('cutFpCode').value) {
-                document.getElementById('cutFpCode').value = '';
-            }
+            fpInput.required = false;
+            // Limpiar lo que quede oculto para que no viaje en el formulario
+            fpInput.value = '';
             resetFpSearch();
+        } else {
+            prodFields.style.display = 'block';
+            fpInput.required = (rule.fp === 'required');
+            document.getElementById('cutFpRequiredMark').style.display =
+                (rule.fp === 'required') ? '' : 'none';
+            // El motivo cambia qué áreas aplican, así que se recarga la búsqueda
+            const fp = fpInput.value.trim();
+            resetFpSearch();
+            if (fp) searchFpInfo();
         }
         applyMaxLimit();
     }
-    
+
     async function searchFpInfo() {
         const fpCode    = document.getElementById('cutFpCode').value.trim();
         const materialId = document.getElementById('cutMaterialId').value;
@@ -844,6 +864,24 @@
             // Mostrar nombre del proyecto
             infoDiv.innerHTML = `<strong>${data.project_name}</strong>` +
                 (data.client ? ` · Cliente: ${data.client}` : '');
+
+            // Muestra / Material Defectuoso: se cargan al proyecto, pero no
+            // consumen lo abastecido de la requisición, así que el área se elige
+            // libremente y el límite es la longitud del rollo.
+            if (cutReasonRule(document.getElementById('cutReason').value).areas === 'libre') {
+                const _areaOptsFree = await _getFreeAreaOptions();
+                areaContainer.innerHTML = `
+                    <label class="form-label">Área destino</label>
+                    <select class="form-select" id="cutArea" name="area">
+                        <option value="">Seleccionar área (opcional)...</option>
+                        ${_areaOptsFree}
+                    </select>
+                    <div id="productionPendingLimit" class="form-text mt-1 text-warning"></div>
+                `;
+                _fpPendingTotal = 0;
+                applyMaxLimit();
+                return;
+            }
 
             // ¿Existe alguna requisición de este material?
             if (!data.has_requisition && !freeExitEnabled) {
