@@ -4,9 +4,12 @@ Los cortes con motivo Muestra, Desperdicio y Material Defectuoso no pedían FP, 
 que entre el 03/09/2026 y el 06/10/2026 se registraron 11 salidas sin proyecto al
 que cargarlas (ver el commit que exige FP en todos los motivos salvo Ajuste).
 
+Normalmente no hace falta: basta con llenar cortes_fp_asignaciones.py y hacer
+Reload, porque el arranque de la app aplica las asignaciones solo. Este script
+sirve para revisar antes de aplicar, o para aplicarlas sin reiniciar la app.
+
 Uso:
-    1. Llena ASIGNACIONES con la FP que producción confirme para cada movimiento.
-       Deja fuera (o en None) los que de verdad no deban llevar FP.
+    1. Llena cortes_fp_asignaciones.py con la FP que producción confirme.
     2. Corre en seco para revisar lo que haría, sin tocar nada:
            python3 reclasificar_cortes_sin_fp.py
     3. Aplica los cambios:
@@ -23,21 +26,9 @@ import pymysql
 
 from config import Config as C
 
-# ── id del movimiento → FP confirmada por producción ─────────────────────────
-# Pon None en los que deban quedarse sin FP.
-ASIGNACIONES = {
-    1350: None,   # 03/09 13:49 · Tela Lx Blanca 2.60   ·  70.00 m · rollo 93               · Material Defectuoso
-    2051: None,   # 30/09 12:45 · Tela Lumicom De 3.20  ·   0.70 m · rollo 150              · Desperdicio
-    2304: None,   # 01/10 14:40 · Tela Sarga Blanca 3.20·   2.00 m · rollo 128              · Desperdicio
-    2305: None,   # 01/10 14:40 · Tela Sarga Blanca 3.20·   0.50 m · rollo 120              · Desperdicio
-    2546: None,   # 02/10 09:20 · Tela Lx Negra 3.20    ·   0.76 m · rollo 173              · Desperdicio
-    2646: None,   # 02/10 13:30 · Tela Lumicom De 3.20  ·  74.00 m · rollo ROL-20261002-009 · Material Defectuoso
-    2684: None,   # 02/10 18:45 · Tela Liner 1.50       ·  41.00 m · rollo 166              · Material Defectuoso
-    2685: None,   # 02/10 18:47 · Tela Liner 1.50       ·  28.00 m · rollo 84               · Desperdicio
-    2686: None,   # 02/10 18:47 · Tela Liner 1.50       ·  41.00 m · rollo 83               · Material Defectuoso
-    2687: None,   # 02/10 18:47 · Tela Liner 1.50       ·  45.00 m · rollo 82               · Desperdicio
-    2742: None,   # 06/10 15:01 · Tela Lx Blanca 2.60   · 247.00 m · rollo ROL-20261001-003 · Desperdicio
-}
+# Las asignaciones viven en cortes_fp_asignaciones.py, el mismo archivo que lee
+# el arranque de la app, para no mantener dos listas.
+from cortes_fp_asignaciones import pendientes as _fp_pendientes
 
 # Área que corresponde a cada motivo, igual que CUT_REASON_DEFAULT_AREA en app.py.
 AREA_POR_MOTIVO = {
@@ -58,9 +49,10 @@ def motivo_de(notes):
 def main():
     aplicar = '--aplicar' in sys.argv
 
-    pendientes = {mid: fp for mid, fp in ASIGNACIONES.items() if fp}
+    pendientes = _fp_pendientes()
     if not pendientes:
-        print('No hay ninguna FP asignada en ASIGNACIONES. Llena el diccionario y vuelve a correr.')
+        print('No hay ninguna FP capturada en cortes_fp_asignaciones.py. '
+              'Llena ese archivo y vuelve a correr.')
         return 1
 
     conn = pymysql.connect(host=C.REMOTE_DB_HOST, port=C.REMOTE_DB_PORT,

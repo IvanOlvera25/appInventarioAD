@@ -237,6 +237,58 @@ with app.app_context():
                     _conn2.execute(_text2(_fr_ddl))
                     print(f"  ✅ Columna '{_fr_col}' agregada a fabric_roll")
 
+            # -- Cortes de tela históricos: área real y ajustes mal tipificados --
+            # Hasta octubre de 2026 el corte de rollo guardaba area='Producción'
+            # por defecto en TODOS los motivos, y el motivo 'Ajuste de Inventario'
+            # se registraba como salida. Ambas correcciones son deterministas: el
+            # motivo real está en la nota del movimiento. Son idempotentes, así que
+            # tras el primer arranque ya no actualizan nada.
+            for _mot_label, _mot_area in (
+                ('Muestra',             'Muestra'),
+                ('Desperdicio',         'Desperdicio'),
+                ('Material Defectuoso', 'Material Defectuoso'),
+                ('Ajuste de Inventario', 'Ajuste de Inventario'),
+            ):
+                _fix_area = _conn2.execute(_text2(
+                    "UPDATE `stock_movement` SET area = :area "
+                    "WHERE reference_type = 'corte_rollo' AND area = 'Producción' "
+                    "AND notes LIKE :pat"
+                ), {"area": _mot_area, "pat": f"%Motivo: {_mot_label}%"})
+                if getattr(_fix_area, 'rowcount', 0):
+                    print(f"  ✅ Área corregida a '{_mot_area}' en {_fix_area.rowcount} corte(s) de tela")
+
+            # Los cortes por ajuste de inventario dejan de contar como salida. Se
+            # normaliza la cantidad a negativa, que es la convención de los ajustes.
+            _fix_adj = _conn2.execute(_text2(
+                "UPDATE `stock_movement` SET movement_type = 'ajuste', quantity = -ABS(quantity) "
+                "WHERE reference_type = 'corte_rollo' AND movement_type = 'salida' "
+                "AND notes LIKE '%Motivo: Ajuste de Inventario%'"
+            ))
+            if getattr(_fix_adj, 'rowcount', 0):
+                print(f"  ✅ {_fix_adj.rowcount} corte(s) por ajuste reclasificados de salida a ajuste")
+
+            # -- FP pendientes de asignar a cortes históricos --
+            # Las FP de esos cortes solo las sabe producción, así que se capturan
+            # en cortes_fp_asignaciones.py y se aplican en el siguiente arranque.
+            # El candado por fp_code vacío lo hace idempotente y evita pisar una
+            # FP ya registrada.
+            try:
+                from cortes_fp_asignaciones import pendientes as _fp_pendientes
+                for _mv_id, _mv_fp in _fp_pendientes().items():
+                    _fx = _conn2.execute(_text2(
+                        "UPDATE `stock_movement` "
+                        "SET fp_code = :fp, "
+                        "    notes = CONCAT(COALESCE(notes, ''), ' · FP asignada posteriormente: ', :fp) "
+                        "WHERE id = :id AND reference_type = 'corte_rollo' "
+                        "AND (fp_code IS NULL OR fp_code = '')"
+                    ), {"fp": _mv_fp, "id": _mv_id})
+                    if getattr(_fx, 'rowcount', 0):
+                        print(f"  ✅ Movimiento {_mv_id}: FP {_mv_fp} asignada")
+            except ImportError:
+                pass
+            except Exception as _e_fp:
+                print(f"  ⚠️  No se pudieron aplicar las FP pendientes: {_e_fp}")
+
             # -- Módulo de herramientas: tool / tool_reservation / tool_repair / tool_loan --
             # Sin FK a nivel de motor (igual que audit_log): las relaciones se resuelven
             # en SQLAlchemy y así el orden de creación nunca bloquea el arranque.
