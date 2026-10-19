@@ -35,13 +35,7 @@
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="projects-tab" data-bs-toggle="tab" data-bs-target="#projects-pane"
                     type="button" role="tab">
-                    <i class="fas fa-hammer me-1"></i>Proyectos Activos
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="all-projects-tab" data-bs-toggle="tab" data-bs-target="#all-projects-pane"
-                    type="button" role="tab">
-                    <i class="fas fa-folder me-1"></i>Todos los Proyectos
+                    <i class="fas fa-folder-open me-1"></i>Resumen del proyecto
                 </button>
             </li>
         </ul>
@@ -419,38 +413,20 @@
                 </div>
             </div>
 
-            <!-- Tab 2: Proyectos Activos -->
-            <div class="tab-pane fade" id="projects-pane" role="tabpanel">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0"><i class="fas fa-hammer me-2"></i>Proyectos Activos (Con Requisiciones Pendientes)
-                    </h5>
-                </div>
-                <div class="card-body" id="activeProjectsContent">
-                    <div class="text-center py-5 text-muted" id="activeProjectsLoading">
-                        <i class="fas fa-spinner fa-spin fa-2x mb-3 d-block"></i>
-                        <p>Cargando proyectos activos...</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tab 3: Todos los Proyectos -->
-        <div class="tab-pane fade" id="all-projects-pane" role="tabpanel">
-            <div class="card">
-                <div class="card-header">
-                    <h5 class="mb-0"><i class="fas fa-folder me-2"></i>Todos los Proyectos</h5>
-                </div>
-                <div class="card-body" id="allProjectsContent">
-                    <div class="text-center py-5 text-muted" id="allProjectsLoading">
-                        <i class="fas fa-spinner fa-spin fa-2x mb-3 d-block"></i>
-                        <p>Cargando proyectos...</p>
+            <div class="tab-pane fade" id="projects-pane" role="tabpanel" aria-labelledby="projects-tab">
+                <div class="card">
+                    <div class="card-header"><h5 class="mb-0">Resumen del proyecto</h5></div>
+                    <div class="card-body">
+                        <label for="projectReportSearch" class="form-label">Buscar por FP, nombre del proyecto o cliente</label>
+                        <input type="search" id="projectReportSearch" class="form-control" placeholder="Ej. 9895, Stand Banamex o cliente" autocomplete="off" aria-describedby="projectSearchStatus">
+                        <p id="projectSearchStatus" class="small text-muted mt-2" role="status">Escribe una FP, nombre de proyecto o cliente.</p>
+                        <div id="projectSearchResults" class="list-group mb-3" style="max-height: 320px; overflow-y: auto;"></div>
+                        <div id="projectReportContent" aria-live="polite"><p class="text-muted py-4">Selecciona un proyecto para consultar sus materiales y requisiciones.</p></div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-</div>
 </div>
 
 <!-- Modal para detalles de requisición -->
@@ -918,136 +894,6 @@
             });
     }
 
-    // ===== CARGA LAZY DE TABS DE PROYECTOS =====
-    let activeProjectsLoaded = false;
-    let allProjectsLoaded = false;
-
-    const statusColors = {
-        'pendiente': 'warning', 'abastecido': 'info', 'pendiente_compra': 'secondary',
-        'en_entrega': 'primary', 'completada': 'success', 'cancelada': 'danger'
-    };
-
-    // Cargar Proyectos Activos al hacer clic en la pestaña
-    document.getElementById('projects-tab').addEventListener('shown.bs.tab', function () {
-        if (activeProjectsLoaded) return;
-        activeProjectsLoaded = true;
-        fetch('/api/projects/active-with-requests')
-            .then(r => r.json())
-            .then(data => {
-                const container = document.getElementById('activeProjectsContent');
-                if (!data.success || !data.projects || data.projects.length === 0) {
-                    container.innerHTML = '<div class="text-center py-5"><i class="fas fa-check-circle fa-3x text-success mb-3"></i><h5>No hay proyectos activos con pendientes</h5></div>';
-                    return;
-                }
-                let html = '<div id="projectsAccordion" class="accordion">';
-                data.projects.forEach((p, idx) => {
-                    const s = p.stats;
-                    // Requisiciones rows
-                    let reqRows = p.requests.map(r => {
-                        const sc = statusColors[r.status] || 'secondary';
-                        return `<tr class="${r.is_incident ? 'table-warning' : ''}">
-                            <td><strong>${r.request_number}</strong>${r.is_incident ? '<br><span class="badge bg-danger badge-sm">INCIDENCIA</span>' : ''}<br><small class="text-muted">${r.username}</small></td>
-                            <td>${r.department}${r.area ? '<br><small class="text-muted">' + r.area + '</small>' : ''}</td>
-                            <td><span class="badge bg-${sc}">${r.status.replace('_', ' ')}</span></td>
-                            <td>${r.created_at}</td>
-                            <td>${r.acquisition_deadline ? '<span class="text-danger">' + r.acquisition_deadline + '</span>' : '-'}</td>
-                            <td><button class="btn btn-sm btn-outline-primary" onclick="viewRequest(${r.id})" data-bs-toggle="modal" data-bs-target="#requestDetailModal"><i class="fas fa-eye"></i></button></td>
-                        </tr>`;
-                    }).join('');
-
-                    // Materials rows
-                    let matRows = p.materials.map(m => {
-                        const pending = m.total_requested - m.total_delivered;
-                        const st = m.total_delivered === 0 ? '<span class="badge bg-secondary">Sin entregar</span>' :
-                                   m.total_delivered < m.total_requested ? '<span class="badge bg-warning">Parcial</span>' :
-                                   '<span class="badge bg-success">Completo</span>';
-                        return `<tr><td><strong>${m.name}</strong></td><td><small class="text-muted">${m.code}</small></td>
-                            <td>${m.total_requested} ${m.unit}</td><td>${m.total_delivered} ${m.unit}</td>
-                            <td><strong>${pending} ${m.unit}</strong></td><td>${st}</td></tr>`;
-                    }).join('');
-
-                    html += `
-                    <div class="accordion-item">
-                        <h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseP${idx}">
-                            <div class="d-flex justify-content-between w-100 me-3">
-                                <div><strong>${p.fp_code}</strong> - ${p.client || 'Sin Cliente'} - ${p.name}<br><small class="text-muted">Entrega: ${p.delivery_date}</small></div>
-                                <div class="text-end"><span class="badge bg-warning text-dark">${p.requests.length} pendientes</span></div>
-                            </div>
-                        </button></h2>
-                        <div id="collapseP${idx}" class="accordion-collapse collapse" data-bs-parent="#projectsAccordion">
-                            <div class="accordion-body">
-                                <div class="row mb-3">
-                                    <div class="col-md-8">
-                                        <h6 class="text-primary">Información del Proyecto</h6>
-                                        <table class="table table-sm table-borderless">
-                                            <tr><td style="width:150px"><strong>FP:</strong></td><td>${p.fp_code}</td></tr>
-                                            <tr><td><strong>Proyecto:</strong></td><td>${p.name}</td></tr>
-                                            <tr><td><strong>Cliente:</strong></td><td>${p.client || '-'}</td></tr>
-                                            <tr><td><strong>Entrega:</strong></td><td>${p.delivery_date}</td></tr>
-                                        </table>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <h6 class="text-primary">Estadísticas</h6>
-                                        <div class="d-flex flex-column gap-1">
-                                            <span class="badge bg-warning text-dark d-flex justify-content-between"><span>Pendientes</span><span>${s.pending}</span></span>
-                                            <span class="badge bg-secondary d-flex justify-content-between"><span>Pend. Compra</span><span>${s.pending_buy}</span></span>
-                                            <span class="badge bg-info d-flex justify-content-between"><span>Abastecidas</span><span>${s.supplied}</span></span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <h6>Requisiciones Activas</h6>
-                                <div class="table-responsive"><table class="table table-sm table-bordered table-hover">
-                                    <thead class="table-light"><tr><th>No. Requisición</th><th>Depto / Área</th><th>Estado</th><th>Fecha Solicitud</th><th>Límite Adquisición</th><th>Acciones</th></tr></thead>
-                                    <tbody>${reqRows}</tbody>
-                                </table></div>
-                                <h6 class="mt-4">Consolidado de Materiales (Activos)</h6>
-                                <div class="table-responsive"><table class="table table-sm table-striped">
-                                    <thead class="table-dark"><tr><th>Material</th><th>Código</th><th>Cant. Solicitada</th><th>Cant. Entregada</th><th>Pendiente</th><th>Estado</th></tr></thead>
-                                    <tbody>${matRows}</tbody>
-                                </table></div>
-                                <div class="mt-3">
-                                    <button class="btn btn-sm btn-outline-primary" onclick="exportProjectReport('${p.fp_code}')"><i class="fas fa-download me-1"></i>Exportar Reporte</button>
-                                    <button class="btn btn-sm btn-outline-success" onclick="generateProjectSummary('${p.id}')"><i class="fas fa-chart-bar me-1"></i>Generar Resumen</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>`;
-                });
-                html += '</div>';
-                container.innerHTML = html;
-            })
-            .catch(err => {
-                document.getElementById('activeProjectsContent').innerHTML = '<div class="alert alert-danger">Error al cargar proyectos: ' + err.message + '</div>';
-            });
-    });
-
-    // Cargar Todos los Proyectos al hacer clic en la pestaña
-    document.getElementById('all-projects-tab').addEventListener('shown.bs.tab', function () {
-        if (allProjectsLoaded) return;
-        allProjectsLoaded = true;
-        fetch('/api/projects/all-list')
-            .then(r => r.json())
-            .then(data => {
-                const container = document.getElementById('allProjectsContent');
-                if (!data.success || !data.projects || data.projects.length === 0) {
-                    container.innerHTML = '<div class="text-center py-5 text-muted"><h5>No hay proyectos registrados</h5></div>';
-                    return;
-                }
-                let rows = data.projects.map(p => `<tr>
-                    <td><strong>${p.fp_code}</strong></td><td>${p.name}</td><td>${p.client}</td>
-                    <td>${p.delivery_date}</td><td>${p.production_start}</td><td>${p.assembly_date}</td>
-                    <td><span class="badge bg-info">${p.req_count}</span></td>
-                    <td><button class="btn btn-sm btn-outline-primary" onclick="exportProjectReport('${p.fp_code}')"><i class="fas fa-download"></i></button></td>
-                </tr>`).join('');
-                container.innerHTML = `<div class="table-responsive"><table class="table table-hover table-bordered">
-                    <thead class="table-light"><tr><th>FP</th><th>Proyecto</th><th>Cliente</th><th>Entrega</th><th>Producción</th><th>Montaje</th><th>Requisiciones</th><th>Acciones</th></tr></thead>
-                    <tbody>${rows}</tbody></table></div>`;
-            })
-            .catch(err => {
-                document.getElementById('allProjectsContent').innerHTML = '<div class="alert alert-danger">Error al cargar proyectos: ' + err.message + '</div>';
-            });
-    });
-
     // Estilos para timeline
     const timelineStyles = `
 <style>
@@ -1112,4 +958,5 @@
         }
     }, 120000);
 </script>
+<script src="{{ url_for('static', filename='js/project-report.js') }}"></script>
 {% endblock %}

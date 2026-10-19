@@ -22,6 +22,7 @@ import secrets  # <- si estás generando códigos de verificación
 from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
+from project_report import read_project_report
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'tu-clave-secreta-aqui'
@@ -2640,6 +2641,42 @@ def requests():
                          unique_materials=unique_materials)
 
 
+@app.route('/api/projects/search')
+@login_required
+def search_report_projects():
+    term = request.args.get('q', '').strip()
+    if not term:
+        return jsonify({'success': True, 'projects': [], 'has_more': False})
+    # Escapar comodines: la búsqueda es literal y siempre parametrizada.
+    pattern = '%' + term.replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'
+    projects = Project.query.filter(db.or_(
+        Project.fp_code.ilike(pattern, escape='!'),
+        Project.name.ilike(pattern, escape='!'),
+        Project.client.ilike(pattern, escape='!')
+    )).order_by((Project.fp_code == term).desc(), Project.fp_code.desc(), Project.name).limit(51).all()
+    return jsonify({'success': True, 'has_more': len(projects) > 50, 'projects': [
+        {'id': p.id, 'fp_code': p.fp_code, 'name': p.name, 'client': p.client or ''}
+        for p in projects[:50]
+    ]})
+
+
+@app.route('/api/projects/<int:project_id>/report')
+@login_required
+def project_report(project_id):
+    project = Project.query.get_or_404(project_id)
+    try:
+        report = read_project_report(db.engine, project.fp_code)
+        report['project'] = {
+            'id': project.id, 'fp_code': project.fp_code, 'name': project.name,
+            'client': project.client or '',
+            'delivery_date': project.delivery_date.isoformat() if project.delivery_date else None
+        }
+        return jsonify({'success': True, **report})
+    except Exception:
+        app.logger.exception('Error al leer resumen de FP %s', project.fp_code)
+        return jsonify({'success': False, 'message': 'No se pudo cargar el resumen del proyecto. Intenta nuevamente.'}), 500
+
+
 @app.route('/api/projects/active-with-requests')
 @login_required
 def api_active_projects():
@@ -3617,11 +3654,11 @@ def export_project_report(fp_code):
         ws_summary['A4'] = "Nombre:"
         ws_summary['B4'] = project.name
         ws_summary['A5'] = "Fecha Entrega:"
-        ws_summary['B5'] = project.delivery_date.strftime('%d/%m/%Y')
+        ws_summary['B5'] = project.delivery_date.strftime('%d/%m/%Y') if project.delivery_date else '-'
         ws_summary['A6'] = "Inicio Producción:"
-        ws_summary['B6'] = project.production_start.strftime('%d/%m/%Y')
+        ws_summary['B6'] = project.production_start.strftime('%d/%m/%Y') if project.production_start else '-'
         ws_summary['A7'] = "Fecha Montaje:"
-        ws_summary['B7'] = project.assembly_date.strftime('%d/%m/%Y')
+        ws_summary['B7'] = project.assembly_date.strftime('%d/%m/%Y') if project.assembly_date else '-'
 
         # Estadísticas
         total_requests = len(project_requests)
@@ -3670,55 +3707,22 @@ def export_project_report(fp_code):
         # Hoja 3: Consolidado de materiales
         ws_materials = wb.create_sheet("Materiales Consolidado")
 
-        # Consolidar materiales
-        materials_consolidated = {}
-        for req in project_requests:
-            for item in req.items:
-                if item.is_new_material:
-                    key = item.new_material_code
-                    name = item.new_material_name
-                    unit = item.new_material_unit
-                else:
-                    key = item.material.code
-                    name = item.material.name
-                    unit = item.material.unit
-
-                if key not in materials_consolidated:
-                    materials_consolidated[key] = {
-                        'name': name,
-                        'unit': unit,
-                        'total_requested': 0,
-                        'total_delivered': 0,
-                        'will_return': False,
-                        'requests': []
-                    }
-
-                materials_consolidated[key]['total_requested'] += item.quantity_requested
-                materials_consolidated[key]['total_delivered'] += item.quantity_delivered
-                if item.will_return:
-                    materials_consolidated[key]['will_return'] = True
-                materials_consolidated[key]['requests'].append(req.request_number)
-
-        mat_headers = [
-            "Código", "Material", "Unidad", "Total Solicitado",
-            "Total Entregado", "Pendiente", "¿Retorna?", "Requisiciones"
-        ]
-
+        # Misma fuente que el resumen en pantalla (salidas reales por área).
+        report = read_project_report(db.engine, project.fp_code)
+        mat_headers = ["Área", "Material", "Categoría", "Unidad", "Total Solicitado",
+                       "Total Entregado", "Pendiente"]
         for col, header in enumerate(mat_headers, 1):
             cell = ws_materials.cell(row=1, column=col, value=header)
             cell.font = header_font
             cell.fill = header_fill
-
-        for row, (code, data) in enumerate(materials_consolidated.items(), 2):
-            pending = data['total_requested'] - data['total_delivered']
-            ws_materials.cell(row=row, column=1, value=code)
-            ws_materials.cell(row=row, column=2, value=data['name'])
-            ws_materials.cell(row=row, column=3, value=data['unit'])
-            ws_materials.cell(row=row, column=4, value=data['total_requested'])
-            ws_materials.cell(row=row, column=5, value=data['total_delivered'])
-            ws_materials.cell(row=row, column=6, value=pending)
-            ws_materials.cell(row=row, column=7, value='SÍ' if data['will_return'] else 'NO')
-            ws_materials.cell(row=row, column=8, value=', '.join(set(data['requests'])))
+        for row, material in enumerate(report['materials'], 2):
+            values = [material['area'], material.get('name'), material.get('category'),
+                      material.get('unit'), material['quantity_requested'],
+                      material['quantity_delivered'], material['quantity_pending']]
+            for col, value in enumerate(values, 1):
+                cell = ws_materials.cell(row=row, column=col, value=value)
+                if isinstance(value, str):
+                    cell.data_type = 's'
 
         # Ajustar ancho de columnas
         for ws in [ws_summary, ws_requests, ws_materials]:
