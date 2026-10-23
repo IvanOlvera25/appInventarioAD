@@ -4,6 +4,15 @@
 {% block page_title %}Gestión de Requisiciones{% endblock %}
 
 {% block content %}
+<style>
+    /* Resumen de proyecto: las cantidades se leen en columna, así que van con
+       cifras de ancho fijo y alineadas a la derecha. */
+    .project-materials th,
+    .project-materials td { vertical-align: middle; white-space: nowrap; }
+    .project-materials td.text-end,
+    .project-materials th.text-end { font-variant-numeric: tabular-nums; }
+    .project-materials th { font-size: .78rem; text-transform: uppercase; letter-spacing: .02em; }
+</style>
 <!-- Definir variables globales para usar en todo el template -->
 {% set status_colors = {
 'pendiente': 'warning',

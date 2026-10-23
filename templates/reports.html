@@ -1102,6 +1102,8 @@ let pendingData = [];
 {% if pending_purchases_data %}
 pendingData = {{ pending_purchases_data | tojson | safe }};
 {% endif %}
+// Catálogo de estados que define el encargado de compras.
+let purchaseStatuses = {{ (purchase_statuses or []) | tojson | safe }};
 
 function renderPendingPurchases() {
     const groupMode = document.getElementById('pendingGroupSelect').value;
@@ -1162,10 +1164,12 @@ function renderPendingPurchases() {
     
     // Render Cabecera
     const thead = document.querySelector('#pendingPurchasesTable thead');
+    // Agrupando por material una compra puede tener varios estados, así que la
+    // columna de estado solo aparece cuando cada fila es una compra concreta.
     if (groupMode === 'material') {
         thead.innerHTML = `<tr><th>Material</th><th>Cantidad</th><th>Unidad</th><th>Límite</th><th>Solicitado</th><th>Num Proyectos</th></tr>`;
     } else {
-        thead.innerHTML = `<tr><th>Material</th><th>Proyecto</th><th>Cliente</th><th>Cantidad</th><th>Límite</th><th>Solicitado</th></tr>`;
+        thead.innerHTML = `<tr><th>Material</th><th>Proyecto</th><th>Cliente</th><th>Cantidad</th><th>Límite</th><th>Solicitado</th><th style="min-width:170px;">Estado</th></tr>`;
     }
     
     // Render Cuerpo
@@ -1173,7 +1177,7 @@ function renderPendingPurchases() {
     tbody.innerHTML = '';
     
     if (grouped.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No hay materiales pendientes de compra</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">No hay materiales pendientes de compra</td></tr>`;
         return;
     }
     
@@ -1189,6 +1193,9 @@ function renderPendingPurchases() {
                 <td><span class="badge bg-secondary">${item.num_projects}</span></td>
             `;
         } else {
+            const opciones = purchaseStatuses.map(e =>
+                `<option value="${e.id}"${e.id === item.status_id ? ' selected' : ''}>${escapeHtml(e.name)}</option>`
+            ).join('');
             tr.innerHTML = `
                 <td><strong>${item.material_code}</strong><br><small class="text-muted">${item.material_name}</small></td>
                 <td><strong>${item.project_fp}</strong><br><small class="text-muted">${item.project_name}</small></td>
@@ -1196,10 +1203,53 @@ function renderPendingPurchases() {
                 <td class="text-primary fw-bold">${item.quantity} ${item.material_unit}</td>
                 <td>${item.acquisition_deadline !== '9999-12-31' ? item.acquisition_deadline : 'N/D'}</td>
                 <td>${item.created_at}</td>
+                <td>
+                    <select class="form-select form-select-sm purchase-status-select"
+                            data-purchase-id="${item.id}" aria-label="Estado de la compra">
+                        <option value="">Sin estado</option>
+                        ${opciones}
+                    </select>
+                    <small class="text-muted d-block mt-1">${escapeHtml(item.purchase_number || '')}</small>
+                </td>
             `;
         }
         tbody.appendChild(tr);
     });
+
+    // Cambiar el estado de una compra desde la propia tabla
+    tbody.querySelectorAll('.purchase-status-select').forEach(sel => {
+        sel.addEventListener('change', async function () {
+            const anterior = this.dataset.previous || '';
+            const body = new FormData();
+            body.set('status_id', this.value);
+            this.disabled = true;
+            try {
+                const res = await fetch(`/api/purchases/${this.dataset.purchaseId}/status`,
+                                        { method: 'POST', body });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'No se pudo cambiar el estado');
+                this.dataset.previous = this.value;
+                // Un estado final saca la compra del listado de pendientes.
+                if (data.is_final) {
+                    const fila = this.closest('tr');
+                    fila.classList.add('table-success');
+                    fila.querySelector('td:last-child').insertAdjacentHTML('beforeend',
+                        '<small class="text-success d-block">Se quitará del listado al recargar</small>');
+                }
+            } catch (err) {
+                alert(err.message);
+                this.value = anterior;
+            } finally {
+                this.disabled = false;
+            }
+        });
+        sel.dataset.previous = sel.value;
+    });
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c =>
+        ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 }
 
 // Inicialización al cargar la página

@@ -8,7 +8,7 @@ from sqlalchemy import func  # <— lo usas en agregaciones
 from sqlalchemy.orm import joinedload, selectinload  # <— eager loading
 from flask_compress import Compress
 from flask_caching import Cache
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 import pandas as pd
 import os
 import tempfile
@@ -16,13 +16,13 @@ import pymysql
 import pymysql.cursors
 from contextlib import contextmanager
 from utils import now_mx, today_mx
-from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog, SystemConfig, WarehouseLocation, Tool, ToolLoan, ToolRepair, ToolReservation
+from models import db, User, Project, Material, FabricRoll, Request, RequestItem, ProjectSummary, StockMovement, PurchaseRequest, VerificationCode, Department, Category, Unit, SystemAlert, AuditLog, SystemConfig, WarehouseLocation, Tool, ToolLoan, ToolRepair, ToolReservation, PurchaseStatus, ItemChangeRequest
 from functools import wraps
 import secrets  # <- si estás generando códigos de verificación
 from sqlalchemy import text
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
-from project_report import read_project_report
+from project_report import read_project_report, read_fp_availability
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'tu-clave-secreta-aqui'
@@ -237,6 +237,84 @@ with app.app_context():
                 if not _fr_has:
                     _conn2.execute(_text2(_fr_ddl))
                     print(f"  ✅ Columna '{_fr_col}' agregada a fabric_roll")
+
+            # -- Catálogo de estados de compra (lo define el encargado de compras) --
+            _conn2.execute(_text2("""
+                CREATE TABLE IF NOT EXISTS `purchase_status` (
+                    `id`         INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `name`       VARCHAR(80) NOT NULL UNIQUE,
+                    `color`      VARCHAR(20) DEFAULT 'secondary',
+                    `sort_order` INT DEFAULT 0,
+                    `is_active`  TINYINT(1) NOT NULL DEFAULT 1,
+                    `is_final`   TINYINT(1) NOT NULL DEFAULT 0,
+                    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            # Estados de arranque. Son solo un punto de partida: compras los edita
+            # desde la interfaz. INSERT IGNORE evita repetirlos en cada reload.
+            _conn2.execute(_text2("""
+                INSERT IGNORE INTO `purchase_status` (`name`, `color`, `sort_order`, `is_final`)
+                VALUES ('Pendiente',   'secondary', 10, 0),
+                       ('Cotizando',   'info',      20, 0),
+                       ('Autorizada',  'primary',   30, 0),
+                       ('En tránsito', 'warning',   40, 0),
+                       ('Recibida',    'success',   50, 1),
+                       ('Cancelada',   'danger',    60, 1)
+            """))
+            print("  ✅ Catálogo 'purchase_status' verificado/creado")
+
+            # -- Solicitudes de cancelación/intercambio de material --
+            _conn2.execute(_text2("""
+                CREATE TABLE IF NOT EXISTS `item_change_request` (
+                    `id`              INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `request_item_id` INT NOT NULL,
+                    `request_id`      INT NOT NULL,
+                    `change_type`     VARCHAR(20) NOT NULL,
+                    `new_material_id` INT DEFAULT NULL,
+                    `new_quantity`    FLOAT DEFAULT NULL,
+                    `reason`          TEXT,
+                    `status`          VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+                    `requested_by`    INT NOT NULL,
+                    `requested_at`    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    `resolved_by`     INT DEFAULT NULL,
+                    `resolved_at`     DATETIME DEFAULT NULL,
+                    `response_notes`  TEXT,
+                    INDEX idx_icr_item (`request_item_id`),
+                    INDEX idx_icr_request (`request_id`),
+                    INDEX idx_icr_status (`status`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            print("  ✅ Tabla 'item_change_request' verificada/creada")
+
+            # -- Migrar quantity_to_purchase → purchase_request --
+            # Las compras pendientes vivían como un número suelto en el renglón de la
+            # requisición, sin fecha límite ni estado. Se convierten en filas de
+            # purchase_request. El NOT EXISTS lo hace idempotente.
+            _mig_pr = _conn2.execute(_text2("""
+                INSERT INTO `purchase_request`
+                    (request_number, material_id, quantity, requested_by, status,
+                     request_id, request_item_id, deadline, status_id, created_at, notes)
+                SELECT CONCAT('CMP-', LPAD(ri.id, 6, '0')),
+                       ri.material_id,
+                       ROUND(ri.quantity_to_purchase, 4),
+                       r.user_id,
+                       'pendiente',
+                       r.id,
+                       ri.id,
+                       r.acquisition_deadline,
+                       (SELECT id FROM `purchase_status` WHERE name = 'Pendiente' LIMIT 1),
+                       COALESCE(r.created_at, NOW()),
+                       'Migrada desde request_item.quantity_to_purchase'
+                FROM `request_item` ri
+                JOIN `request` r ON r.id = ri.request_id
+                WHERE ri.quantity_to_purchase > 0
+                  AND ri.material_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM `purchase_request` pr WHERE pr.request_item_id = ri.id
+                  )
+            """))
+            if getattr(_mig_pr, 'rowcount', 0):
+                print(f"  ✅ {_mig_pr.rowcount} compra(s) migradas de request_item a purchase_request")
 
             # -- Cortes de tela históricos: área real y ajustes mal tipificados --
             # Hasta octubre de 2026 el corte de rollo guardaba area='Producción'
@@ -658,6 +736,21 @@ def safe_init_db():
                 if not _mysql_column_exists(conn, 'request_item', 'actual_return_date'):
                     conn.execute(text('ALTER TABLE `request_item` ADD COLUMN actual_return_date DATE'))
                     print("  ✅ Columna 'actual_return_date' agregada a request_item")
+
+            if 'purchase_request' in tables:
+                # La compra ahora guarda su origen (requisición + renglón), su fecha
+                # límite y su estado del catálogo, en lugar de vivir en
+                # request_item.quantity_to_purchase.
+                for _pr_col, _pr_ddl in (
+                    ('request_id',      'ALTER TABLE `purchase_request` ADD COLUMN request_id INT DEFAULT NULL'),
+                    ('request_item_id', 'ALTER TABLE `purchase_request` ADD COLUMN request_item_id INT DEFAULT NULL'),
+                    ('deadline',        'ALTER TABLE `purchase_request` ADD COLUMN deadline DATE DEFAULT NULL'),
+                    ('status_id',       'ALTER TABLE `purchase_request` ADD COLUMN status_id INT DEFAULT NULL'),
+                    ('updated_at',      'ALTER TABLE `purchase_request` ADD COLUMN updated_at DATETIME DEFAULT NULL'),
+                ):
+                    if not _mysql_column_exists(conn, 'purchase_request', _pr_col):
+                        conn.execute(text(_pr_ddl))
+                        print(f"  ✅ Columna '{_pr_col}' agregada a purchase_request")
 
             if 'user' in tables:
                 if not _mysql_column_exists(conn, 'user', 'is_verified'):
@@ -2660,12 +2753,64 @@ def search_report_projects():
     ]})
 
 
+def _enrich_report_materials(project, materials):
+    """Agrega al resumen del FP lo que el procedimiento no conoce: el id del
+    material, lo abastecido y lo pendiente de compra, que viven en la app.
+
+    El procedimiento identifica cada material por los campos que devuelve, así
+    que el cruce se intenta por id, luego por código y al final por nombre.
+    """
+    filas = (db.session.query(RequestItem, Material)
+             .join(Request, RequestItem.request_id == Request.id)
+             .outerjoin(Material, RequestItem.material_id == Material.id)
+             .filter(Request.project_id == project.id,
+                     RequestItem.item_status != 'cancelado')
+             .all())
+
+    por_id, por_codigo, por_nombre = {}, {}, {}
+
+    def acumular(destino, clave, item, material):
+        if not clave:
+            return
+        datos = destino.setdefault(clave, {
+            'material_id': material.id if material else None,
+            'code': material.code if material else (item.new_material_code or ''),
+            'supplied': 0.0, 'pending_purchase': 0.0,
+        })
+        datos['supplied'] += float(item.quantity_supplied or 0)
+        datos['pending_purchase'] += item_pending_purchase(item)
+
+    for item, material in filas:
+        nombre = (material.name if material else item.new_material_name) or ''
+        codigo = (material.code if material else item.new_material_code) or ''
+        if material:
+            acumular(por_id, material.id, item, material)
+        acumular(por_codigo, codigo.strip().casefold(), item, material)
+        acumular(por_nombre, nombre.strip().casefold(), item, material)
+
+    for fila in materials:
+        datos = None
+        for clave, mapa in ((fila.get('material_id') or fila.get('id'), por_id),
+                            (str(fila.get('code') or '').strip().casefold(), por_codigo),
+                            (str(fila.get('name') or '').strip().casefold(), por_nombre)):
+            if clave and clave in mapa:
+                datos = mapa[clave]
+                break
+        fila['material_id'] = (fila.get('material_id') or fila.get('id')
+                               or (datos or {}).get('material_id'))
+        fila['code'] = fila.get('code') or (datos or {}).get('code') or ''
+        fila['quantity_supplied'] = round((datos or {}).get('supplied', 0.0), 4)
+        fila['quantity_pending_purchase'] = round((datos or {}).get('pending_purchase', 0.0), 4)
+    return materials
+
+
 @app.route('/api/projects/<int:project_id>/report')
 @login_required
 def project_report(project_id):
     project = Project.query.get_or_404(project_id)
     try:
         report = read_project_report(db.engine, project.fp_code)
+        report['materials'] = _enrich_report_materials(project, report.get('materials', []))
         report['project'] = {
             'id': project.id, 'fp_code': project.fp_code, 'name': project.name,
             'client': project.client or '',
@@ -3806,19 +3951,34 @@ def generate_project_summary(project_id):
 def edit_request(id):
     req = Request.query.get_or_404(id)
 
-    # Verificar permisos: admin y almacenistas pueden editar cualquiera,
-    # requisitadores solo pueden editar sus propias requisiciones
-    if current_user.role in ('admin', 'almacenista'):
-        pass  # Pueden editar cualquier requisición
-    elif current_user.role == 'requisitador' and req.user_id == current_user.id:
-        pass  # Requisitadores pueden editar solo sus propias requisiciones
-    else:
-        flash('Solo el autor de la requisición, un almacenista o un administrador puede editarla.', 'danger')
+    # La edición libre (materiales, área, fechas, proyecto y cantidades) solo está
+    # abierta durante los primeros REQUEST_EDIT_WINDOW_MINUTES. Después hay que
+    # proponer el cambio y que lo autorice el autor.
+    permitido, motivo = can_edit_request(req, current_user)
+    if not permitido:
+        flash(motivo, 'warning' if req.status not in ('cancelada', 'completada') else 'danger')
         return redirect(url_for('requests'))
 
-    materials = Material.query.all()
+    materials = Material.query.filter_by(is_active=True).order_by(Material.name).all()
     # Usar 'requisition' en vez de 'request' para no sobrescribir el request de Flask
-    return render_template('edit_request.html', requisition=req, materials=materials)
+    return render_template('edit_request.html', requisition=req, materials=materials,
+                           edit_seconds_left=request_edit_seconds_left(req),
+                           edit_window_minutes=REQUEST_EDIT_WINDOW_MINUTES)
+
+
+@app.route('/api/request/<int:id>/edit-window')
+@login_required
+def api_request_edit_window(id):
+    """Cuánto le queda a la ventana de edición libre de una requisición."""
+    req = Request.query.get_or_404(id)
+    permitido, motivo = can_edit_request(req, current_user)
+    return jsonify({
+        'success': True,
+        'can_edit': permitido,
+        'reason': motivo,
+        'seconds_left': request_edit_seconds_left(req),
+        'window_minutes': REQUEST_EDIT_WINDOW_MINUTES,
+    })
 
 
 # ===== ENDPOINTS PARA MANEJO DE REQUISICIONES =====
@@ -3888,12 +4048,17 @@ def update_request_dates(request_id):
     """Actualizar fechas de la requisición"""
     req = Request.query.get_or_404(request_id)
     
-    # Validar permisos (admin o dueño si está pendiente)
-    if current_user.role != 'admin' and (req.user_id != current_user.id or req.status != 'pendiente'):
+    # Dentro de la ventana de edición libre edita el autor, un almacenista o un
+    # admin. Fuera de ella se mantiene la regla anterior: admin, o el autor
+    # mientras la requisición siga pendiente.
+    permitido, _ = can_edit_request(req, current_user)
+    if not permitido and current_user.role != 'admin' and \
+            (req.user_id != current_user.id or req.status != 'pendiente'):
         return jsonify({'success': False, 'message': 'No tiene permiso para editar fechas'}), 403
-        
+
     try:
         data = request.form
+        anterior_adq = req.acquisition_deadline
         if 'acquisition_deadline' in data:
             val = data['acquisition_deadline']
             req.acquisition_deadline = datetime.strptime(val, '%Y-%m-%d').date() if val else None
@@ -3906,7 +4071,14 @@ def update_request_dates(request_id):
         if 'assembly_end_date' in data:
             val = data['assembly_end_date']
             req.assembly_end_date = datetime.strptime(val, '%Y-%m-%d').date() if val else None
-            
+
+        # Las compras pendientes de esta requisición heredan la nueva fecha límite,
+        # salvo que compras ya les haya puesto una propia.
+        if req.acquisition_deadline != anterior_adq:
+            for compra in PurchaseRequest.query.filter_by(request_id=req.id).all():
+                if not compra.is_closed and (compra.deadline is None or compra.deadline == anterior_adq):
+                    compra.deadline = req.acquisition_deadline
+
         db.session.commit()
         return jsonify({'success': True, 'message': 'Fechas actualizadas correctamente'})
     except Exception as e:
@@ -3991,6 +4163,136 @@ def api_confirm_cancellation(id):
         return jsonify({'success': False, 'message': str(e)})
 
 
+# ===== VENTANA DE EDICIÓN LIBRE DE UNA REQUISICIÓN =====
+
+# Minutos tras crear una requisición durante los que se puede editar por completo
+# (materiales, área, fechas, proyecto y cantidades). Pasado ese plazo el cambio
+# tiene que proponerse con ItemChangeRequest y aprobarlo el autor.
+REQUEST_EDIT_WINDOW_MINUTES = 15
+
+
+def request_edit_seconds_left(req):
+    """Segundos que faltan para que se cierre la edición libre. 0 = ya cerró."""
+    if not req or not req.created_at:
+        return 0
+    if req.status in ('cancelada', 'completada'):
+        return 0
+    limite = req.created_at + timedelta(minutes=REQUEST_EDIT_WINDOW_MINUTES)
+    return max(0, int((limite - now_mx()).total_seconds()))
+
+
+def request_is_freely_editable(req):
+    """¿Sigue abierta la ventana de edición libre?"""
+    return request_edit_seconds_left(req) > 0
+
+
+def can_edit_request(req, user):
+    """(permitido, motivo). Dentro de la ventana edita el autor, un almacenista
+    o un admin; fuera de ella ya nadie edita de forma directa."""
+    if user.role not in ('admin', 'almacenista') and req.user_id != user.id:
+        return False, 'Solo el autor de la requisición, un almacenista o un administrador puede editarla.'
+    if not request_is_freely_editable(req):
+        if req.status in ('cancelada', 'completada'):
+            return False, f'La requisición está {req.status} y ya no puede editarse.'
+        return False, (f'La edición libre solo dura {REQUEST_EDIT_WINDOW_MINUTES} minutos después de crear '
+                       'la requisición. Para cambiar o cancelar un material, solicita el cambio al autor.')
+    return True, ''
+
+
+def fp_exit_limit(fp_code, material):
+    """Máximo que sp_resumen_fp autoriza sacar de un material para un FP.
+
+    Devuelve None si el procedimiento no expone ese tercer result set, para que
+    quien llame conserve su cálculo anterior.
+    """
+    if not fp_code or not material:
+        return None
+    try:
+        indices, _ = read_fp_availability(db.engine, fp_code)
+    except Exception:
+        app.logger.exception('No se pudo leer el tope de salida de %s con sp_resumen_fp', fp_code)
+        return None
+    if not (indices['by_id'] or indices['by_code'] or indices['by_name']):
+        return None
+    for clave, mapa in ((material.id, indices['by_id']),
+                        (str(material.code or '').strip().casefold(), indices['by_code']),
+                        (str(material.name or '').strip().casefold(), indices['by_name'])):
+        if clave not in (None, '') and clave in mapa:
+            return max(0.0, round(float(mapa[clave]), 4))
+    # El procedimiento no lo lista: nada autorizado para salir.
+    return 0.0
+
+
+# ===== COMPRAS =====
+
+def default_purchase_status():
+    """Estado inicial del catálogo para una compra nueva."""
+    return (PurchaseStatus.query.filter_by(is_active=True)
+            .order_by(PurchaseStatus.sort_order.asc(), PurchaseStatus.id.asc()).first())
+
+
+def next_purchase_number():
+    """Folio de compra consecutivo por día: CMP-AAMMDD-NNNN."""
+    prefijo = f"CMP-{now_mx().strftime('%y%m%d')}-"
+    ultimo = (PurchaseRequest.query
+              .filter(PurchaseRequest.request_number.like(f'{prefijo}%'))
+              .order_by(PurchaseRequest.request_number.desc()).first())
+    consecutivo = 1
+    if ultimo:
+        try:
+            consecutivo = int(ultimo.request_number.rsplit('-', 1)[1]) + 1
+        except (ValueError, IndexError):
+            consecutivo = PurchaseRequest.query.count() + 1
+    return f"{prefijo}{consecutivo:04d}"
+
+
+def sync_item_purchase(item, quantity, deadline=None, user=None):
+    """Crea, actualiza o borra la compra pendiente de un renglón de requisición.
+
+    Sustituye a escribir request_item.quantity_to_purchase: la cantidad a comprar
+    vive en purchase_request, con su fecha límite y su estado.
+    Devuelve la PurchaseRequest resultante, o None si no hay nada que comprar.
+    """
+    quantity = round(float(quantity or 0), 4)
+    compra = PurchaseRequest.query.filter_by(request_item_id=item.id).first()
+
+    if quantity <= 0:
+        # Ya no hay nada que comprar: solo se descarta si compras no la movió.
+        if compra and not compra.is_closed:
+            db.session.delete(compra)
+        return None
+
+    if compra:
+        compra.quantity = quantity
+        if deadline is not None:
+            compra.deadline = deadline
+        return compra
+
+    estado = default_purchase_status()
+    compra = PurchaseRequest(
+        request_number=next_purchase_number(),
+        material_id=item.material_id,
+        quantity=quantity,
+        requested_by=(user.id if user else item.request.user_id),
+        status='pendiente',
+        status_id=estado.id if estado else None,
+        request_id=item.request_id,
+        request_item_id=item.id,
+        deadline=deadline if deadline is not None else item.request.acquisition_deadline,
+        notes=f'Generada por análisis vs stock de RQ{item.request.request_number}',
+    )
+    db.session.add(compra)
+    return compra
+
+
+def item_pending_purchase(item):
+    """Cuánto falta por comprar de un renglón, según purchase_request."""
+    return round(sum(
+        (c.quantity or 0) for c in PurchaseRequest.query.filter_by(request_item_id=item.id).all()
+        if not c.is_closed
+    ), 4)
+
+
 def recalculate_request_status(req):
     """Recalcula el estado de una requisición basado en sus items"""
     if req.status == 'cancelada':
@@ -4070,25 +4372,173 @@ def api_update_item_notes(id):
 @app.route('/api/request-item/<int:id>/update-quantity', methods=['POST'])
 @login_required
 def api_update_item_quantity(id):
-    """Modificar cantidad de un item (solo reducir)"""
+    """Modificar la cantidad de un item.
+
+    Dentro de la ventana de edición libre se puede subir o bajar. Fuera de ella
+    solo se permite reducir un item aún pendiente, como antes.
+    """
     try:
         item = RequestItem.query.get_or_404(id)
+        libre, _ = can_edit_request(item.request, current_user)
 
-        if item.item_status != 'pendiente':
+        if not libre and item.item_status != 'pendiente':
             return jsonify({'success': False, 'message': 'Solo se puede modificar items pendientes'})
 
         new_qty = float(request.form.get('quantity', 0))
         if new_qty <= 0:
             return jsonify({'success': False, 'message': 'La cantidad debe ser mayor a 0'})
-        if new_qty > item.quantity_requested:
-            return jsonify({'success': False, 'message': 'Solo se puede reducir la cantidad, no aumentar'})
+        if not libre and new_qty > item.quantity_requested:
+            return jsonify({'success': False, 'message': (
+                f'Pasados los {REQUEST_EDIT_WINDOW_MINUTES} minutos de edición libre solo se puede '
+                'reducir la cantidad. Para aumentarla, levanta una requisición nueva.')})
 
+        anterior = item.quantity_requested
         item.quantity_requested = new_qty
+        # Si ya se había analizado contra stock, la compra pendiente se recalcula.
+        if item.item_status == 'pendiente_compra':
+            sync_item_purchase(item, max(0, new_qty - (item.quantity_supplied or 0)), user=current_user)
         db.session.commit()
+        log_change('request_item', item.id, 'UPDATE', {'quantity_requested': (anterior, new_qty)},
+                   notes=f'RQ{item.request.request_number}: cantidad modificada')
         return jsonify({'success': True, 'message': 'Cantidad actualizada'})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(e)})
+
+
+@app.route('/api/request-item/<int:id>/update-material', methods=['POST'])
+@login_required
+def api_update_item_material(id):
+    """Cambiar el material de un renglón. Solo dentro de la ventana de edición libre."""
+    item = RequestItem.query.get_or_404(id)
+    permitido, motivo = can_edit_request(item.request, current_user)
+    if not permitido:
+        return jsonify({'success': False, 'message': motivo}), 403
+
+    material = Material.query.get(request.form.get('material_id', type=int) or 0)
+    if not material:
+        return jsonify({'success': False, 'message': 'Material no encontrado'}), 400
+
+    anterior = item.material.name if item.material else (item.new_material_name or '—')
+    item.material_id = material.id
+    item.is_new_material = False
+    item.new_material_code = None
+    item.new_material_name = None
+    item.new_material_unit = None
+    item.new_material_category = None
+    # El material cambió: lo analizado contra stock ya no aplica.
+    item.quantity_supplied = 0
+    item.item_status = 'pendiente'
+    sync_item_purchase(item, 0, user=current_user)
+
+    nueva_cantidad = request.form.get('quantity', type=float)
+    if nueva_cantidad and nueva_cantidad > 0:
+        item.quantity_requested = nueva_cantidad
+
+    recalculate_request_status(item.request)
+    db.session.commit()
+    log_change('request_item', item.id, 'UPDATE', {'material': (anterior, material.name)},
+               notes=f'RQ{item.request.request_number}: material sustituido en edición libre')
+    return jsonify({'success': True, 'message': f'Material cambiado a {material.name}'})
+
+
+@app.route('/api/request/<int:id>/items', methods=['POST'])
+@login_required
+def api_add_request_item(id):
+    """Agregar un material a la requisición. Solo dentro de la ventana de edición libre."""
+    req = Request.query.get_or_404(id)
+    permitido, motivo = can_edit_request(req, current_user)
+    if not permitido:
+        return jsonify({'success': False, 'message': motivo}), 403
+
+    material = Material.query.get(request.form.get('material_id', type=int) or 0)
+    if not material:
+        return jsonify({'success': False, 'message': 'Material no encontrado'}), 400
+    cantidad = request.form.get('quantity', type=float) or 0
+    if cantidad <= 0:
+        return jsonify({'success': False, 'message': 'La cantidad debe ser mayor a 0'}), 400
+
+    item = RequestItem(
+        request_id=req.id,
+        material_id=material.id,
+        quantity_requested=cantidad,
+        item_type=(request.form.get('item_type') or 'nuevo'),
+        will_return=request.form.get('will_return') in ('1', 'true', 'on'),
+        item_status='pendiente',
+        item_notes=(request.form.get('notes') or '').strip() or None,
+    )
+    db.session.add(item)
+    recalculate_request_status(req)
+    db.session.commit()
+    log_change('request_item', item.id, 'CREATE', {},
+               notes=f'RQ{req.request_number}: {material.name} agregado en edición libre')
+    return jsonify({'success': True, 'message': f'{material.name} agregado', 'item_id': item.id})
+
+
+@app.route('/api/request-item/<int:id>', methods=['DELETE'])
+@login_required
+def api_delete_request_item(id):
+    """Quitar un material de la requisición. Solo dentro de la ventana de edición libre."""
+    item = RequestItem.query.get_or_404(id)
+    req = item.request
+    permitido, motivo = can_edit_request(req, current_user)
+    if not permitido:
+        return jsonify({'success': False, 'message': motivo}), 403
+
+    if len(req.items) <= 1:
+        return jsonify({'success': False, 'message': 'La requisición debe conservar al menos un material. '
+                                                     'Si ya no aplica, cancela la requisición completa.'}), 400
+
+    nombre = item.material.name if item.material else (item.new_material_name or 'material')
+    sync_item_purchase(item, 0, user=current_user)
+    ItemChangeRequest.query.filter_by(request_item_id=item.id).delete()
+    db.session.delete(item)
+    recalculate_request_status(req)
+    db.session.commit()
+    log_change('request_item', id, 'DELETE', {},
+               notes=f'RQ{req.request_number}: {nombre} eliminado en edición libre')
+    return jsonify({'success': True, 'message': f'{nombre} eliminado de la requisición'})
+
+
+@app.route('/api/request/<int:id>/update-core', methods=['POST'])
+@login_required
+def api_update_request_core(id):
+    """Cambiar proyecto, área y departamento. Solo dentro de la ventana de edición libre."""
+    req = Request.query.get_or_404(id)
+    permitido, motivo = can_edit_request(req, current_user)
+    if not permitido:
+        return jsonify({'success': False, 'message': motivo}), 403
+
+    cambios = {}
+
+    fp_code = (request.form.get('fp_code') or '').strip()
+    if fp_code:
+        proyecto = Project.query.filter_by(fp_code=fp_code).first()
+        if not proyecto:
+            return jsonify({'success': False, 'message': f'No existe el proyecto {fp_code}'}), 400
+        if proyecto.id != req.project_id:
+            anterior = req.project.fp_code if req.project else '—'
+            cambios['proyecto'] = (anterior, proyecto.fp_code)
+            req.project_id = proyecto.id
+
+    area = (request.form.get('area') or '').strip()
+    if area and area != (req.area or ''):
+        cambios['area'] = (req.area or '—', area)
+        req.area = area
+
+    departamento = (request.form.get('department') or '').strip()
+    if departamento and departamento != (req.department or ''):
+        cambios['department'] = (req.department or '—', departamento)
+        req.department = departamento
+
+    if not cambios:
+        return jsonify({'success': True, 'message': 'Sin cambios que guardar'})
+
+    db.session.commit()
+    log_change('request', req.id, 'UPDATE', cambios,
+               notes=f'RQ{req.request_number}: datos generales editados en ventana libre')
+    return jsonify({'success': True, 'message': 'Requisición actualizada',
+                    'changed': list(cambios.keys())})
 
 
 @app.route('/api/request-item/<int:id>/analyze-stock', methods=['POST'])
@@ -4115,11 +4565,22 @@ def api_analyze_item_stock(id):
         if quantity_to_purchase > requested:
             return jsonify({'success': False, 'message': 'Cantidad a comprar no puede exceder lo solicitado'})
 
+        # Fecha límite de entrega del material comprado. Si no la mandan, se
+        # hereda la de adquisición de la requisición.
+        deadline_str = (request.form.get('purchase_deadline') or '').strip()
+        deadline = None
+        if deadline_str:
+            try:
+                deadline = datetime.strptime(deadline_str, '%Y-%m-%d').date()
+            except ValueError:
+                return jsonify({'success': False, 'message': 'Fecha límite de compra inválida'})
+
         old_status = item.item_status
-        old_qty_purchase = item.quantity_to_purchase
+        old_qty_purchase = item_pending_purchase(item)
         old_qty_supplied = item.quantity_supplied
 
-        item.quantity_to_purchase = quantity_to_purchase
+        # La cantidad a comprar ahora vive en purchase_request, no en el renglón.
+        sync_item_purchase(item, quantity_to_purchase, deadline=deadline, user=current_user)
         item.quantity_supplied = supplied
 
         # Determinar estado
@@ -4144,8 +4605,8 @@ def api_analyze_item_stock(id):
         req_num = item.request.request_number if item.request else ''
         log_change('request_item', item.id, 'UPDATE', {
             'item_status':         (old_status, item.item_status),
-            'quantity_to_purchase': (old_qty_purchase, item.quantity_to_purchase),
-            'quantity_supplied':    (old_qty_supplied, item.quantity_supplied),
+            'cantidad_a_comprar':  (old_qty_purchase, quantity_to_purchase),
+            'quantity_supplied':   (old_qty_supplied, item.quantity_supplied),
         }, notes=f'Análisis VS Stock — RQ{req_num}')
 
         db.session.commit()
@@ -4261,6 +4722,9 @@ def api_partial_supply_item(id):
         new_supplied = min(old_supplied + qty_received, item.quantity_requested)
         item.quantity_supplied = new_supplied
 
+        # Lo recibido deja de estar pendiente de comprar.
+        sync_item_purchase(item, max(0, item.quantity_requested - new_supplied), user=current_user)
+
         if new_supplied >= item.quantity_requested - 0.001:
             item.item_status = 'abastecido'
             status_msg = 'completamente abastecido'
@@ -4319,7 +4783,7 @@ def api_get_item_details(id):
                 'id': item.id,
                 'quantity_requested': item.quantity_requested,
                 'quantity_supplied': item.quantity_supplied or 0,
-                'quantity_to_purchase': item.quantity_to_purchase or 0,
+                'quantity_to_purchase': item_pending_purchase(item),
                 'item_status': item.item_status or 'pendiente',
                 'item_notes': item.item_notes or '',
                 'material_name': material.name if material else item.new_material_name,
@@ -4609,41 +5073,63 @@ def reports():
         (Material.last_movement < six_months_ago) | (Material.last_movement.is_(None))
     ).order_by(Material.last_movement.desc()).all()
     
-    # Pendientes de compra (RequestItem.item_status == 'pendiente_compra')
-    pending_items = RequestItem.query.join(Request).filter(
-        RequestItem.item_status == 'pendiente_compra'
-    ).options(joinedload(RequestItem.request).joinedload(Request.project)).all()
-    
+    # Pendientes de compra: la fuente de verdad es purchase_request, no el
+    # número suelto que antes vivía en request_item.quantity_to_purchase.
+    estados = (PurchaseStatus.query.filter_by(is_active=True)
+               .order_by(PurchaseStatus.sort_order.asc(), PurchaseStatus.id.asc()).all())
+    # La plantilla los serializa a JSON, así que se mandan como diccionarios.
+    purchase_statuses = [{'id': e.id, 'name': e.name, 'color': e.color,
+                          'is_final': bool(e.is_final)} for e in estados]
+    cerrados = {e.id for e in PurchaseStatus.query.filter_by(is_final=True).all()}
+
+    compras = (PurchaseRequest.query
+               .options(joinedload(PurchaseRequest.material),
+                        joinedload(PurchaseRequest.status_ref),
+                        joinedload(PurchaseRequest.item),
+                        joinedload(PurchaseRequest.request).joinedload(Request.project))
+               .order_by(PurchaseRequest.created_at.asc())
+               .all())
+    # MySQL no soporta NULLS LAST: las compras sin fecha límite se mandan al final
+    # ordenando en Python.
+    compras.sort(key=lambda c: (c.deadline is None, c.deadline or date.max,
+                                c.created_at or datetime.min))
+
     pending_purchases_data = []
-    for item in pending_items:
-        quantity_to_buy = (item.quantity_requested or 0) - (item.quantity_supplied or 0)
-        if quantity_to_buy <= 0:
+    for compra in compras:
+        if compra.status_id in cerrados or (compra.status_id is None and compra.is_closed):
             continue
-            
-        material_id = item.material_id or 0
-        material_name = item.material.name if item.material else item.new_material_name
-        material_code = item.material.code if item.material else item.new_material_code
-        material_unit = item.material.unit if item.material else item.new_material_unit
-        
-        project_name = item.request.project.name if item.request.project else "N/A"
-        project_fp = item.request.project.fp_code if item.request.project and hasattr(item.request.project, 'fp_code') else "N/A"
-        client = item.request.project.client if item.request.project and hasattr(item.request.project, 'client') else "N/A"
-        
-        acquisition_deadline = item.request.acquisition_deadline.strftime('%Y-%m-%d') if item.request.acquisition_deadline else "9999-12-31"
-        created_at = item.request.created_at.strftime('%Y-%m-%d') if item.request.created_at else "1970-01-01"
-            
+        if (compra.quantity or 0) <= 0:
+            continue
+
+        item = compra.item
+        req  = compra.request or (item.request if item else None)
+        proyecto = req.project if req else None
+        material = compra.material
+
         pending_purchases_data.append({
-            'id': item.id,
-            'material_id': material_id,
-            'material_code': material_code or '',
-            'material_name': material_name or '',
-            'material_unit': material_unit or '',
-            'project_name': project_name,
-            'project_fp': project_fp,
-            'client': client or 'N/A',
-            'quantity': quantity_to_buy,
-            'acquisition_deadline': acquisition_deadline,
-            'created_at': created_at
+            'id': compra.id,
+            'item_id': item.id if item else None,
+            'request_number': req.request_number if req else '',
+            'purchase_number': compra.request_number,
+            'material_id': compra.material_id or 0,
+            'material_code': (material.code if material else
+                              (item.new_material_code if item else '')) or '',
+            'material_name': (material.name if material else
+                              (item.new_material_name if item else '')) or '',
+            'material_unit': (material.unit if material else
+                              (item.new_material_unit if item else '')) or '',
+            'project_name': proyecto.name if proyecto else 'N/A',
+            'project_fp': proyecto.fp_code if proyecto else 'N/A',
+            'client': (proyecto.client if proyecto else None) or 'N/A',
+            'quantity': round(compra.quantity or 0, 2),
+            'acquisition_deadline': (compra.deadline.strftime('%Y-%m-%d') if compra.deadline
+                                     else (req.acquisition_deadline.strftime('%Y-%m-%d')
+                                           if req and req.acquisition_deadline else '9999-12-31')),
+            'created_at': compra.created_at.strftime('%Y-%m-%d') if compra.created_at else '1970-01-01',
+            'status_id': compra.status_id,
+            'status_label': compra.status_label,
+            'status_color': compra.status_color,
+            'supplier': compra.supplier or '',
         })
 
     # Estadísticas de devoluciones
@@ -4658,7 +5144,314 @@ def reports():
                          low_stock=low_stock,
                          no_movement=no_movement,
                          returns_stats=returns_stats,
+                         purchase_statuses=purchase_statuses,
                          pending_purchases_data=pending_purchases_data)
+# ======== API: CAMBIOS A UNA REQUISICIÓN YA CERRADA A EDICIÓN ========
+
+@app.route('/api/request-item/<int:item_id>/change-request', methods=['POST'])
+@login_required
+def api_create_item_change_request(item_id):
+    """Un almacenista o admin propone cancelar un material o cambiarlo por otro.
+
+    No surte efecto hasta que el autor de la requisición lo acepta.
+    """
+    if current_user.role not in ('admin', 'almacenista'):
+        return jsonify({'success': False, 'message': 'Solo un almacenista o un administrador puede solicitar cambios'}), 403
+
+    item = RequestItem.query.get_or_404(item_id)
+    req  = item.request
+
+    if req.status in ('cancelada', 'completada'):
+        return jsonify({'success': False, 'message': f'La requisición está {req.status}'}), 400
+    if item.item_status == 'cancelado':
+        return jsonify({'success': False, 'message': 'Ese material ya está cancelado'}), 400
+
+    change_type = (request.form.get('change_type') or '').strip()
+    if change_type not in ('cancelacion', 'intercambio'):
+        return jsonify({'success': False, 'message': 'Tipo de cambio inválido'}), 400
+
+    if ItemChangeRequest.query.filter_by(request_item_id=item.id, status='pendiente').first():
+        return jsonify({'success': False, 'message': 'Ese material ya tiene una solicitud de cambio esperando respuesta'}), 400
+
+    nuevo_material = None
+    nueva_cantidad = None
+    if change_type == 'intercambio':
+        nuevo_material_id = request.form.get('new_material_id', type=int)
+        nuevo_material = Material.query.get(nuevo_material_id) if nuevo_material_id else None
+        if not nuevo_material:
+            return jsonify({'success': False, 'message': 'Debe elegir el material de reemplazo'}), 400
+        if nuevo_material.id == item.material_id:
+            return jsonify({'success': False, 'message': 'El material de reemplazo es el mismo que el actual'}), 400
+        nueva_cantidad = request.form.get('new_quantity', type=float) or item.quantity_requested
+        if nueva_cantidad <= 0:
+            return jsonify({'success': False, 'message': 'La cantidad de reemplazo debe ser mayor a 0'}), 400
+
+    cambio = ItemChangeRequest(
+        request_item_id=item.id,
+        request_id=req.id,
+        change_type=change_type,
+        new_material_id=nuevo_material.id if nuevo_material else None,
+        new_quantity=nueva_cantidad,
+        reason=(request.form.get('reason') or '').strip() or None,
+        requested_by=current_user.id,
+    )
+    db.session.add(cambio)
+
+    actual = item.material.name if item.material else (item.new_material_name or 'material')
+    if change_type == 'intercambio':
+        detalle = f'cambiar {actual} por {nuevo_material.name} ({nueva_cantidad:g} {nuevo_material.unit})'
+    else:
+        detalle = f'cancelar {actual}'
+
+    create_system_alert(
+        alert_type='cambio_requisicion',
+        message=f'{current_user.username} solicita {detalle} en RQ{req.request_number}. Requiere tu autorización.',
+        severity='warning',
+        target_user_id=req.user_id,
+        request_id=req.id,
+    )
+
+    db.session.commit()
+    log_change('item_change_request', cambio.id, 'CREATE', {},
+               notes=f'RQ{req.request_number}: solicitud de {cambio.change_label} — {detalle}')
+    return jsonify({'success': True, 'message': 'Solicitud enviada al autor de la requisición',
+                    'change_id': cambio.id})
+
+
+@app.route('/api/change-requests/<int:change_id>/resolve', methods=['POST'])
+@login_required
+def api_resolve_item_change_request(change_id):
+    """El autor de la requisición acepta o rechaza el cambio propuesto."""
+    cambio = ItemChangeRequest.query.get_or_404(change_id)
+    req = cambio.request
+
+    # Solo el autor decide. Un admin puede destrabar si el autor ya no está.
+    if req.user_id != current_user.id and current_user.role != 'admin':
+        return jsonify({'success': False, 'message': 'Solo el autor de la requisición puede aceptar o rechazar el cambio'}), 403
+    if cambio.status != 'pendiente':
+        return jsonify({'success': False, 'message': f'Esa solicitud ya fue {cambio.status}'}), 400
+
+    decision = (request.form.get('decision') or '').strip()
+    if decision not in ('aceptar', 'rechazar'):
+        return jsonify({'success': False, 'message': 'Decisión inválida'}), 400
+
+    item = cambio.item
+    cambio.resolved_by = current_user.id
+    cambio.resolved_at = now_mx()
+    cambio.response_notes = (request.form.get('notes') or '').strip() or None
+
+    if decision == 'rechazar':
+        cambio.status = 'rechazado'
+        create_system_alert(
+            alert_type='cambio_requisicion',
+            message=f'{current_user.username} rechazó la solicitud de {cambio.change_label.lower()} en RQ{req.request_number}',
+            severity='info',
+            target_user_id=cambio.requested_by,
+            request_id=req.id,
+        )
+        db.session.commit()
+        log_change('item_change_request', cambio.id, 'UPDATE', {'status': ('pendiente', 'rechazado')},
+                   notes=f'RQ{req.request_number}: cambio rechazado')
+        return jsonify({'success': True, 'message': 'Solicitud rechazada'})
+
+    # Aceptada: aplicar el cambio
+    cambio.status = 'aceptado'
+    anterior = item.material.name if item.material else (item.new_material_name or 'material')
+
+    if cambio.change_type == 'cancelacion':
+        item.item_status = 'cancelado'
+        # Si tenía compra pendiente, ya no hace falta.
+        sync_item_purchase(item, 0, user=current_user)
+        detalle = f'{anterior} cancelado'
+    else:
+        item.material_id    = cambio.new_material_id
+        item.is_new_material = False
+        item.new_material_code = None
+        item.new_material_name = None
+        item.new_material_unit = None
+        item.quantity_requested = cambio.new_quantity or item.quantity_requested
+        # El material cambió: el análisis vs stock anterior ya no aplica.
+        item.quantity_supplied = 0
+        item.item_status = 'pendiente'
+        sync_item_purchase(item, 0, user=current_user)
+        detalle = f'{anterior} → {cambio.new_material.name}'
+
+    recalculate_request_status(req)
+    create_system_alert(
+        alert_type='cambio_requisicion',
+        message=f'{current_user.username} autorizó {cambio.change_label.lower()} en RQ{req.request_number}: {detalle}',
+        severity='success',
+        target_user_id=cambio.requested_by,
+        request_id=req.id,
+    )
+    db.session.commit()
+    log_change('item_change_request', cambio.id, 'UPDATE', {'status': ('pendiente', 'aceptado')},
+               notes=f'RQ{req.request_number}: {cambio.change_label} aplicada — {detalle}')
+    return jsonify({'success': True, 'message': f'Cambio aplicado: {detalle}'})
+
+
+@app.route('/api/change-requests/pending')
+@login_required
+def api_pending_change_requests():
+    """Solicitudes de cambio esperando respuesta del usuario actual."""
+    consulta = (ItemChangeRequest.query
+                .options(joinedload(ItemChangeRequest.item).joinedload(RequestItem.material),
+                         joinedload(ItemChangeRequest.request),
+                         joinedload(ItemChangeRequest.new_material),
+                         joinedload(ItemChangeRequest.requester))
+                .filter(ItemChangeRequest.status == 'pendiente'))
+
+    req_id = request.args.get('request_id', type=int)
+    if req_id:
+        consulta = consulta.filter(ItemChangeRequest.request_id == req_id)
+    elif current_user.role != 'admin':
+        consulta = consulta.join(Request, ItemChangeRequest.request_id == Request.id)\
+                           .filter(Request.user_id == current_user.id)
+
+    cambios = consulta.order_by(ItemChangeRequest.requested_at.desc()).all()
+    return jsonify({'success': True, 'changes': [{
+        'id': c.id,
+        'request_id': c.request_id,
+        'request_number': c.request.request_number if c.request else '',
+        'change_type': c.change_type,
+        'change_label': c.change_label,
+        'current_material': (c.item.material.name if c.item and c.item.material
+                             else (c.item.new_material_name if c.item else '')) or '',
+        'current_quantity': c.item.quantity_requested if c.item else 0,
+        'new_material': c.new_material.name if c.new_material else '',
+        'new_quantity': c.new_quantity,
+        'reason': c.reason or '',
+        'requested_by': c.requester.username if c.requester else '',
+        'requested_at': c.requested_at.strftime('%d/%m/%Y %H:%M') if c.requested_at else '',
+        'is_mine': c.request.user_id == current_user.id if c.request else False,
+    } for c in cambios]})
+
+
+# ======== API: CATÁLOGO DE ESTADOS DE COMPRA ========
+
+@app.route('/api/purchase-statuses', methods=['GET'])
+@login_required
+def api_purchase_statuses():
+    """Estados disponibles para el seguimiento de una compra."""
+    estados = (PurchaseStatus.query.filter_by(is_active=True)
+               .order_by(PurchaseStatus.sort_order.asc(), PurchaseStatus.id.asc()).all())
+    return jsonify({'success': True, 'statuses': [{
+        'id': e.id, 'name': e.name, 'color': e.color,
+        'sort_order': e.sort_order, 'is_final': bool(e.is_final),
+    } for e in estados]})
+
+
+@app.route('/api/purchase-statuses', methods=['POST'])
+@login_required
+def api_create_purchase_status():
+    """Alta de un estado del catálogo. Lo define el encargado de compras."""
+    if current_user.role not in ('admin', 'almacenista'):
+        return jsonify({'success': False, 'message': 'Sin permisos para editar el catálogo de estados'}), 403
+
+    nombre = (request.form.get('name') or '').strip()
+    if not nombre:
+        return jsonify({'success': False, 'message': 'El nombre del estado es obligatorio'}), 400
+    if PurchaseStatus.query.filter(func.lower(PurchaseStatus.name) == nombre.lower()).first():
+        return jsonify({'success': False, 'message': f'Ya existe un estado llamado "{nombre}"'}), 400
+
+    ultimo = PurchaseStatus.query.order_by(PurchaseStatus.sort_order.desc()).first()
+    estado = PurchaseStatus(
+        name=nombre,
+        color=(request.form.get('color') or 'secondary').strip(),
+        sort_order=(ultimo.sort_order + 10) if ultimo else 10,
+        is_final=request.form.get('is_final') in ('1', 'true', 'on'),
+    )
+    db.session.add(estado)
+    db.session.commit()
+    log_change('purchase_status', estado.id, 'CREATE', {}, notes=f'Estado de compra "{nombre}" creado')
+    return jsonify({'success': True, 'message': f'Estado "{nombre}" creado',
+                    'status': {'id': estado.id, 'name': estado.name, 'color': estado.color,
+                               'is_final': bool(estado.is_final)}})
+
+
+@app.route('/api/purchase-statuses/<int:status_id>', methods=['PUT', 'DELETE'])
+@login_required
+def api_update_purchase_status(status_id):
+    if current_user.role not in ('admin', 'almacenista'):
+        return jsonify({'success': False, 'message': 'Sin permisos para editar el catálogo de estados'}), 403
+
+    estado = PurchaseStatus.query.get_or_404(status_id)
+
+    if request.method == 'DELETE':
+        # Baja lógica: las compras que ya lo usan conservan su historial.
+        estado.is_active = False
+        db.session.commit()
+        log_change('purchase_status', estado.id, 'UPDATE', {'is_active': (True, False)},
+                   notes=f'Estado de compra "{estado.name}" desactivado')
+        return jsonify({'success': True, 'message': f'Estado "{estado.name}" desactivado'})
+
+    anterior = (estado.name, estado.color, estado.is_final)
+    if request.form.get('name'):
+        estado.name = request.form['name'].strip()
+    if request.form.get('color'):
+        estado.color = request.form['color'].strip()
+    if request.form.get('sort_order'):
+        estado.sort_order = int(request.form['sort_order'])
+    if 'is_final' in request.form:
+        estado.is_final = request.form.get('is_final') in ('1', 'true', 'on')
+    db.session.commit()
+    log_change('purchase_status', estado.id, 'UPDATE', {
+        'name':     (anterior[0], estado.name),
+        'color':    (anterior[1], estado.color),
+        'is_final': (anterior[2], estado.is_final),
+    }, notes='Estado de compra actualizado')
+    return jsonify({'success': True, 'message': 'Estado actualizado'})
+
+
+@app.route('/api/purchases/<int:purchase_id>/status', methods=['POST'])
+@login_required
+def api_set_purchase_status(purchase_id):
+    """Cambia el estado de una compra desde el reporte de compras pendientes."""
+    if current_user.role not in ('admin', 'almacenista'):
+        return jsonify({'success': False, 'message': 'Sin permisos para mover compras'}), 403
+
+    compra = PurchaseRequest.query.get_or_404(purchase_id)
+    status_id = request.form.get('status_id', type=int)
+    estado = PurchaseStatus.query.get(status_id) if status_id else None
+    if not estado:
+        return jsonify({'success': False, 'message': 'Estado no encontrado'}), 400
+
+    anterior = compra.status_label
+    compra.status_id = estado.id
+    compra.status = estado.name.lower().replace(' ', '_')
+    if request.form.get('supplier') is not None:
+        compra.supplier = (request.form.get('supplier') or '').strip() or None
+    if request.form.get('deadline'):
+        try:
+            compra.deadline = datetime.strptime(request.form['deadline'], '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'success': False, 'message': 'Fecha límite inválida'}), 400
+
+    # Si compras cierra la compra, el renglón deja de estar pendiente de compra.
+    if estado.is_final and compra.item and compra.item.item_status == 'pendiente_compra':
+        item = compra.item
+        if estado.name.lower() != 'cancelada':
+            item.quantity_supplied = item.quantity_requested
+            item.item_status = 'abastecido'
+            create_system_alert(
+                alert_type='material_abastecido',
+                message=f'La compra de {compra.material.name if compra.material else "material"} '
+                        f'de RQ{item.request.request_number} fue marcada como {estado.name}',
+                severity='success',
+                target_user_id=item.request.user_id,
+                request_id=item.request_id,
+            )
+        recalculate_request_status(item.request)
+
+    db.session.commit()
+    log_change('purchase_request', compra.id, 'UPDATE',
+               {'status': (anterior, estado.name)},
+               notes=f'Compra {compra.request_number}: {anterior} → {estado.name}')
+    return jsonify({'success': True, 'message': f'Compra marcada como "{estado.name}"',
+                    'status_label': estado.name, 'status_color': estado.color,
+                    'is_final': bool(estado.is_final)})
+
+
 @app.route('/leader-dashboard')
 @login_required
 def leader_dashboard():
@@ -5945,6 +6738,27 @@ def get_requisitioned_materials():
 
     stock_libre = not get_stock_check_enabled()  # True = sin restriccion de stock
 
+    # El tope de una salida lo define sp_resumen_fp (tercer result set), no la app:
+    # así almacén y el procedimiento no pueden discrepar. Si el procedimiento no
+    # devuelve ese result set, se usa el cálculo local como respaldo.
+    disponibilidad, filas_sp = {'by_id': {}, 'by_code': {}, 'by_name': {}}, []
+    try:
+        disponibilidad, filas_sp = read_fp_availability(db.engine, fp_code)
+    except Exception:
+        app.logger.exception('No se pudo leer la disponibilidad de %s con sp_resumen_fp', fp_code)
+    usa_sp = bool(disponibilidad['by_id'] or disponibilidad['by_code'] or disponibilidad['by_name'])
+
+    def max_desde_sp(mat_id, code, name):
+        if not usa_sp:
+            return None
+        for clave, mapa in ((mat_id, disponibilidad['by_id']),
+                            (str(code or '').strip().casefold(), disponibilidad['by_code']),
+                            (str(name or '').strip().casefold(), disponibilidad['by_name'])):
+            if clave not in (None, '') and clave in mapa:
+                return round(float(mapa[clave]), 2)
+        # El procedimiento no lo menciona: no hay nada autorizado para salir.
+        return 0.0
+
     materials_data = []
     for item in items:
         total_requested = round(float(item.total_requested or 0), 2)
@@ -5953,10 +6767,16 @@ def get_requisitioned_materials():
         pending_quantity     = round(total_requested - total_delivered, 2)
         abastecida_pendiente = round(max(0, total_supplied - total_delivered), 2)
 
-        # En modo Stock Libre: mostrar todo lo que tenga pendiente de entregar,
-        # aunque el material no haya pasado por el flujo de abastecimiento.
-        # En modo normal: solo mostrar si ya fue abastecido (abastecida_pendiente > 0).
-        if pending_quantity > 0.001 and (stock_libre or abastecida_pendiente > 0.001):
+        tope_sp = max_desde_sp(item.id, item.code, item.name)
+        if tope_sp is not None:
+            max_allowed = max(0.0, tope_sp)
+            visible = max_allowed > 0.001
+        else:
+            # Respaldo: la regla anterior, basada en lo abastecido pendiente.
+            max_allowed = pending_quantity if stock_libre else abastecida_pendiente
+            visible = pending_quantity > 0.001 and (stock_libre or abastecida_pendiente > 0.001)
+
+        if visible:
             materials_data.append({
                 'id': item.id,
                 'code': item.code,
@@ -5968,10 +6788,14 @@ def get_requisitioned_materials():
                 'total_supplied': total_supplied,
                 'total_delivered': total_delivered,
                 'abastecida_pendiente': abastecida_pendiente,
+                'max_allowed': round(max_allowed, 2),  # tope real de la salida
+                'max_source': 'sp_resumen_fp' if tope_sp is not None else 'local',
                 'stock_libre': stock_libre             # indica al front si hay restriccion
             })
 
-    return jsonify({'success': True, 'materials': materials_data, 'stock_libre': stock_libre})
+    return jsonify({'success': True, 'materials': materials_data, 'stock_libre': stock_libre,
+                    'max_source': 'sp_resumen_fp' if usa_sp else 'local',
+                    'availability_rows': len(filas_sp)})
 
 
 @app.route('/api/stock/consumables-list')
@@ -6075,6 +6899,15 @@ def register_exit():
         if not material:
             return jsonify({'success': False, 'message': 'Material no encontrado.'})
 
+        # Tope autorizado por sp_resumen_fp para este FP y material.
+        tope = fp_exit_limit(fp_code, material)
+        if tope is not None and quantity > tope + 0.001:
+            return jsonify({
+                'success': False,
+                'message': (f'La salida excede lo autorizado para {fp_code}. '
+                            f'Máximo: {tope:g} {material.unit}')
+            })
+
         # Solo bloquear si la validación de stock está activada en la configuración
         if get_stock_check_enabled() and quantity > material.current_stock:
             return jsonify({
@@ -6141,44 +6974,86 @@ def register_exit():
 @app.route('/api/stock/pending-return-by-fp')
 @login_required
 def get_pending_return_by_fp():
+    """Materiales que pueden regresar al almacén en un retorno general.
+
+    Incluye todo lo requisitado para el FP, no solo lo que ya tuvo salida: puede
+    haber material entregado fuera del sistema o requisitado que nunca se usó.
+    'pending_quantity' es lo que todavía no regresa (salidas menos retornos) y
+    sirve de sugerencia, no de tope.
+    """
     fp_code = request.args.get('fp_code')
     if not fp_code:
         return jsonify({'materials': []})
 
-    # Cantidades de salida para el proyecto
+    proyecto = Project.query.filter_by(fp_code=fp_code).first()
+
+    # Salidas y retornos ya registrados para el proyecto
     salidas = db.session.query(
         StockMovement.material_id,
         func.sum(StockMovement.quantity).label('total_out')
-    ).filter_by(fp_code=fp_code, movement_type='salida').group_by(StockMovement.material_id).subquery()
-
-    # Cantidades de retorno para el proyecto
+    ).filter_by(fp_code=fp_code, movement_type='salida').group_by(StockMovement.material_id).all()
     retornos = db.session.query(
         StockMovement.material_id,
         func.sum(StockMovement.quantity).label('total_in')
-    ).filter_by(fp_code=fp_code, movement_type='retorno').group_by(StockMovement.material_id).subquery()
+    ).filter_by(fp_code=fp_code, movement_type='retorno').group_by(StockMovement.material_id).all()
 
-    # Unir resultados para calcular pendientes
-    pending_materials = db.session.query(
-        Material.id, Material.code, Material.name, Material.unit,
-        salidas.c.total_out,
-        retornos.c.total_in
-    ).join(salidas, Material.id == salidas.c.material_id)\
-     .outerjoin(retornos, Material.id == retornos.c.material_id)\
-     .all()
+    salidas_por_material  = {m_id: float(total or 0) for m_id, total in salidas}
+    retornos_por_material = {m_id: float(total or 0) for m_id, total in retornos}
+
+    # Todo lo requisitado para el proyecto
+    requisitado = {}
+    if proyecto:
+        filas = db.session.query(
+            RequestItem.material_id,
+            func.sum(RequestItem.quantity_requested).label('req'),
+            func.sum(RequestItem.quantity_delivered).label('ent'),
+        ).join(Request, RequestItem.request_id == Request.id)\
+         .filter(Request.project_id == proyecto.id,
+                 RequestItem.material_id.isnot(None),
+                 RequestItem.item_status != 'cancelado')\
+         .group_by(RequestItem.material_id).all()
+        requisitado = {m_id: (float(r or 0), float(e or 0)) for m_id, r, e in filas}
+
+    ids = set(salidas_por_material) | set(requisitado)
+    if not ids:
+        return jsonify({'materials': []})
+
+    materiales = Material.query.filter(Material.id.in_(ids)).all()
+
+    # Medidas recicladas disponibles por material de origen, para el flujo de reciclaje.
+    reciclados = Material.query.filter(Material.recycled_from_id.in_(ids)).all()
+    reciclados_por_origen = {}
+    for r in reciclados:
+        reciclados_por_origen.setdefault(r.recycled_from_id, []).append(
+            {'id': r.id, 'code': r.code, 'name': r.name, 'unit': r.unit}
+        )
 
     result = []
-    for mat in pending_materials:
-        pending_qty = mat.total_out - (mat.total_in or 0)
-        if pending_qty > 0.001: # Usar una pequeña tolerancia
-            result.append({
-                'id': mat.id,
-                'code': mat.code,
-                'name': mat.name,
-                'unit': mat.unit,
-                'pending_quantity': pending_qty
-            })
+    for mat in materiales:
+        salido   = salidas_por_material.get(mat.id, 0)
+        retornado = retornos_por_material.get(mat.id, 0)
+        req_qty, entregado = requisitado.get(mat.id, (0, 0))
+        pendiente = round(salido - retornado, 4)
+        result.append({
+            'id': mat.id,
+            'code': mat.code,
+            'name': mat.name,
+            'unit': mat.unit,
+            'pending_quantity': max(pendiente, 0),
+            'total_out': round(salido, 4),
+            'total_returned': round(retornado, 4),
+            'requested': round(req_qty, 4),
+            'delivered': round(entregado, 4),
+            'has_movements': salido > 0,
+            'can_reuse': bool(mat.can_reuse),
+            'can_recycle': bool(mat.can_recycle),
+            'recycled_options': reciclados_por_origen.get(mat.id, []),
+        })
 
+    # Primero lo que tiene salidas pendientes de regresar, luego el resto.
+    result.sort(key=lambda m: (-m['pending_quantity'], m['name'].casefold()))
     return jsonify({'materials': result})
+
 
 # Agregar estas rutas a tu archivo principal de rutas (app.py o routes.py)
 
@@ -6317,6 +7192,32 @@ def register_exit_multiple():
         movements_created = []
         errors = []
 
+        # Tope autorizado por sp_resumen_fp. Se lee una vez para toda la salida y
+        # se va descontando conforme se reparten los materiales.
+        topes_fp = {}
+        try:
+            indices_fp, _ = read_fp_availability(db.engine, fp_code)
+            if indices_fp['by_id'] or indices_fp['by_code'] or indices_fp['by_name']:
+                topes_fp = indices_fp
+        except Exception:
+            app.logger.exception('No se pudo leer el tope de salida de %s con sp_resumen_fp', fp_code)
+        restante_fp = {}
+
+        def tope_autorizado(mat):
+            """Tope vivo del material en esta salida, o None si no aplica."""
+            if not topes_fp:
+                return None
+            if mat.id in restante_fp:
+                return restante_fp[mat.id]
+            for clave, mapa in ((mat.id, topes_fp['by_id']),
+                                (str(mat.code or '').strip().casefold(), topes_fp['by_code']),
+                                (str(mat.name or '').strip().casefold(), topes_fp['by_name'])):
+                if clave not in (None, '') and clave in mapa:
+                    restante_fp[mat.id] = max(0.0, float(mapa[clave]))
+                    return restante_fp[mat.id]
+            restante_fp[mat.id] = 0.0
+            return 0.0
+
         # Procesar cada material
         for item in materials:
             try:
@@ -6326,6 +7227,14 @@ def register_exit_multiple():
                 material = Material.query.get(material_id)
                 if not material:
                     errors.append(f"Material ID {material_id} no encontrado")
+                    continue
+
+                tope = tope_autorizado(material)
+                if tope is not None and quantity > tope + 0.001:
+                    errors.append(
+                        f"{material.code}: excede lo autorizado para {fp_code}. "
+                        f"Máximo: {tope:.2f} {material.unit}"
+                    )
                     continue
 
                 if is_consumable_exit or is_free_exit:
@@ -6381,6 +7290,10 @@ def register_exit_multiple():
                     # Actualizar quantity_delivered en RequestItem
                     if req_items:
                         req_items[0].quantity_delivered = (req_items[0].quantity_delivered or 0) + quantity
+
+                # La línea pasó: descontar del tope para las siguientes del mismo material
+                if tope is not None:
+                    restante_fp[material.id] = max(0.0, tope - quantity)
 
                 # Generar IDM único
                 last_id = StockMovement.query.count()
@@ -6526,98 +7439,165 @@ def get_material_pending_quantity():
 @app.route('/api/stock/return', methods=['POST'])
 @login_required
 def register_return():
+    """Retorno general de material de un proyecto.
+
+    - Reutilizable → movimiento 'retorno' que suma al stock del material original.
+      Si se indica un área, el retorno queda bajo esa área y el material puede
+      volver a salir para ese mismo proyecto.
+    - Reciclable  → movimiento 'entrada' por cada medida reciclada, con el FP
+      original, que suma al stock del material reciclado (no al original).
+    - Desecho     → se registra el retorno pero no regresa nada al inventario.
+    """
     if current_user.role == 'requisitador':
         return jsonify({'success': False, 'message': 'No tienes permisos para registrar retornos.'}), 403
 
     try:
-        fp_code = request.form.get('fp_code')
-        material_id = request.form.get('material_id')
-        condition = request.form.get('condition_on_return')
-        notes = request.form.get('notes', '')
-        return_quantity_str = request.form.get('return_quantity', '0')
+        fp_code     = (request.form.get('fp_code') or '').strip()
+        material_id = request.form.get('material_id', type=int)
+        condition   = (request.form.get('condition_on_return') or '').strip()
+        area        = (request.form.get('area') or '').strip()
+        notes       = (request.form.get('notes') or '').strip()
 
         if not fp_code or not material_id:
             return jsonify({'success': False, 'message': 'Proyecto y material son obligatorios'})
+        if condition not in ('reutilizable', 'reciclable', 'desecho'):
+            return jsonify({'success': False, 'message': 'Condición de retorno inválida'})
 
         material = Material.query.get(material_id)
         if not material:
             return jsonify({'success': False, 'message': 'Material no encontrado'})
 
-        # Buscar proyecto
         project = Project.query.filter_by(fp_code=fp_code).first()
         if not project:
             return jsonify({'success': False, 'message': f'Proyecto {fp_code} no encontrado'})
 
-        # Determinar cantidad del retorno según la condición
-        return_quantity = 0
+        # --- Líneas de reciclaje: material reciclado + cantidad ---
+        lineas_reciclaje = []
+        if condition == 'reciclable':
+            for clave in request.form:
+                if not clave.startswith('recycle_material_'):
+                    continue
+                indice = clave.rsplit('_', 1)[1]
+                rec_id  = request.form.get(clave, type=int)
+                rec_qty = request.form.get(f'recycle_qty_{indice}', type=float)
+                if not rec_id or not rec_qty or rec_qty <= 0:
+                    continue
+                reciclado = Material.query.get(rec_id)
+                if not reciclado:
+                    return jsonify({'success': False, 'message': f'Material reciclado {rec_id} no encontrado'})
+                lineas_reciclaje.append((reciclado, round(rec_qty, 4)))
+
+            if not lineas_reciclaje:
+                return jsonify({'success': False, 'message':
+                                'Indique al menos una medida reciclada con su cantidad'})
+
+        # --- Cantidad del retorno ---
+        return_quantity = 0.0
         if condition in ('reutilizable', 'desecho'):
             try:
-                return_quantity = float(return_quantity_str)
+                return_quantity = float(request.form.get('return_quantity') or 0)
             except (ValueError, TypeError):
                 return jsonify({'success': False, 'message': 'Cantidad de retorno inválida'})
-
             if return_quantity <= 0:
                 return jsonify({'success': False, 'message': 'La cantidad de retorno debe ser mayor a 0'})
+        else:
+            # En reciclaje lo que regresa es la suma de las medidas recicladas.
+            return_quantity = round(sum(qty for _, qty in lineas_reciclaje), 4)
 
-        # Generar IDM para el retorno
-        last_id = StockMovement.query.count()
-        idm = f"RET-{now_mx().strftime('%y%m%d')}-{last_id + 1:04d}"
+        ahora = now_mx()
+        consecutivo = StockMovement.query.count()
+        idm = f"RET-{ahora.strftime('%y%m%d')}-{consecutivo + 1:04d}"
 
-        # Crear movimiento de retorno con la cantidad correspondiente
+        detalle = f"Condición: {condition}."
+        if area:
+            detalle += f" Área: {area}."
+        if notes:
+            detalle += f" {notes}"
+
         return_movement = StockMovement(
             idm=idm,
             material_id=material.id,
             movement_type='retorno',
             quantity=return_quantity,
             fp_code=fp_code,
-            fecha=now_mx().date(),
-            hora=now_mx().time(),
+            fecha=ahora.date(),
+            hora=ahora.time(),
             personal=current_user.username,
-            area='',
+            # El área deja el retorno disponible bajo esa área para volver a salir.
+            area=area or '',
+            unit_cost=material.unit_cost,
             reference_type='devolucion',
+            condition_on_return=condition,
             user_id=current_user.id,
-            notes=f"Condición: {condition}. {notes}"
+            notes=detalle
         )
-
-        # Si es reutilizable, devolver al stock
-        if condition == 'reutilizable' and return_quantity > 0:
-            material.current_stock += return_quantity
-
         db.session.add(return_movement)
 
-        # Marcar los RequestItems de este material/proyecto como "retornado"
-        req_items = db.session.query(RequestItem)\
-            .join(Request)\
-            .filter(
-                Request.project_id == project.id,
-                RequestItem.material_id == material.id,
-                RequestItem.will_return == True
-            ).all()
+        # --- Efecto en inventario ---
+        if condition == 'reutilizable':
+            # Regresa al stock del material original.
+            material.current_stock = (material.current_stock or 0) + return_quantity
+            material.last_movement = ahora
 
+        elif condition == 'reciclable':
+            # No regresa al original: entra como material reciclado, con el FP original.
+            for indice, (reciclado, cantidad) in enumerate(lineas_reciclaje, start=1):
+                reciclado.current_stock = (reciclado.current_stock or 0) + cantidad
+                reciclado.last_movement = ahora
+                db.session.add(StockMovement(
+                    idm=f"REC-{ahora.strftime('%y%m%d')}-{consecutivo + 1 + indice:04d}",
+                    material_id=reciclado.id,
+                    movement_type='entrada',
+                    quantity=cantidad,
+                    fp_code=fp_code,
+                    fecha=ahora.date(),
+                    hora=ahora.time(),
+                    personal=current_user.username,
+                    area=area or '',
+                    unit_cost=reciclado.unit_cost,
+                    reference_type='reciclaje',
+                    user_id=current_user.id,
+                    notes=(f'Reciclaje de {material.code} — {material.name} '
+                           f'(retorno de {fp_code}). {notes}').strip()
+                ))
+
+        # Desecho: se deja constancia del retorno, pero no vuelve al inventario.
+
+        # --- Marcar los renglones de la requisición como retornados ---
+        req_items = db.session.query(RequestItem).join(Request).filter(
+            Request.project_id == project.id,
+            RequestItem.material_id == material.id,
+            RequestItem.will_return == True
+        ).all()
+        if not req_items:
+            req_items = db.session.query(RequestItem).join(Request).filter(
+                Request.project_id == project.id,
+                RequestItem.material_id == material.id
+            ).all()
         for ri in req_items:
             ri.item_status = 'retornado'
+            ri.actual_return_date = ahora.date()
+            recalculate_request_status(ri.request)
 
-        # Si no hay items con will_return, marcar todos los items de ese material para este proyecto
-        if not req_items:
-            all_items = db.session.query(RequestItem)\
-                .join(Request)\
-                .filter(
-                    Request.project_id == project.id,
-                    RequestItem.material_id == material.id
-                ).all()
-            for ri in all_items:
-                ri.item_status = 'retornado'
-
-        material.last_movement = now_mx()
+        material.last_movement = ahora
         db.session.commit()
 
-        return jsonify({'success': True, 'message': 'Retorno registrado exitosamente. Los items han sido marcados como retornados.'})
+        if condition == 'reciclable':
+            resumen = ', '.join(f'{qty:g} {m.unit} de {m.name}' for m, qty in lineas_reciclaje)
+            mensaje = f'Retorno reciclado registrado: entró {resumen} al inventario.'
+        elif condition == 'reutilizable':
+            mensaje = (f'Retorno registrado: {return_quantity:g} {material.unit} regresaron al stock de '
+                       f'{material.name}' + (f' bajo el área {area}.' if area else '.'))
+        else:
+            mensaje = f'Retorno por desecho registrado: {return_quantity:g} {material.unit} no regresan al inventario.'
+
+        log_change('stock_movement', return_movement.id, 'CREATE', {},
+                   notes=f'Retorno {condition} de {material.code} — FP {fp_code}')
+        return jsonify({'success': True, 'message': mensaje})
 
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'message': f'Error al registrar retorno: {str(e)}'})
-
-
 
 
 # Ruta para eliminar movimiento
@@ -6657,7 +7637,11 @@ def delete_movement(movement_id):
                             req_item.item_status = 'abastecido'
                         recalculate_request_status(req_item.request)
         elif movement.movement_type == 'retorno':
-            material.current_stock -= movement.quantity
+            # Solo el retorno reutilizable sumó al stock del material original.
+            # El reciclable entró como material reciclado (movimientos aparte) y
+            # el desecho no tocó el inventario.
+            if (movement.condition_on_return or 'reutilizable') == 'reutilizable':
+                material.current_stock -= movement.quantity
         elif movement.movement_type == 'ajuste':
             # En ajustes 'quantity' es la diferencia aplicada: revertirla
             material.current_stock -= (movement.quantity or 0)

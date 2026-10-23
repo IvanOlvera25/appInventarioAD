@@ -1255,24 +1255,35 @@
                 exitMaterialSelect.innerHTML = '<option value="" selected disabled>Seleccione un material...</option>';
             }
 
+            // Cuando el backend resuelve el tope con sp_resumen_fp, ese es el
+            // máximo: no se vuelve a calcular aquí.
+            const topeDesdeSP = availableMaterials.some(m => m.max_source === 'sp_resumen_fp');
+
             availableMaterials.forEach(mat => {
-                // En modo Stock Libre: limitár solo por cantidad requisitada pendiente.
-                // En modo normal: limitár por abastecida_pendiente.
-                let entregableAhora = stockCheckEnabled
-                    ? (mat.abastecida_pendiente !== undefined ? mat.abastecida_pendiente : mat.pending)
-                    : mat.pending;  // En libre: todo lo pendiente de entregar
+                // Tope de la salida. Con sp_resumen_fp manda max_allowed; si no,
+                // se mantiene la regla anterior (abastecido pendiente, o todo lo
+                // pendiente de entregar en modo Stock Libre).
+                let entregableAhora = mat.max_source === 'sp_resumen_fp'
+                    ? (mat.max_allowed || 0)
+                    : (stockCheckEnabled
+                        ? (mat.abastecida_pendiente !== undefined ? mat.abastecida_pendiente : mat.pending)
+                        : mat.pending);
 
                 const alreadyAdded = exitMaterialsData.find(m => m.material_id == mat.id);
                 if (alreadyAdded) {
                     entregableAhora -= alreadyAdded.quantity;
                 }
 
-                // En stock libre siempre mostrar si pending > 0; en normal solo si entregableAhora > 0
-                const mostrar = stockCheckEnabled ? (entregableAhora > 0.001) : (mat.pending > 0.001);
+                // Con tope del procedimiento solo se muestra lo que puede salir.
+                const mostrar = (topeDesdeSP || stockCheckEnabled)
+                    ? (entregableAhora > 0.001)
+                    : (mat.pending > 0.001);
 
                 if (mostrar) {
                     // Mostrar el límite real: en libre no limitamos por stock físico
-                    const maxNow = stockCheckEnabled ? Math.min(mat.stock, entregableAhora) : entregableAhora;
+                    const maxNow = (topeDesdeSP || !stockCheckEnabled)
+                        ? entregableAhora
+                        : Math.min(mat.stock, entregableAhora);
                     const stockLabel = mat.stock < 0 ? `⚠️ Stock: ${mat.stock.toFixed(2)}` : `Disponible: ${maxNow.toFixed(2)}`;
                     const text = `${mat.code} - ${mat.name} (${stockLabel} ${mat.unit})`;
                     const option = new Option(text, mat.id);
@@ -1286,6 +1297,8 @@
                     option.dataset.totalSupplied       = mat.total_supplied || 0;
                     option.dataset.totalDelivered      = mat.total_delivered || 0;
                     option.dataset.abastecidaPendiente = mat.abastecida_pendiente || 0;
+                    option.dataset.maxAllowed          = entregableAhora;
+                    option.dataset.maxSource           = mat.max_source || 'local';
                     exitMaterialSelect.add(option);
                     
                     if (exitMaterialSelect.tomselect) {

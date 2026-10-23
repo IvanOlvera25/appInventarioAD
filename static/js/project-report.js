@@ -64,18 +64,38 @@
             });
             let materials = '';
             for (const [area, rows] of groups) {
+                // Orden fijo: identificación a la izquierda y cantidades a la
+                // derecha, todas numéricas y alineadas entre sí.
                 materials += `<section class="mb-4"><h6 class="bg-light border rounded p-2">${esc(area)}</h6>
-                    <div class="table-responsive"><table class="table table-sm table-striped align-middle">
-                    <thead><tr><th>Material</th><th>Categoría</th><th class="text-end">Solicitado</th><th class="text-end">Entregado</th><th class="text-end">Pendiente</th><th>Estado</th></tr></thead><tbody>`;
+                    <div class="table-responsive"><table class="table table-sm table-striped align-middle project-materials">
+                    <thead><tr>
+                        <th class="text-end">ID</th>
+                        <th>Nombre</th>
+                        <th>Unidad</th>
+                        <th>Categoría</th>
+                        <th class="text-end">Requisitado</th>
+                        <th class="text-end">Abastecido</th>
+                        <th class="text-end">Pend. compra</th>
+                        <th class="text-end">Entregado</th>
+                        <th class="text-end">Pend. entrega</th>
+                        <th>Estado</th>
+                    </tr></thead><tbody>`;
                 rows.forEach(m => {
                     const pending = m.quantity_pending;
                     const status = pending < -0.001 ? ['info', 'Entrega excedente'] : pending > 0.001
                         ? (m.quantity_delivered > 0 ? ['warning', 'Parcial'] : ['secondary', 'Sin entregar'])
                         : ['success', 'Completo'];
-                    materials += `<tr><td>${esc(m.name)}</td><td>${esc(m.category)}</td>
-                        <td class="text-end text-nowrap">${number(m.quantity_requested)} ${esc(m.unit)}</td>
-                        <td class="text-end text-nowrap">${number(m.quantity_delivered)} ${esc(m.unit)}</td>
-                        <td class="text-end text-nowrap">${number(pending)} ${esc(m.unit)}</td>
+                    const purchase = m.quantity_pending_purchase || 0;
+                    materials += `<tr>
+                        <td class="text-end text-muted">${m.material_id ? esc(m.material_id) : '—'}</td>
+                        <td>${esc(m.name)}</td>
+                        <td>${esc(m.unit)}</td>
+                        <td>${esc(m.category)}</td>
+                        <td class="text-end">${number(m.quantity_requested)}</td>
+                        <td class="text-end">${number(m.quantity_supplied || 0)}</td>
+                        <td class="text-end${purchase > 0.001 ? ' text-warning fw-semibold' : ''}">${number(purchase)}</td>
+                        <td class="text-end">${number(m.quantity_delivered)}</td>
+                        <td class="text-end">${number(pending)}</td>
                         <td><span class="badge bg-${status[0]}">${status[1]}</span></td></tr>`;
                 });
                 materials += '</tbody></table></div></section>';
@@ -88,7 +108,7 @@
                 <div><h5>${esc(p.fp_code)} · ${esc(p.name)}</h5><p class="text-muted mb-0">${esc(p.client || 'Sin cliente')} · Entrega: ${date(p.delivery_date)}</p></div>
                 <a class="btn btn-sm btn-outline-primary" href="/api/projects/${encodeURIComponent(p.fp_code)}/export-report"><i class="fas fa-download me-1"></i>Exportar reporte</a></div>
                 <h5>Materiales por área</h5>
-                <p class="small text-muted">Entregas calculadas con los movimientos de almacén. Un pendiente negativo indica una entrega mayor a lo solicitado.</p>
+                <p class="small text-muted">Entregas calculadas con los movimientos de almacén. Las cantidades están en la unidad de cada material. Un pendiente de entrega negativo indica una entrega mayor a lo solicitado.</p>
                 ${materials || '<p class="text-muted">Este proyecto no tiene materiales registrados.</p>'}
                 <details class="border rounded p-3"><summary class="fw-bold">Requisiciones del proyecto (${data.requests.length})</summary>
                 <div class="table-responsive mt-3"><table class="table table-sm table-hover"><thead><tr><th>Requisición</th><th>Área</th><th>Estado</th><th>Solicitud</th><th>Límite de adquisición</th><th>Detalle</th></tr></thead>

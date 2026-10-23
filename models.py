@@ -236,6 +236,10 @@ class StockMovement(db.Model):
 
 
 class PurchaseRequest(db.Model):
+    """Una compra pendiente. Es la fuente de verdad de cuánto material hay que
+    comprar para una requisición; sustituye a RequestItem.quantity_to_purchase,
+    que no permitía fecha límite ni seguimiento de estado por compra.
+    """
     id = db.Column(db.Integer, primary_key=True)
     request_number = db.Column(db.String(100), unique=True, nullable=False)
     material_id = db.Column(db.Integer, db.ForeignKey('material.id'), nullable=False)
@@ -248,8 +252,38 @@ class PurchaseRequest(db.Model):
     notes = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=now_mx)
 
+    # Origen de la compra: la requisición y el renglón que la provocaron.
+    request_id      = db.Column(db.Integer, db.ForeignKey('request.id'), nullable=True)
+    request_item_id = db.Column(db.Integer, db.ForeignKey('request_item.id'), nullable=True)
+    # Fecha límite de entrega del material comprado.
+    deadline        = db.Column(db.Date, nullable=True)
+    # Estado del catálogo editable (PurchaseStatus). 'status' se conserva por
+    # compatibilidad con las compras anteriores a este catálogo.
+    status_id       = db.Column(db.Integer, db.ForeignKey('purchase_status.id'), nullable=True)
+    updated_at      = db.Column(db.DateTime, default=now_mx, onupdate=now_mx)
+
     material = db.relationship('Material', backref='purchase_requests')
     requester = db.relationship('User', backref='purchase_requests')
+    request = db.relationship('Request', backref='purchases')
+    item = db.relationship('RequestItem', backref='purchases')
+    status_ref = db.relationship('PurchaseStatus', backref='purchases')
+
+    @property
+    def status_label(self):
+        if self.status_ref:
+            return self.status_ref.name
+        return (self.status or 'pendiente').replace('_', ' ').capitalize()
+
+    @property
+    def status_color(self):
+        return self.status_ref.color if self.status_ref else 'secondary'
+
+    @property
+    def is_closed(self):
+        """Una compra cerrada ya no aparece como pendiente."""
+        if self.status_ref:
+            return bool(self.status_ref.is_final)
+        return (self.status or '') in ('completada', 'recibida', 'cancelada')
 
 # --- NUEVO: Alertas del sistema persistentes ---
 class SystemAlert(db.Model):
@@ -520,3 +554,63 @@ class ToolReservation(db.Model):
             'completada': 'Completada',
             'cancelada':  'Cancelada',
         }.get(self.status, self.status or '—')
+
+
+# ===================================================================
+# ===== COMPRAS Y CAMBIOS A REQUISICIONES =====
+# ===================================================================
+
+class PurchaseStatus(db.Model):
+    """Catálogo de estados de una compra, editable por el encargado de compras.
+
+    Sustituye a la cadena libre en PurchaseRequest.status: así compras define sus
+    propias etapas (cotizando, autorizada, en tránsito, recibida…) sin tocar código.
+    """
+    __tablename__ = 'purchase_status'
+
+    id         = db.Column(db.Integer, primary_key=True)
+    name       = db.Column(db.String(80), nullable=False, unique=True)
+    color      = db.Column(db.String(20), default='secondary')  # clase de badge de Bootstrap
+    sort_order = db.Column(db.Integer, default=0)
+    is_active  = db.Column(db.Boolean, default=True)
+    is_final   = db.Column(db.Boolean, default=False)  # cierra la compra (recibida/cancelada)
+    created_at = db.Column(db.DateTime, default=now_mx)
+
+
+class ItemChangeRequest(db.Model):
+    """Solicitud de un almacenista/admin para cancelar o intercambiar un material.
+
+    Pasados los 15 minutos de edición libre, la requisición ya no se toca de forma
+    directa: el cambio se propone aquí y solo surte efecto cuando el autor de la
+    requisición lo acepta.
+    """
+    __tablename__ = 'item_change_request'
+
+    id              = db.Column(db.Integer, primary_key=True)
+    request_item_id = db.Column(db.Integer, db.ForeignKey('request_item.id'), nullable=False)
+    request_id      = db.Column(db.Integer, db.ForeignKey('request.id'), nullable=False)
+    change_type     = db.Column(db.String(20), nullable=False)  # 'cancelacion' | 'intercambio'
+
+    # Solo para intercambio
+    new_material_id = db.Column(db.Integer, db.ForeignKey('material.id'), nullable=True)
+    new_quantity    = db.Column(db.Float, nullable=True)
+
+    reason          = db.Column(db.Text)
+    status          = db.Column(db.String(20), default='pendiente')  # pendiente | aceptado | rechazado
+    requested_by    = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    requested_at    = db.Column(db.DateTime, default=now_mx)
+    resolved_by     = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    resolved_at     = db.Column(db.DateTime, nullable=True)
+    response_notes  = db.Column(db.Text)
+
+    item         = db.relationship('RequestItem', backref='change_requests')
+    request      = db.relationship('Request', backref='change_requests')
+    new_material = db.relationship('Material', foreign_keys=[new_material_id])
+    requester    = db.relationship('User', foreign_keys=[requested_by])
+    resolver     = db.relationship('User', foreign_keys=[resolved_by])
+
+    CHANGE_LABELS = {'cancelacion': 'Cancelación', 'intercambio': 'Intercambio de material'}
+
+    @property
+    def change_label(self):
+        return self.CHANGE_LABELS.get(self.change_type, self.change_type or '—')
