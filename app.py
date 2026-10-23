@@ -242,84 +242,6 @@ with app.app_context():
                     _conn2.execute(_text2(_fr_ddl))
                     print(f"  ✅ Columna '{_fr_col}' agregada a fabric_roll")
 
-            # -- Catálogo de estados de compra (lo define el encargado de compras) --
-            _conn2.execute(_text2("""
-                CREATE TABLE IF NOT EXISTS `purchase_status` (
-                    `id`         INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    `name`       VARCHAR(80) NOT NULL UNIQUE,
-                    `color`      VARCHAR(20) DEFAULT 'secondary',
-                    `sort_order` INT DEFAULT 0,
-                    `is_active`  TINYINT(1) NOT NULL DEFAULT 1,
-                    `is_final`   TINYINT(1) NOT NULL DEFAULT 0,
-                    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """))
-            # Estados de arranque. Son solo un punto de partida: compras los edita
-            # desde la interfaz. INSERT IGNORE evita repetirlos en cada reload.
-            _conn2.execute(_text2("""
-                INSERT IGNORE INTO `purchase_status` (`name`, `color`, `sort_order`, `is_final`)
-                VALUES ('Pendiente',   'secondary', 10, 0),
-                       ('Cotizando',   'info',      20, 0),
-                       ('Autorizada',  'primary',   30, 0),
-                       ('En tránsito', 'warning',   40, 0),
-                       ('Recibida',    'success',   50, 1),
-                       ('Cancelada',   'danger',    60, 1)
-            """))
-            print("  ✅ Catálogo 'purchase_status' verificado/creado")
-
-            # -- Solicitudes de cancelación/intercambio de material --
-            _conn2.execute(_text2("""
-                CREATE TABLE IF NOT EXISTS `item_change_request` (
-                    `id`              INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    `request_item_id` INT NOT NULL,
-                    `request_id`      INT NOT NULL,
-                    `change_type`     VARCHAR(20) NOT NULL,
-                    `new_material_id` INT DEFAULT NULL,
-                    `new_quantity`    FLOAT DEFAULT NULL,
-                    `reason`          TEXT,
-                    `status`          VARCHAR(20) NOT NULL DEFAULT 'pendiente',
-                    `requested_by`    INT NOT NULL,
-                    `requested_at`    DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    `resolved_by`     INT DEFAULT NULL,
-                    `resolved_at`     DATETIME DEFAULT NULL,
-                    `response_notes`  TEXT,
-                    INDEX idx_icr_item (`request_item_id`),
-                    INDEX idx_icr_request (`request_id`),
-                    INDEX idx_icr_status (`status`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """))
-            print("  ✅ Tabla 'item_change_request' verificada/creada")
-
-            # -- Migrar quantity_to_purchase → purchase_request --
-            # Las compras pendientes vivían como un número suelto en el renglón de la
-            # requisición, sin fecha límite ni estado. Se convierten en filas de
-            # purchase_request. El NOT EXISTS lo hace idempotente.
-            _mig_pr = _conn2.execute(_text2("""
-                INSERT INTO `purchase_request`
-                    (request_number, material_id, quantity, requested_by, status,
-                     request_id, request_item_id, deadline, status_id, created_at, notes)
-                SELECT CONCAT('CMP-', LPAD(ri.id, 6, '0')),
-                       ri.material_id,
-                       ROUND(ri.quantity_to_purchase, 4),
-                       r.user_id,
-                       'pendiente',
-                       r.id,
-                       ri.id,
-                       r.acquisition_deadline,
-                       (SELECT id FROM `purchase_status` WHERE name = 'Pendiente' LIMIT 1),
-                       COALESCE(r.created_at, NOW()),
-                       'Migrada desde request_item.quantity_to_purchase'
-                FROM `request_item` ri
-                JOIN `request` r ON r.id = ri.request_id
-                WHERE ri.quantity_to_purchase > 0
-                  AND ri.material_id IS NOT NULL
-                  AND NOT EXISTS (
-                      SELECT 1 FROM `purchase_request` pr WHERE pr.request_item_id = ri.id
-                  )
-            """))
-            if getattr(_mig_pr, 'rowcount', 0):
-                print(f"  ✅ {_mig_pr.rowcount} compra(s) migradas de request_item a purchase_request")
-
             # -- Cortes de tela históricos: área real y ajustes mal tipificados --
             # Hasta octubre de 2026 el corte de rollo guardaba area='Producción'
             # por defecto en TODOS los motivos, y el motivo 'Ajuste de Inventario'
@@ -469,6 +391,116 @@ with app.app_context():
             _conn2.commit()
     except Exception as _e2:
         print(f"  ⚠️ Migraciones tempranas: {_e2}")
+
+
+# ===== MIGRACIONES DE COMPRAS Y CAMBIOS A REQUISICIONES =====
+# Van en su propio bloque a propósito: el de arriba es un único try, así que un
+# fallo en cualquiera de sus sentencias saltaría todo lo que venga después. Al
+# separarlas, estas corren aunque aquel falle, y viceversa.
+with app.app_context():
+    try:
+        from sqlalchemy import text as _text3
+        with db.engine.connect() as _conn3:
+            # -- Catálogo de estados de compra (lo define el encargado de compras) --
+            _conn3.execute(_text3("""
+                CREATE TABLE IF NOT EXISTS `purchase_status` (
+                    `id`         INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `name`       VARCHAR(80) NOT NULL UNIQUE,
+                    `color`      VARCHAR(20) DEFAULT 'secondary',
+                    `sort_order` INT DEFAULT 0,
+                    `is_active`  TINYINT(1) NOT NULL DEFAULT 1,
+                    `is_final`   TINYINT(1) NOT NULL DEFAULT 0,
+                    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            # Estados de arranque. Son solo un punto de partida: compras los edita
+            # desde la interfaz. INSERT IGNORE evita repetirlos en cada reload.
+            _conn3.execute(_text3("""
+                INSERT IGNORE INTO `purchase_status` (`name`, `color`, `sort_order`, `is_final`)
+                VALUES ('Pendiente',   'secondary', 10, 0),
+                       ('Cotizando',   'info',      20, 0),
+                       ('Autorizada',  'primary',   30, 0),
+                       ('En tránsito', 'warning',   40, 0),
+                       ('Recibida',    'success',   50, 1),
+                       ('Cancelada',   'danger',    60, 1)
+            """))
+            print("  ✅ Catálogo 'purchase_status' verificado/creado")
+
+            # -- Solicitudes de cancelación/intercambio de material --
+            _conn3.execute(_text3("""
+                CREATE TABLE IF NOT EXISTS `item_change_request` (
+                    `id`              INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    `request_item_id` INT NOT NULL,
+                    `request_id`      INT NOT NULL,
+                    `change_type`     VARCHAR(20) NOT NULL,
+                    `new_material_id` INT DEFAULT NULL,
+                    `new_quantity`    FLOAT DEFAULT NULL,
+                    `reason`          TEXT,
+                    `status`          VARCHAR(20) NOT NULL DEFAULT 'pendiente',
+                    `requested_by`    INT NOT NULL,
+                    `requested_at`    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    `resolved_by`     INT DEFAULT NULL,
+                    `resolved_at`     DATETIME DEFAULT NULL,
+                    `response_notes`  TEXT,
+                    INDEX idx_icr_item (`request_item_id`),
+                    INDEX idx_icr_request (`request_id`),
+                    INDEX idx_icr_status (`status`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """))
+            print("  ✅ Tabla 'item_change_request' verificada/creada")
+
+            # -- purchase_request: origen, fecha límite y estado --
+            # Va aquí y no en safe_init_db() porque esa función solo corre por
+            # CLI: bajo WSGI nunca se ejecuta y las columnas no se agregaban.
+            for _pr_col, _pr_ddl in (
+                ('request_id',      'ALTER TABLE `purchase_request` ADD COLUMN request_id INT DEFAULT NULL'),
+                ('request_item_id', 'ALTER TABLE `purchase_request` ADD COLUMN request_item_id INT DEFAULT NULL'),
+                ('deadline',        'ALTER TABLE `purchase_request` ADD COLUMN deadline DATE DEFAULT NULL'),
+                ('status_id',       'ALTER TABLE `purchase_request` ADD COLUMN status_id INT DEFAULT NULL'),
+                ('updated_at',      'ALTER TABLE `purchase_request` ADD COLUMN updated_at DATETIME DEFAULT NULL'),
+            ):
+                _pr_has = _conn3.execute(_text3(
+                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'purchase_request' "
+                    "AND COLUMN_NAME = :c"
+                ), {"c": _pr_col}).scalar()
+                if not _pr_has:
+                    _conn3.execute(_text3(_pr_ddl))
+                    print(f"  ✅ Columna '{_pr_col}' agregada a purchase_request")
+
+            # -- Migrar quantity_to_purchase → purchase_request --
+            # Las compras pendientes vivían como un número suelto en el renglón de la
+            # requisición, sin fecha límite ni estado. Se convierten en filas de
+            # purchase_request. El NOT EXISTS lo hace idempotente.
+            _mig_pr = _conn3.execute(_text3("""
+                INSERT INTO `purchase_request`
+                    (request_number, material_id, quantity, requested_by, status,
+                     request_id, request_item_id, deadline, status_id, created_at, notes)
+                SELECT CONCAT('CMP-', LPAD(ri.id, 6, '0')),
+                       ri.material_id,
+                       ROUND(ri.quantity_to_purchase, 4),
+                       r.user_id,
+                       'pendiente',
+                       r.id,
+                       ri.id,
+                       r.acquisition_deadline,
+                       (SELECT id FROM `purchase_status` WHERE name = 'Pendiente' LIMIT 1),
+                       COALESCE(r.created_at, NOW()),
+                       'Migrada desde request_item.quantity_to_purchase'
+                FROM `request_item` ri
+                JOIN `request` r ON r.id = ri.request_id
+                WHERE ri.quantity_to_purchase > 0
+                  AND ri.material_id IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM `purchase_request` pr WHERE pr.request_item_id = ri.id
+                  )
+            """))
+            if getattr(_mig_pr, 'rowcount', 0):
+                print(f"  ✅ {_mig_pr.rowcount} compra(s) migradas de request_item a purchase_request")
+
+            _conn3.commit()
+    except Exception as _e3:
+        print(f"  ⚠️ Migraciones de compras: {_e3}")
 # ===== FIN MIGRACIONES CRÍTICAS TEMPRANAS =====
 
 Compress(app)   # Compresión automática de respuestas HTML/JSON
@@ -740,21 +772,6 @@ def safe_init_db():
                 if not _mysql_column_exists(conn, 'request_item', 'actual_return_date'):
                     conn.execute(text('ALTER TABLE `request_item` ADD COLUMN actual_return_date DATE'))
                     print("  ✅ Columna 'actual_return_date' agregada a request_item")
-
-            if 'purchase_request' in tables:
-                # La compra ahora guarda su origen (requisición + renglón), su fecha
-                # límite y su estado del catálogo, en lugar de vivir en
-                # request_item.quantity_to_purchase.
-                for _pr_col, _pr_ddl in (
-                    ('request_id',      'ALTER TABLE `purchase_request` ADD COLUMN request_id INT DEFAULT NULL'),
-                    ('request_item_id', 'ALTER TABLE `purchase_request` ADD COLUMN request_item_id INT DEFAULT NULL'),
-                    ('deadline',        'ALTER TABLE `purchase_request` ADD COLUMN deadline DATE DEFAULT NULL'),
-                    ('status_id',       'ALTER TABLE `purchase_request` ADD COLUMN status_id INT DEFAULT NULL'),
-                    ('updated_at',      'ALTER TABLE `purchase_request` ADD COLUMN updated_at DATETIME DEFAULT NULL'),
-                ):
-                    if not _mysql_column_exists(conn, 'purchase_request', _pr_col):
-                        conn.execute(text(_pr_ddl))
-                        print(f"  ✅ Columna '{_pr_col}' agregada a purchase_request")
 
             if 'user' in tables:
                 if not _mysql_column_exists(conn, 'user', 'is_verified'):
@@ -4259,6 +4276,12 @@ def sync_item_purchase(item, quantity, deadline=None, user=None):
     """
     quantity = round(float(quantity or 0), 4)
     compra = PurchaseRequest.query.filter_by(request_item_id=item.id).first()
+
+    # sp_resumen_fp sigue leyendo request_item.quantity_to_purchase, así que la
+    # columna se conserva como espejo de lo que falta por comprar. La fuente de
+    # verdad es purchase_request; esto solo evita que el procedimiento quede
+    # con datos viejos.
+    item.quantity_to_purchase = quantity
 
     if quantity <= 0:
         # Ya no hay nada que comprar: solo se descarta si compras no la movió.

@@ -53,16 +53,21 @@ def read_project_report(engine, fp_code):
     return {'requests': requests, 'materials': materials, 'availability': availability}
 
 
-# El tercer result set identifica el material y dice cuánto puede salir. Los
-# nombres exactos los pone el procedimiento, así que se aceptan los alias
-# habituales en lugar de atar la app a una revisión concreta de la base.
+# Tercer result set de sp_resumen_fp. Columnas reales del procedimiento:
+#   area, material_id, name, unit, category, quantity_requested,
+#   quantity_delivered, quantity_supplied, quantity_on_stock,
+#   quantity_supplied_pending, quantity_max_deliverable
+# donde quantity_max_deliverable = GREATEST(LEAST(abastecido_pendiente, stock), 0)
+# y las filas vienen por (área, material), ya filtradas a las que sí pueden salir.
+# Se aceptan además algunos alias por si el procedimiento se renombra.
 _AVAILABILITY_ID_KEYS = ('material_id', 'id_material', 'idmaterial', 'id')
 _AVAILABILITY_CODE_KEYS = ('material_code', 'codigo', 'code', 'clave')
-_AVAILABILITY_NAME_KEYS = ('material_name', 'material', 'nombre', 'name', 'descripcion')
+_AVAILABILITY_NAME_KEYS = ('name', 'material_name', 'material', 'nombre', 'descripcion')
+_AVAILABILITY_AREA_KEYS = ('area', 'área', 'departamento', 'department')
 _AVAILABILITY_QTY_KEYS = (
-    'max_salida', 'maximo', 'max', 'disponible', 'cantidad_disponible',
-    'por_entregar', 'pendiente_entrega', 'quantity_available', 'available',
-    'cantidad', 'quantity',
+    'quantity_max_deliverable', 'max_salida', 'maximo', 'max', 'disponible',
+    'cantidad_disponible', 'por_entregar', 'pendiente_entrega',
+    'quantity_available', 'available', 'cantidad', 'quantity',
 )
 
 
@@ -75,14 +80,20 @@ def _first_key(row, candidates):
     return None
 
 
-def parse_fp_availability(rows):
+def parse_fp_availability(rows, area=None):
     """Normaliza el tercer result set a {material_id|code|name: cantidad}.
 
-    Devuelve tres índices para que quien consulte pueda cruzar por lo que tenga
-    a la mano. Si no se reconoce la forma de las filas, devuelve índices vacíos
-    y quien llama decide el respaldo.
+    El procedimiento devuelve una fila por (área, material), así que las
+    cantidades se SUMAN por material. Con `area` se limita a esa área, que es lo
+    que corresponde cuando la salida se captura para un área concreta.
+
+    Devuelve tres índices para cruzar por lo que se tenga a la mano. Si no se
+    reconoce la forma de las filas, los índices van vacíos y quien llama decide
+    el respaldo.
     """
     por_id, por_codigo, por_nombre = {}, {}, {}
+    area_buscada = str(area).strip().casefold() if area else None
+
     for row in rows or []:
         qty_key = _first_key(row, _AVAILABILITY_QTY_KEYS)
         if qty_key is None:
@@ -92,25 +103,34 @@ def parse_fp_availability(rows):
         except (TypeError, ValueError):
             continue
 
+        if area_buscada is not None:
+            area_key = _first_key(row, _AVAILABILITY_AREA_KEYS)
+            fila_area = str(row.get(area_key) or '').strip().casefold() if area_key else ''
+            if fila_area != area_buscada:
+                continue
+
+        def acumular(destino, clave):
+            destino[clave] = destino.get(clave, 0.0) + cantidad
+
         id_key = _first_key(row, _AVAILABILITY_ID_KEYS)
         if id_key is not None and row.get(id_key) not in (None, ''):
             try:
-                por_id[int(row[id_key])] = cantidad
+                acumular(por_id, int(row[id_key]))
             except (TypeError, ValueError):
                 pass
 
         code_key = _first_key(row, _AVAILABILITY_CODE_KEYS)
         if code_key is not None and row.get(code_key):
-            por_codigo[str(row[code_key]).strip().casefold()] = cantidad
+            acumular(por_codigo, str(row[code_key]).strip().casefold())
 
         name_key = _first_key(row, _AVAILABILITY_NAME_KEYS)
         if name_key is not None and row.get(name_key):
-            por_nombre[str(row[name_key]).strip().casefold()] = cantidad
+            acumular(por_nombre, str(row[name_key]).strip().casefold())
 
     return {'by_id': por_id, 'by_code': por_codigo, 'by_name': por_nombre}
 
 
-def read_fp_availability(engine, fp_code):
+def read_fp_availability(engine, fp_code, area=None):
     """Tercer result set de sp_resumen_fp: lo que se puede sacar de almacén.
 
     Es el tope oficial de una salida. Se consulta aquí y no se recalcula en la
@@ -118,4 +138,4 @@ def read_fp_availability(engine, fp_code):
     Devuelve (índices, filas_crudas).
     """
     rows = read_project_report(engine, fp_code).get('availability', [])
-    return parse_fp_availability(rows), rows
+    return parse_fp_availability(rows, area=area), rows
