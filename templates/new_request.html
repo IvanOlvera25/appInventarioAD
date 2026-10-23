@@ -29,14 +29,13 @@
                 </div>
                 <div class="col-md-6">
                   <label class="form-label">Departamento <span class="text-danger">*</span></label>
+                  <!-- Del catálogo de la base, el mismo que usa la edición -->
                   <select class="form-select" name="department" id="departmentSelect" required>
                     <option value="">Seleccionar departamento...</option>
-                    <option value="Metal">Metal</option>
-                    <option value="Costura">Costura</option>
-                    <option value="Montaje">Montaje</option>
-                    <option value="Impresión">Impresión</option>
-                    <option value="Stagging">Stagging</option>
-                    <option value="Administración">Administración</option>
+                    {% for d in departments %}
+                      {% set nombre = d.name if d.name is defined else d %}
+                      <option value="{{ nombre }}">{{ nombre }}</option>
+                    {% endfor %}
                   </select>
                 </div>
               </div>

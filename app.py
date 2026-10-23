@@ -57,11 +57,13 @@ ALLOWED_EXTENSIONS = {'xlsx', 'xls', 'csv'}
 ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 TOOL_PHOTOS_FOLDER = os.path.join(UPLOAD_FOLDER, 'herramientas')
 
-# Departamentos estáticos (cámbialos si necesitas)
-# Deja esto UNA sola vez en el archivo (quita las otras variantes)
+# Departamentos de respaldo, para cuando el catálogo de la base está vacío.
+# Son los que el formulario de alta ofrecía fijos en el HTML, así que coinciden
+# con lo que la gente ha venido capturando. El catálogo editable vive en la
+# tabla `department` y se administra en /admin/departments.
 DEPARTMENTS_STATIC = [
-    "Producción", "Mantenimiento", "Ingeniería",
-    "Compras", "Logística", "Administración",
+    "Administración", "Costura", "Impresión",
+    "Metal", "Montaje", "Stagging",
 ]
 
 @app.context_processor
@@ -501,6 +503,49 @@ with app.app_context():
             _conn3.commit()
     except Exception as _e3:
         print(f"  ⚠️ Migraciones de compras: {_e3}")
+
+
+# ===== CATÁLOGO DE DEPARTAMENTOS =====
+# Bloque propio: sembrar departamentos no tiene nada que ver con las compras, y
+# compartir un try haría que un fallo en aquellas se llevara esto por delante.
+with app.app_context():
+    try:
+        from sqlalchemy import text as _text4
+        with db.engine.connect() as _conn4:
+            # -- Catálogo de departamentos --
+            # Alta y edición de requisiciones ofrecían listas distintas: una fija
+            # en el HTML y otra estática en el código. Ahora ambas leen la tabla
+            # `department`, así que si está vacía se siembra con lo que de verdad
+            # se ha capturado, para que nadie pierda una opción que ya usaba.
+            _tiene_depto = _conn4.execute(_text4(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'department'"
+            )).scalar()
+            if _tiene_depto:
+                _depto_vacio = _conn4.execute(_text4('SELECT COUNT(*) FROM `department`')).scalar() == 0
+                if _depto_vacio:
+                    # Lo ya capturado en requisiciones manda sobre cualquier lista.
+                    _usados = [r[0] for r in _conn4.execute(_text4(
+                        "SELECT DISTINCT TRIM(department) FROM `request` "
+                        "WHERE department IS NOT NULL AND TRIM(department) <> ''"
+                    )).fetchall()]
+                    _nombres, _vistos = [], set()
+                    for _n in list(_usados) + DEPARTMENTS_STATIC:
+                        _clave = _n.strip().casefold()
+                        if _clave and _clave not in _vistos:
+                            _vistos.add(_clave)
+                            _nombres.append(_n.strip())
+                    for _n in _nombres:
+                        _conn4.execute(_text4(
+                            'INSERT IGNORE INTO `department` (name, is_active, created_at) '
+                            'VALUES (:n, 1, NOW())'
+                        ), {"n": _n})
+                    if _nombres:
+                        print(f"  ✅ Catálogo de departamentos sembrado: {', '.join(_nombres)}")
+
+            _conn4.commit()
+    except Exception as _e4:
+        print(f"  ⚠️ Catálogo de departamentos: {_e4}")
 # ===== FIN MIGRACIONES CRÍTICAS TEMPRANAS =====
 
 Compress(app)   # Compresión automática de respuestas HTML/JSON
