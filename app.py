@@ -27,7 +27,11 @@ from project_report import read_project_report, read_fp_availability
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'tu-clave-secreta-aqui'
 # ===== BASE DE DATOS REMOTA PRINCIPAL =====
-app.config['SQLALCHEMY_DATABASE_URI'] = (
+# AD17_DATABASE_URL permite apuntar a una base local para desarrollo. Sin esa
+# variable se usa la de siempre, así que en el servidor nada cambia. El nombre
+# lleva prefijo para no chocar con un DATABASE_URL del entorno.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
+    'AD17_DATABASE_URL',
     'mysql+pymysql://IvanUriel:iuOp20!!25'
     '@ad17solutions.dscloud.me:3307/AD17_Almacen?charset=utf8mb4'
 )
