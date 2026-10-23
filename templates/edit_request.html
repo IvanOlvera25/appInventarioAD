@@ -71,6 +71,53 @@
                 </div>
                 {% endif %}
 
+                <!-- Ventana de edición libre -->
+                <div class="alert alert-warning d-flex align-items-center gap-3 mb-4" id="editWindowBanner">
+                    <i class="fas fa-stopwatch fa-2x"></i>
+                    <div class="flex-grow-1">
+                        <strong>Edición libre abierta</strong> — puedes cambiar materiales, cantidades, área,
+                        proyecto y fechas durante <strong>{{ edit_window_minutes }} minutos</strong> desde que se
+                        creó la requisición.
+                        <div class="small mt-1">
+                            Tiempo restante: <strong id="editWindowLeft">—</strong>.
+                            Después, para cambiar o cancelar un material habrá que solicitarlo y que lo autorice
+                            quien la creó.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Datos generales (solo durante la ventana) -->
+                <div class="card mb-4" id="coreEditCard">
+                    <div class="card-header py-2">
+                        <h6 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Proyecto, área y departamento</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-4">
+                                <label class="form-label small mb-1">FP del proyecto</label>
+                                <input type="text" class="form-control form-control-sm text-uppercase" id="coreFpCode"
+                                       value="{{ requisition.project.fp_code }}" autocomplete="off">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small mb-1">Área</label>
+                                <input type="text" class="form-control form-control-sm" id="coreArea"
+                                       value="{{ requisition.area or '' }}" autocomplete="off">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small mb-1">Departamento</label>
+                                <input type="text" class="form-control form-control-sm" id="coreDepartment"
+                                       value="{{ requisition.department or '' }}" autocomplete="off">
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-primary btn-sm w-100" onclick="saveRequestCore()">
+                                    <i class="fas fa-save me-1"></i>Guardar
+                                </button>
+                            </div>
+                        </div>
+                        <div id="coreEditFeedback" class="small mt-2"></div>
+                    </div>
+                </div>
+
                 <!-- Información del proyecto -->
                 <div class="alert alert-info mb-4">
                     <div class="row">
@@ -137,10 +184,41 @@
                     </div>
                 </div>
 
-                <!-- Aviso: No se pueden agregar materiales -->
-                <div class="alert alert-secondary mb-4">
+                <!-- Agregar material (solo durante la ventana de edición libre) -->
+                <div class="card mb-4" id="addItemCard">
+                    <div class="card-header py-2">
+                        <h6 class="mb-0"><i class="fas fa-plus me-2"></i>Agregar material</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-7">
+                                <label class="form-label small mb-1">Material</label>
+                                <select class="form-select form-select-sm" id="addItemMaterial">
+                                    <option value="">Seleccione un material...</option>
+                                    {% for m in materials %}
+                                    <option value="{{ m.id }}">{{ m.code }} - {{ m.name }} ({{ m.unit }})</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small mb-1">Cantidad</label>
+                                <input type="number" class="form-control form-control-sm" id="addItemQuantity"
+                                       step="0.01" min="0.01" placeholder="0.00">
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-success btn-sm w-100" onclick="addRequestItem()">
+                                    <i class="fas fa-plus me-1"></i>Agregar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Aviso cuando la ventana ya cerró -->
+                <div class="alert alert-secondary mb-4" id="addItemClosedNotice" style="display:none;">
                     <i class="fas fa-info-circle me-2"></i>
-                    Para agregar materiales adicionales, por favor cree una nueva requisición.
+                    La edición libre ya cerró. Para agregar materiales, cree una nueva requisición;
+                    para cambiar o cancelar uno, use <strong>Solicitar cambio</strong> en la tabla.
                 </div>
 
                 <!-- Lista de materiales -->
@@ -268,6 +346,29 @@
                                                     <i class="fas fa-check"></i>
                                                 </button>
                                                 {% endif %}
+
+                                                <!-- Dentro de la ventana: sustituir o quitar el material -->
+                                                {% if item_status != 'cancelado' %}
+                                                <button class="btn btn-outline-warning window-only"
+                                                    onclick="openSwapModal({{ item.id }}, false)"
+                                                    title="Cambiar este material por otro">
+                                                    <i class="fas fa-exchange-alt"></i>
+                                                </button>
+                                                <button class="btn btn-outline-danger window-only"
+                                                    onclick="removeRequestItem({{ item.id }})"
+                                                    title="Quitar de la requisición">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+
+                                                <!-- Fuera de la ventana: proponer el cambio al autor -->
+                                                {% if current_user.role in ['admin', 'almacenista'] %}
+                                                <button class="btn btn-outline-warning after-window"
+                                                    onclick="openSwapModal({{ item.id }}, true)" style="display:none;"
+                                                    title="Solicitar cambio o cancelación al autor">
+                                                    <i class="fas fa-paper-plane"></i>
+                                                </button>
+                                                {% endif %}
+                                                {% endif %}
                                             </div>
                                         </td>
                                     </tr>
@@ -283,6 +384,14 @@
                             </table>
                         </div>
                     </div>
+                </div>
+
+                <!-- Solicitudes de cambio esperando respuesta del autor -->
+                <div class="card mt-4" id="changeRequestsCard" style="display:none;">
+                    <div class="card-header py-2 bg-warning-subtle">
+                        <h6 class="mb-0"><i class="fas fa-inbox me-2"></i>Cambios propuestos a esta requisición</h6>
+                    </div>
+                    <div class="card-body" id="changeRequestsBody"></div>
                 </div>
 
                 <!-- Acciones -->
@@ -447,6 +556,62 @@
     </div>
 </div>
 {% endblock %}
+
+<!-- Modal: cambiar material o proponer el cambio al autor -->
+<div class="modal fade" id="swapModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="swapModalTitle">Cambiar material</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="swapItemId">
+                <input type="hidden" id="swapNeedsApproval" value="0">
+
+                <div class="alert alert-info small" id="swapApprovalNotice" style="display:none;">
+                    <i class="fas fa-info-circle me-1"></i>
+                    La edición libre ya cerró, así que esto se enviará como solicitud.
+                    El cambio surte efecto cuando lo autorice quien creó la requisición.
+                </div>
+
+                <div class="mb-3" id="swapTypeBlock" style="display:none;">
+                    <label class="form-label">¿Qué quieres solicitar?</label>
+                    <select class="form-select" id="swapChangeType">
+                        <option value="intercambio">Cambiar por otro material</option>
+                        <option value="cancelacion">Cancelar este material</option>
+                    </select>
+                </div>
+
+                <div id="swapMaterialBlock">
+                    <div class="mb-3">
+                        <label class="form-label">Material de reemplazo</label>
+                        <select class="form-select" id="swapMaterial">
+                            <option value="">Seleccione un material...</option>
+                            {% for m in materials %}
+                            <option value="{{ m.id }}">{{ m.code }} - {{ m.name }} ({{ m.unit }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Cantidad</label>
+                        <input type="number" class="form-control" id="swapQuantity" step="0.01" min="0.01">
+                    </div>
+                </div>
+
+                <div class="mb-3" id="swapReasonBlock" style="display:none;">
+                    <label class="form-label">Motivo</label>
+                    <textarea class="form-control" id="swapReason" rows="2"
+                              placeholder="Por qué hace falta el cambio..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="swapSubmitBtn" onclick="submitSwap()">Guardar</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 {% block scripts %}
 <script>
@@ -710,5 +875,181 @@
             alert('Error: ' + err.message);
         }
     }
+
+    // ===== VENTANA DE EDICIÓN LIBRE =====
+    // El servidor manda los segundos restantes al renderizar; aquí solo se
+    // descuentan y se oculta lo que deja de aplicar al llegar a cero.
+    let editSecondsLeft = {{ edit_seconds_left | default(0) | int }};
+
+    function applyEditWindowState() {
+        const abierta = editSecondsLeft > 0;
+        document.getElementById('editWindowBanner').style.display = abierta ? '' : 'none';
+        document.getElementById('coreEditCard').style.display = abierta ? '' : 'none';
+        document.getElementById('addItemCard').style.display = abierta ? '' : 'none';
+        document.getElementById('addItemClosedNotice').style.display = abierta ? 'none' : '';
+        document.querySelectorAll('.window-only').forEach(el => el.style.display = abierta ? '' : 'none');
+        document.querySelectorAll('.after-window').forEach(el => el.style.display = abierta ? 'none' : '');
+
+        if (abierta) {
+            const min = Math.floor(editSecondsLeft / 60);
+            const seg = String(editSecondsLeft % 60).padStart(2, '0');
+            document.getElementById('editWindowLeft').textContent = `${min}:${seg}`;
+        }
+    }
+
+    applyEditWindowState();
+    if (editSecondsLeft > 0) {
+        const reloj = setInterval(() => {
+            editSecondsLeft -= 1;
+            applyEditWindowState();
+            if (editSecondsLeft <= 0) clearInterval(reloj);
+        }, 1000);
+    }
+
+    async function postForm(url, campos, metodo = 'POST') {
+        const body = new FormData();
+        Object.entries(campos).forEach(([k, v]) => body.set(k, v));
+        const res = await fetch(url, { method: metodo, body });
+        return res.json();
+    }
+
+    async function saveRequestCore() {
+        const feedback = document.getElementById('coreEditFeedback');
+        feedback.innerHTML = '<span class="text-muted">Guardando…</span>';
+        try {
+            const data = await postForm(`/api/request/${requestId}/update-core`, {
+                fp_code: document.getElementById('coreFpCode').value.trim(),
+                area: document.getElementById('coreArea').value.trim(),
+                department: document.getElementById('coreDepartment').value.trim(),
+            });
+            feedback.innerHTML = data.success
+                ? `<span class="text-success"><i class="fas fa-check me-1"></i>${data.message}</span>`
+                : `<span class="text-danger">${data.message}</span>`;
+            if (data.success && (data.changed || []).length) setTimeout(() => location.reload(), 900);
+        } catch (err) {
+            feedback.innerHTML = `<span class="text-danger">Error de red</span>`;
+        }
+    }
+
+    async function addRequestItem() {
+        const materialId = document.getElementById('addItemMaterial').value;
+        const cantidad = parseFloat(document.getElementById('addItemQuantity').value);
+        if (!materialId) return alert('Seleccione un material');
+        if (!cantidad || cantidad <= 0) return alert('Indique una cantidad mayor a 0');
+        const data = await postForm(`/api/request/${requestId}/items`,
+                                    { material_id: materialId, quantity: cantidad });
+        alert(data.message);
+        if (data.success) location.reload();
+    }
+
+    async function removeRequestItem(itemId) {
+        if (!confirm('¿Quitar este material de la requisición?')) return;
+        const res = await fetch(`/api/request-item/${itemId}`, { method: 'DELETE' });
+        const data = await res.json();
+        alert(data.message);
+        if (data.success) location.reload();
+    }
+
+    // ===== CAMBIO DE MATERIAL / SOLICITUD AL AUTOR =====
+    function openSwapModal(itemId, needsApproval) {
+        document.getElementById('swapItemId').value = itemId;
+        document.getElementById('swapNeedsApproval').value = needsApproval ? '1' : '0';
+        document.getElementById('swapMaterial').value = '';
+        document.getElementById('swapQuantity').value = '';
+        document.getElementById('swapReason').value = '';
+        document.getElementById('swapChangeType').value = 'intercambio';
+
+        document.getElementById('swapModalTitle').textContent =
+            needsApproval ? 'Solicitar cambio al autor' : 'Cambiar material';
+        document.getElementById('swapApprovalNotice').style.display = needsApproval ? '' : 'none';
+        document.getElementById('swapTypeBlock').style.display = needsApproval ? '' : 'none';
+        document.getElementById('swapReasonBlock').style.display = needsApproval ? '' : 'none';
+        document.getElementById('swapMaterialBlock').style.display = '';
+        document.getElementById('swapSubmitBtn').textContent = needsApproval ? 'Enviar solicitud' : 'Guardar';
+
+        new bootstrap.Modal(document.getElementById('swapModal')).show();
+    }
+
+    document.getElementById('swapChangeType').addEventListener('change', function () {
+        // Para una cancelación no hace falta material de reemplazo.
+        document.getElementById('swapMaterialBlock').style.display =
+            this.value === 'cancelacion' ? 'none' : '';
+    });
+
+    async function submitSwap() {
+        const itemId = document.getElementById('swapItemId').value;
+        const needsApproval = document.getElementById('swapNeedsApproval').value === '1';
+        const tipo = needsApproval ? document.getElementById('swapChangeType').value : 'intercambio';
+        const materialId = document.getElementById('swapMaterial').value;
+        const cantidad = document.getElementById('swapQuantity').value;
+
+        if (tipo === 'intercambio' && !materialId) return alert('Seleccione el material de reemplazo');
+
+        const btn = document.getElementById('swapSubmitBtn');
+        btn.disabled = true;
+        try {
+            const data = needsApproval
+                ? await postForm(`/api/request-item/${itemId}/change-request`, {
+                      change_type: tipo,
+                      new_material_id: materialId || '',
+                      new_quantity: cantidad || '',
+                      reason: document.getElementById('swapReason').value.trim(),
+                  })
+                : await postForm(`/api/request-item/${itemId}/update-material`, {
+                      material_id: materialId,
+                      quantity: cantidad || '',
+                  });
+            alert(data.message);
+            if (data.success) location.reload();
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // ===== CAMBIOS PENDIENTES DE AUTORIZAR =====
+    async function loadChangeRequests() {
+        try {
+            const res = await fetch(`/api/change-requests/pending?request_id=${requestId}`);
+            const data = await res.json();
+            const card = document.getElementById('changeRequestsCard');
+            const body = document.getElementById('changeRequestsBody');
+            if (!data.success || !data.changes.length) {
+                card.style.display = 'none';
+                return;
+            }
+            body.innerHTML = data.changes.map(c => {
+                const detalle = c.change_type === 'cancelacion'
+                    ? `Cancelar <strong>${c.current_material}</strong>`
+                    : `Cambiar <strong>${c.current_material}</strong> por <strong>${c.new_material}</strong>` +
+                      (c.new_quantity ? ` (${c.new_quantity})` : '');
+                const botones = c.is_mine
+                    ? `<button class="btn btn-success btn-sm" onclick="resolveChange(${c.id}, 'aceptar')">
+                           <i class="fas fa-check me-1"></i>Aceptar</button>
+                       <button class="btn btn-outline-danger btn-sm" onclick="resolveChange(${c.id}, 'rechazar')">
+                           <i class="fas fa-times me-1"></i>Rechazar</button>`
+                    : `<span class="badge bg-secondary">Esperando al autor</span>`;
+                return `<div class="d-flex justify-content-between align-items-center border-bottom py-2 gap-3">
+                    <div>
+                        <div>${detalle}</div>
+                        <small class="text-muted">${c.change_label} solicitada por ${c.requested_by} · ${c.requested_at}
+                        ${c.reason ? ' · ' + c.reason : ''}</small>
+                    </div>
+                    <div class="d-flex gap-2">${botones}</div>
+                </div>`;
+            }).join('');
+            card.style.display = '';
+        } catch (err) {
+            console.warn('No se pudieron cargar los cambios propuestos', err);
+        }
+    }
+
+    async function resolveChange(changeId, decision) {
+        if (decision === 'aceptar' && !confirm('¿Autorizar este cambio? Se aplicará de inmediato.')) return;
+        const data = await postForm(`/api/change-requests/${changeId}/resolve`, { decision });
+        alert(data.message);
+        if (data.success) location.reload();
+    }
+
+    loadChangeRequests();
 </script>
 {% endblock %}
