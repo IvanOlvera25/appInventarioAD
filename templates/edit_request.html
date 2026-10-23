@@ -35,12 +35,18 @@
                         </span>
                     </h5>
                 </div>
-                {% if current_user.role == 'requisitador' and requisition.status not in ['en_entrega', 'completada',
-                'cancelada'] and not requisition.cancellation_requested %}
-                <button class="btn btn-outline-danger btn-sm" onclick="requestCancellation()">
-                    <i class="fas fa-times-circle me-1"></i>Solicitar Cancelación
-                </button>
-                {% endif %}
+                <div class="d-flex gap-2">
+                    {% if perms.request_cancellation %}
+                    <button class="btn btn-outline-danger btn-sm" onclick="requestCancellation()">
+                        <i class="fas fa-times-circle me-1"></i>Solicitar Cancelación
+                    </button>
+                    {% endif %}
+                    {% if perms.cancel_directly %}
+                    <button class="btn btn-danger btn-sm" onclick="cancelRequestDirectly()">
+                        <i class="fas fa-ban me-1"></i>Cancelar Requisición
+                    </button>
+                    {% endif %}
+                </div>
             </div>
 
             <div class="card-body">
@@ -63,30 +69,65 @@
                         notificar al personal de compras. Al concluir, haga clic en el siguiente botón para confirmar la
                         cancelación.
                     </p>
-                    {% if current_user.role != 'requisitador' %}
+                    {% if perms.authorize_cancellation %}
                     <button class="btn btn-danger" onclick="confirmCancellation()">
-                        <i class="fas fa-ban me-1"></i>Confirmar Cancelación de Requisición
+                        <i class="fas fa-ban me-1"></i>Autorizar Cancelación de Requisición
                     </button>
+                    {% elif perms.mode == 'author' %}
+                    <span class="badge bg-secondary"><i class="fas fa-hourglass-half me-1"></i>Esperando autorización de almacén</span>
                     {% endif %}
                 </div>
                 {% endif %}
 
-                <!-- Ventana de edición libre -->
+                <!-- Qué puede hacer el usuario actual (ver request_permissions en app.py) -->
+                {% if perms.closed %}
+                <div class="alert alert-secondary d-flex align-items-center gap-3 mb-4">
+                    <i class="fas fa-lock fa-2x"></i>
+                    <div>La requisición está <strong>{{ status_labels.get(requisition.status, requisition.status) }}</strong>: solo lectura.</div>
+                </div>
+                {% elif perms.mode == 'author' and perms.in_window %}
                 <div class="alert alert-warning d-flex align-items-center gap-3 mb-4" id="editWindowBanner">
                     <i class="fas fa-stopwatch fa-2x"></i>
                     <div class="flex-grow-1">
-                        <strong>Edición libre abierta</strong> — puedes cambiar materiales, cantidades, área,
-                        proyecto y fechas durante <strong>{{ edit_window_minutes }} minutos</strong> desde que se
-                        creó la requisición.
+                        <strong>Edición libre abierta</strong> — puedes modificar toda la requisición: notas,
+                        aumentar o reducir cantidades, cancelar o intercambiar materiales.
                         <div class="small mt-1">
                             Tiempo restante: <strong id="editWindowLeft">—</strong>.
-                            Después, para cambiar o cancelar un material habrá que solicitarlo y que lo autorice
-                            quien la creó.
+                            Después solo podrás cambiar notas, reducir cantidades, solicitar la cancelación y
+                            autorizar los cambios que sugiera almacén.
                         </div>
                     </div>
                 </div>
+                {% elif perms.mode == 'author' %}
+                <div class="alert alert-secondary d-flex align-items-center gap-3 mb-4">
+                    <i class="fas fa-user-clock fa-2x"></i>
+                    <div>
+                        <strong>Ya pasaron los {{ edit_window_minutes }} minutos de edición libre.</strong>
+                        Puedes cambiar notas, reducir cantidades, solicitar la cancelación y autorizar los cambios
+                        de material que sugiera almacén.
+                    </div>
+                </div>
+                {% elif perms.mode == 'staff_own' %}
+                <div class="alert alert-info d-flex align-items-center gap-3 mb-4">
+                    <i class="fas fa-warehouse fa-2x"></i>
+                    <div>
+                        <strong>Requisición creada por almacén/administración.</strong> Puedes modificarla
+                        libremente, cancelarla, revisar stock contra la requisición y completar el abastecimiento.
+                    </div>
+                </div>
+                {% elif perms.mode == 'staff_review' %}
+                <div class="alert alert-info d-flex align-items-center gap-3 mb-4">
+                    <i class="fas fa-clipboard-check fa-2x"></i>
+                    <div>
+                        <strong>Requisición de un requisitador.</strong> Puedes sugerir el cambio de un material por
+                        otro (lo autoriza el autor), cambiar notas, autorizar la cancelación si la solicita, revisar
+                        stock contra la requisición y completar el abastecimiento.
+                    </div>
+                </div>
+                {% endif %}
 
-                <!-- Datos generales (solo durante la ventana) -->
+                {% if perms.full_edit %}
+                <!-- Datos generales (edición libre) -->
                 <div class="card mb-4" id="coreEditCard">
                     <div class="card-header py-2">
                         <h6 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Proyecto y departamento</h6>
@@ -136,6 +177,7 @@
                         <div id="coreEditFeedback" class="small mt-2"></div>
                     </div>
                 </div>
+                {% endif %}
 
                 <!-- Información del proyecto -->
                 <div class="alert alert-info mb-4">
@@ -171,8 +213,7 @@
                             {{ requisition.user.full_name if requisition.user else 'N/A' }}<br>
                             <small class="text-muted">{{ requisition.created_at.strftime('%d/%m/%Y %H:%M') }}</small>
 
-                            {% if current_user.role == 'admin' or (current_user.id == requisition.user_id and
-                            requisition.status == 'pendiente') %}
+                            {% if perms.full_edit %}
                             <div class="mt-2 text-end">
                                 <button class="btn btn-sm btn-outline-primary" onclick="openEditDatesModal()">
                                     <i class="fas fa-calendar-alt me-1"></i>Editar Fechas
@@ -191,19 +232,22 @@
                     <div class="card-body">
                         <div class="row">
                             <div class="col-md-10">
-                                <textarea class="form-control" id="requestNotes" rows="2"
+                                <textarea class="form-control" id="requestNotes" rows="2" {% if not perms.notes %}readonly{% endif %}
                                     placeholder="Notas de la requisición...">{{ requisition.notes or '' }}</textarea>
                             </div>
+                            {% if perms.notes %}
                             <div class="col-md-2 d-flex align-items-end">
                                 <button class="btn btn-primary w-100" onclick="saveRequestNotes()">
                                     <i class="fas fa-save me-1"></i>Guardar
                                 </button>
                             </div>
+                            {% endif %}
                         </div>
                     </div>
                 </div>
 
-                <!-- Agregar material (solo durante la ventana de edición libre) -->
+                {% if perms.full_edit %}
+                <!-- Agregar material (edición libre) -->
                 <div class="card mb-4" id="addItemCard">
                     <div class="card-header py-2">
                         <h6 class="mb-0"><i class="fas fa-plus me-2"></i>Agregar material</h6>
@@ -236,12 +280,7 @@
                     </div>
                 </div>
 
-                <!-- Aviso cuando la ventana ya cerró -->
-                <div class="alert alert-secondary mb-4" id="addItemClosedNotice" style="display:none;">
-                    <i class="fas fa-info-circle me-2"></i>
-                    La edición libre ya cerró. Para agregar materiales, cree una nueva requisición;
-                    para cambiar o cancelar uno, use <strong>Solicitar cambio</strong> en la tabla.
-                </div>
+                {% endif %}
 
                 <!-- Lista de materiales -->
                 <div class="card">
@@ -324,72 +363,69 @@
                                             <small>{{ (item.item_notes or '')[:30] }}{% if item.item_notes and
                                                 item.item_notes|length > 30 %}...{% endif %}</small>
                                         </td>
-                                        <!-- Acciones -->
+                                        <!-- Acciones: cada botón depende de request_permissions -->
+                                        {% set bloqueado = item_status in ['cancelado', 'entregado'] or (item.quantity_delivered or 0) > 0 %}
                                         <td class="text-center">
                                             <div class="btn-group btn-group-sm">
-                                                <!-- Modificar Nota - siempre disponible -->
+                                                {% if perms.notes %}
                                                 <button class="btn btn-outline-secondary"
-                                                    onclick="openNotesModal({{ item.id }})" title="Modificar Nota">
+                                                    onclick="openNotesModal({{ item.id }})" title="Modificar nota">
                                                     <i class="fas fa-comment"></i>
                                                 </button>
+                                                {% endif %}
 
-                                                {% if item_status == 'pendiente' %}
-                                                <!-- Modificar Cantidad (admin siempre, almacenistas solo si la req fue creada por un almacenista, o el autor) -->
-                                                {% if current_user.role == 'admin' or current_user.id == requisition.user_id or (current_user.role == 'almacenista' and requisition.user.role == 'almacenista') %}
+                                                {% if not bloqueado and (perms.increase_qty or perms.decrease_qty) %}
                                                 <button class="btn btn-outline-info"
-                                                    onclick="openQuantityModal({{ item.id }}, {{ item.quantity_requested }})"
-                                                    title="Modificar Cantidad">
+                                                    onclick="openQuantityModal({{ item.id }}, {{ item.quantity_requested }}, {{ 'true' if perms.increase_qty else 'false' }})"
+                                                    title="{{ 'Modificar cantidad' if perms.increase_qty else 'Reducir cantidad' }}">
                                                     <i class="fas fa-edit"></i>
                                                 </button>
                                                 {% endif %}
 
-                                                <!-- Analizar Stock (solo almacenistas/admin) -->
-                                                {% if current_user.role in ['admin', 'almacenista'] %}
+                                                {% if perms.review_stock and item_status == 'pendiente' %}
                                                 <button class="btn btn-outline-primary"
-                                                    onclick="openAnalyzeModal({{ item.id }})" title="Analizar vs Stock">
+                                                    onclick="openAnalyzeModal({{ item.id }})" title="Revisar stock vs requisición">
                                                     <i class="fas fa-search"></i>
                                                 </button>
                                                 {% endif %}
 
-                                                <!-- Cancelar Material (solo admin o requisitador autor) -->
-                                                {% if current_user.role == 'admin' or (current_user.role == 'requisitador' and current_user.id == requisition.user_id) %}
-                                                <button class="btn btn-outline-danger"
-                                                    onclick="cancelItem({{ item.id }})" title="Cancelar Material">
-                                                    <i class="fas fa-times"></i>
-                                                </button>
-                                                {% endif %}
-                                                {% endif %}
-
-                                                {% if item_status == 'pendiente_compra' and current_user.role in
-                                                ['admin', 'almacenista'] %}
-                                                <!-- Cambiar a Abastecido -->
+                                                {% if perms.supply and item_status == 'pendiente_compra' %}
                                                 <button class="btn btn-outline-success"
-                                                    onclick="markSupplied({{ item.id }}, {{ item.quantity_requested }}, {{ item.quantity_supplied or 0 }})" title="Cambiar a Abastecido">
+                                                    onclick="markSupplied({{ item.id }}, {{ item.quantity_requested }}, {{ item.quantity_supplied or 0 }})"
+                                                    title="Completar abastecimiento con lo que llegó de compras">
                                                     <i class="fas fa-check"></i>
                                                 </button>
                                                 {% endif %}
 
-                                                <!-- Dentro de la ventana: sustituir o quitar el material -->
-                                                {% if item_status != 'cancelado' %}
-                                                <button class="btn btn-outline-warning window-only"
-                                                    onclick="openSwapModal({{ item.id }}, false)"
-                                                    title="Cambiar este material por otro">
+                                                {% if not bloqueado and perms.swap_direct %}
+                                                <button class="btn btn-outline-warning"
+                                                    onclick="openSwapModal({{ item.id }}, false, '{{ item_status }}')"
+                                                    title="Intercambiar por otro material">
                                                     <i class="fas fa-exchange-alt"></i>
                                                 </button>
-                                                <button class="btn btn-outline-danger window-only"
+                                                {% endif %}
+
+                                                {% if not bloqueado and perms.suggest_swap %}
+                                                <button class="btn btn-outline-warning"
+                                                    onclick="openSwapModal({{ item.id }}, true, '{{ item_status }}')"
+                                                    title="Sugerir al autor cambiarlo por otro material">
+                                                    <i class="fas fa-paper-plane"></i>
+                                                </button>
+                                                {% endif %}
+
+                                                {% if not bloqueado and perms.cancel_item %}
+                                                <button class="btn btn-outline-danger"
+                                                    onclick="cancelItem({{ item.id }})" title="Cancelar material">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                                {% endif %}
+
+                                                {% if not bloqueado and perms.full_edit %}
+                                                <button class="btn btn-outline-danger"
                                                     onclick="removeRequestItem({{ item.id }})"
                                                     title="Quitar de la requisición">
                                                     <i class="fas fa-trash"></i>
                                                 </button>
-
-                                                <!-- Fuera de la ventana: proponer el cambio al autor -->
-                                                {% if current_user.role in ['admin', 'almacenista'] %}
-                                                <button class="btn btn-outline-warning after-window"
-                                                    onclick="openSwapModal({{ item.id }}, true)" style="display:none;"
-                                                    title="Solicitar cambio o cancelación al autor">
-                                                    <i class="fas fa-paper-plane"></i>
-                                                </button>
-                                                {% endif %}
                                                 {% endif %}
                                             </div>
                                         </td>
@@ -467,7 +503,7 @@
                     <strong>Cantidad original:</strong> <span id="originalQuantity">0</span>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Nueva Cantidad (solo se puede reducir)</label>
+                    <label class="form-label" id="newQuantityLabel">Nueva cantidad</label>
                     <input type="number" class="form-control" id="newQuantity" step="0.01" min="0.01">
                 </div>
             </div>
@@ -577,14 +613,13 @@
         </div>
     </div>
 </div>
-{% endblock %}
 
-<!-- Modal: cambiar material o proponer el cambio al autor -->
+<!-- Modal: intercambiar material o sugerir el intercambio al autor -->
 <div class="modal fade" id="swapModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="swapModalTitle">Cambiar material</h5>
+                <h5 class="modal-title" id="swapModalTitle">Intercambiar material</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
@@ -593,40 +628,34 @@
 
                 <div class="alert alert-info small" id="swapApprovalNotice" style="display:none;">
                     <i class="fas fa-info-circle me-1"></i>
-                    La edición libre ya cerró, así que esto se enviará como solicitud.
-                    El cambio surte efecto cuando lo autorice quien creó la requisición.
+                    Se enviará como sugerencia: el cambio se aplica cuando lo autorice quien creó la requisición.
+                </div>
+                <div class="alert alert-warning small" id="swapResetNotice" style="display:none;">
+                    <i class="fas fa-undo me-1"></i>
+                    Este material ya se revisó contra stock. Al cambiarlo regresará a <strong>pendiente</strong>,
+                    lo abastecido volverá a 0 y, si se pidió una compra, esa solicitud se borrará.
                 </div>
 
-                <div class="mb-3" id="swapTypeBlock" style="display:none;">
-                    <label class="form-label">¿Qué quieres solicitar?</label>
-                    <select class="form-select" id="swapChangeType">
-                        <option value="intercambio">Cambiar por otro material</option>
-                        <option value="cancelacion">Cancelar este material</option>
-                    </select>
+                <div class="mb-3">
+                    <label class="form-label">Material de reemplazo</label>
+                    <input type="hidden" id="swapMaterial">
+                    <div class="position-relative">
+                        <input type="search" class="form-control" id="swapMaterialSearch"
+                               placeholder="Busca por código, nombre o categoría" autocomplete="off">
+                        <div id="swapMaterialResults" class="list-group position-absolute w-100 shadow"
+                             style="z-index:1060; max-height:240px; overflow-y:auto; display:none;"></div>
+                    </div>
+                    <div class="form-text" id="swapMaterialPicked"></div>
                 </div>
-
-                <div id="swapMaterialBlock">
-                    <div class="mb-3">
-                        <label class="form-label">Material de reemplazo</label>
-                        <input type="hidden" id="swapMaterial">
-                        <div class="position-relative">
-                            <input type="search" class="form-control" id="swapMaterialSearch"
-                                   placeholder="Busca por código, nombre o categoría" autocomplete="off">
-                            <div id="swapMaterialResults" class="list-group position-absolute w-100 shadow"
-                                 style="z-index:1060; max-height:240px; overflow-y:auto; display:none;"></div>
-                        </div>
-                        <div class="form-text" id="swapMaterialPicked"></div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Cantidad</label>
-                        <input type="number" class="form-control" id="swapQuantity" step="0.01" min="0.01">
-                    </div>
+                <div class="mb-3">
+                    <label class="form-label">Cantidad <small class="text-muted">(vacío = la misma)</small></label>
+                    <input type="number" class="form-control" id="swapQuantity" step="0.01" min="0.01">
                 </div>
 
                 <div class="mb-3" id="swapReasonBlock" style="display:none;">
                     <label class="form-label">Motivo</label>
                     <textarea class="form-control" id="swapReason" rows="2"
-                              placeholder="Por qué hace falta el cambio..."></textarea>
+                              placeholder="Por qué conviene el cambio (sin stock, descontinuado...)"></textarea>
                 </div>
             </div>
             <div class="modal-footer">
@@ -636,10 +665,12 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block scripts %}
 <script>
     const requestId = {{ requisition.id }};
+    const PUEDE_AUTORIZAR = {{ 'true' if perms.accept_swap else 'false' }};
 
     // ===== NOTAS DE REQUISICIÓN =====
     async function saveRequestNotes() {
@@ -662,6 +693,18 @@
         if (!confirm('¿Está seguro de solicitar la cancelación de esta requisición?')) return;
         try {
             const res = await fetch(`/api/request/${requestId}/request-cancellation`, { method: 'POST' });
+            const data = await res.json();
+            alert(data.message);
+            if (data.success) location.reload();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    async function cancelRequestDirectly() {
+        if (!confirm('¿Cancelar esta requisición? Esta acción no se puede deshacer.')) return;
+        try {
+            const res = await fetch(`/api/request/${requestId}/cancel`, { method: 'POST' });
             const data = await res.json();
             alert(data.message);
             if (data.success) location.reload();
@@ -715,11 +758,14 @@
     }
 
     // ===== CANTIDAD =====
-    function openQuantityModal(itemId, originalQty) {
+    function openQuantityModal(itemId, originalQty, puedeAumentar) {
         document.getElementById('quantityItemId').value = itemId;
         document.getElementById('originalQuantity').textContent = originalQty;
-        document.getElementById('newQuantity').value = originalQty;
-        document.getElementById('newQuantity').max = originalQty;
+        const campo = document.getElementById('newQuantity');
+        campo.value = originalQty;
+        if (puedeAumentar) campo.removeAttribute('max'); else campo.max = originalQty;
+        document.getElementById('newQuantityLabel').textContent =
+            puedeAumentar ? 'Nueva cantidad' : 'Nueva cantidad (solo se puede reducir)';
         new bootstrap.Modal(document.getElementById('quantityModal')).show();
     }
 
@@ -901,32 +947,23 @@
     }
 
     // ===== VENTANA DE EDICIÓN LIBRE =====
-    // El servidor manda los segundos restantes al renderizar; aquí solo se
-    // descuentan y se oculta lo que deja de aplicar al llegar a cero.
+    // El servidor decide los permisos (request_permissions). Aquí solo se muestra
+    // la cuenta regresiva del autor y, al llegar a cero, se recarga para que la
+    // página refleje lo que ya puede hacer.
     let editSecondsLeft = {{ edit_seconds_left | default(0) | int }};
-
-    function applyEditWindowState() {
-        const abierta = editSecondsLeft > 0;
-        document.getElementById('editWindowBanner').style.display = abierta ? '' : 'none';
-        document.getElementById('coreEditCard').style.display = abierta ? '' : 'none';
-        document.getElementById('addItemCard').style.display = abierta ? '' : 'none';
-        document.getElementById('addItemClosedNotice').style.display = abierta ? 'none' : '';
-        document.querySelectorAll('.window-only').forEach(el => el.style.display = abierta ? '' : 'none');
-        document.querySelectorAll('.after-window').forEach(el => el.style.display = abierta ? 'none' : '');
-
-        if (abierta) {
-            const min = Math.floor(editSecondsLeft / 60);
-            const seg = String(editSecondsLeft % 60).padStart(2, '0');
-            document.getElementById('editWindowLeft').textContent = `${min}:${seg}`;
-        }
+    const relojVisible = document.getElementById('editWindowLeft');
+    function pintarReloj() {
+        if (!relojVisible) return;
+        const min = Math.floor(editSecondsLeft / 60);
+        const seg = String(editSecondsLeft % 60).padStart(2, '0');
+        relojVisible.textContent = `${min}:${seg}`;
     }
-
-    applyEditWindowState();
-    if (editSecondsLeft > 0) {
+    if (relojVisible && editSecondsLeft > 0) {
+        pintarReloj();
         const reloj = setInterval(() => {
             editSecondsLeft -= 1;
-            applyEditWindowState();
-            if (editSecondsLeft <= 0) clearInterval(reloj);
+            pintarReloj();
+            if (editSecondsLeft <= 0) { clearInterval(reloj); location.reload(); }
         }, 1000);
     }
 
@@ -1024,7 +1061,7 @@
         });
     }
 
-    const buscadorProyecto = conectarBuscador({
+    const buscadorProyecto = document.getElementById('coreProjectSearch') && conectarBuscador({
         campoBusqueda: 'coreProjectSearch',
         campoOculto: 'coreProjectId',
         contenedor: 'coreProjectResults',
@@ -1041,7 +1078,7 @@
         alElegir: fila => { document.getElementById('coreFpCode').value = fila.fp_code; },
     });
 
-    const buscadorAgregar = buscadorDeMateriales('addItemMaterial');
+    const buscadorAgregar = document.getElementById('addItemMaterialSearch') && buscadorDeMateriales('addItemMaterial');
     const buscadorSwap = buscadorDeMateriales('swapMaterial');
 
     async function saveRequestCore() {
@@ -1082,47 +1119,39 @@
     }
 
     // ===== CAMBIO DE MATERIAL / SOLICITUD AL AUTOR =====
-    function openSwapModal(itemId, needsApproval) {
+    function openSwapModal(itemId, needsApproval, estadoActual) {
         document.getElementById('swapItemId').value = itemId;
         document.getElementById('swapNeedsApproval').value = needsApproval ? '1' : '0';
         buscadorSwap.limpiar();
         document.getElementById('swapQuantity').value = '';
         document.getElementById('swapReason').value = '';
-        document.getElementById('swapChangeType').value = 'intercambio';
 
         document.getElementById('swapModalTitle').textContent =
-            needsApproval ? 'Solicitar cambio al autor' : 'Cambiar material';
+            needsApproval ? 'Sugerir cambio de material' : 'Intercambiar material';
         document.getElementById('swapApprovalNotice').style.display = needsApproval ? '' : 'none';
-        document.getElementById('swapTypeBlock').style.display = needsApproval ? '' : 'none';
         document.getElementById('swapReasonBlock').style.display = needsApproval ? '' : 'none';
-        document.getElementById('swapMaterialBlock').style.display = '';
-        document.getElementById('swapSubmitBtn').textContent = needsApproval ? 'Enviar solicitud' : 'Guardar';
+        document.getElementById('swapResetNotice').style.display =
+            ['abastecido', 'pendiente_compra'].includes(estadoActual) ? '' : 'none';
+        document.getElementById('swapSubmitBtn').textContent = needsApproval ? 'Enviar sugerencia' : 'Intercambiar';
 
         new bootstrap.Modal(document.getElementById('swapModal')).show();
     }
 
-    document.getElementById('swapChangeType').addEventListener('change', function () {
-        // Para una cancelación no hace falta material de reemplazo.
-        document.getElementById('swapMaterialBlock').style.display =
-            this.value === 'cancelacion' ? 'none' : '';
-    });
-
     async function submitSwap() {
         const itemId = document.getElementById('swapItemId').value;
         const needsApproval = document.getElementById('swapNeedsApproval').value === '1';
-        const tipo = needsApproval ? document.getElementById('swapChangeType').value : 'intercambio';
         const materialId = document.getElementById('swapMaterial').value;
         const cantidad = document.getElementById('swapQuantity').value;
 
-        if (tipo === 'intercambio' && !materialId) return alert('Seleccione el material de reemplazo');
+        if (!materialId) return alert('Seleccione el material de reemplazo');
 
         const btn = document.getElementById('swapSubmitBtn');
         btn.disabled = true;
         try {
             const data = needsApproval
                 ? await postForm(`/api/request-item/${itemId}/change-request`, {
-                      change_type: tipo,
-                      new_material_id: materialId || '',
+                      change_type: 'intercambio',
+                      new_material_id: materialId,
                       new_quantity: cantidad || '',
                       reason: document.getElementById('swapReason').value.trim(),
                   })
@@ -1150,20 +1179,20 @@
             }
             body.innerHTML = data.changes.map(c => {
                 const detalle = c.change_type === 'cancelacion'
-                    ? `Cancelar <strong>${c.current_material}</strong>`
-                    : `Cambiar <strong>${c.current_material}</strong> por <strong>${c.new_material}</strong>` +
-                      (c.new_quantity ? ` (${c.new_quantity})` : '');
-                const botones = c.is_mine
+                    ? `Cancelar <strong>${esc(c.current_material)}</strong>`
+                    : `Cambiar <strong>${esc(c.current_material)}</strong> por <strong>${esc(c.new_material)}</strong>` +
+                      (c.new_quantity ? ` (${esc(c.new_quantity)})` : '');
+                const botones = (c.is_mine && PUEDE_AUTORIZAR)
                     ? `<button class="btn btn-success btn-sm" onclick="resolveChange(${c.id}, 'aceptar')">
-                           <i class="fas fa-check me-1"></i>Aceptar</button>
+                           <i class="fas fa-check me-1"></i>Autorizar</button>
                        <button class="btn btn-outline-danger btn-sm" onclick="resolveChange(${c.id}, 'rechazar')">
                            <i class="fas fa-times me-1"></i>Rechazar</button>`
                     : `<span class="badge bg-secondary">Esperando al autor</span>`;
                 return `<div class="d-flex justify-content-between align-items-center border-bottom py-2 gap-3">
                     <div>
                         <div>${detalle}</div>
-                        <small class="text-muted">${c.change_label} solicitada por ${c.requested_by} · ${c.requested_at}
-                        ${c.reason ? ' · ' + c.reason : ''}</small>
+                        <small class="text-muted">${esc(c.change_label)} sugerida por ${esc(c.requested_by)} · ${esc(c.requested_at)}
+                        ${c.reason ? ' · ' + esc(c.reason) : ''}</small>
                     </div>
                     <div class="d-flex gap-2">${botones}</div>
                 </div>`;

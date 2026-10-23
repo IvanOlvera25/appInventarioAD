@@ -3972,18 +3972,19 @@ def generate_project_summary(project_id):
 def edit_request(id):
     req = Request.query.get_or_404(id)
 
-    # La edición libre (materiales, área, fechas, proyecto y cantidades) solo está
-    # abierta durante los primeros REQUEST_EDIT_WINDOW_MINUTES. Después hay que
-    # proponer el cambio y que lo autorice el autor.
-    permitido, motivo = can_edit_request(req, current_user)
-    if not permitido:
-        flash(motivo, 'warning' if req.status not in ('cancelada', 'completada') else 'danger')
+    # Qué se puede hacer depende del rol, de quién creó la requisición y de si
+    # sigue abierta la ventana de REQUEST_EDIT_WINDOW_MINUTES (ver
+    # request_permissions). La página se abre a quien tenga alguna acción y
+    # solo muestra los controles que le corresponden.
+    perms = request_permissions(req, current_user)
+    if not perms['access']:
+        flash('Solo el autor de la requisición, un almacenista o un administrador puede abrirla.', 'warning')
         return redirect(url_for('requests'))
 
     materials = Material.query.filter_by(is_active=True).order_by(Material.name).all()
     # Usar 'requisition' en vez de 'request' para no sobrescribir el request de Flask
-    return render_template('edit_request.html', requisition=req, materials=materials,
-                           edit_seconds_left=request_edit_seconds_left(req),
+    return render_template('edit_request.html', requisition=req, materials=materials, perms=perms,
+                           edit_seconds_left=perms['seconds_left'],
                            edit_window_minutes=REQUEST_EDIT_WINDOW_MINUTES)
 
 
@@ -3992,12 +3993,12 @@ def edit_request(id):
 def api_request_edit_window(id):
     """Cuánto le queda a la ventana de edición libre de una requisición."""
     req = Request.query.get_or_404(id)
-    permitido, motivo = can_edit_request(req, current_user)
+    perms = request_permissions(req, current_user)
     return jsonify({
         'success': True,
-        'can_edit': permitido,
-        'reason': motivo,
-        'seconds_left': request_edit_seconds_left(req),
+        'can_edit': perms['full_edit'],
+        'permissions': perms,
+        'seconds_left': perms['seconds_left'],
         'window_minutes': REQUEST_EDIT_WINDOW_MINUTES,
     })
 
@@ -4007,23 +4008,17 @@ def api_request_edit_window(id):
 @app.route('/api/request/<int:request_id>/request-cancellation', methods=['POST'])
 @login_required
 def request_cancellation(request_id):
-    """Solicitar cancelación de una requisición"""
+    """El requisitador autor pide cancelar su requisición; la autoriza almacén/admin."""
     req = Request.query.get_or_404(request_id)
-    
-    # Solo el creador puede solicitar cancelación (si no es admin)
-    if current_user.role != 'admin' and req.user_id != current_user.id:
-        return jsonify({'success': False, 'message': 'No tiene permiso para solicitar cancelación'}), 403
-        
-    if req.status in ['cancelada', 'completada', 'en_entrega']:
-        return jsonify({'success': False, 'message': 'No se puede cancelar una requisición en este estado'}), 400
-        
+    denegado = deny_unless(req, 'request_cancellation')
+    if denegado:
+        return denegado
     try:
         req.cancellation_requested = True
+        req.cancellation_requested_by = current_user.id
         req.cancellation_requested_at = now_mx()
-        req.cancellation_requester_id = current_user.id
-        db.session.commit()
-
-        # === ALERTA DEL SISTEMA: Solicitud de cancelación (para todos) ===
+        log_change('request', req.id, 'UPDATE', {'cancellation_requested': (False, True)},
+                   notes=f'RQ{req.request_number}: cancelación solicitada por el autor')
         fp_code = req.project.fp_code if req.project else ''
         create_system_alert(
             alert_type='cancelacion_solicitada',
@@ -4032,33 +4027,49 @@ def request_cancellation(request_id):
             target_user_id=None,
             request_id=req.id
         )
-
-        return jsonify({'success': True, 'message': 'Solicitud de cancelación enviada'})
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Solicitud de cancelación enviada a almacén'})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
 
+
 @app.route('/api/request/<int:request_id>/confirm-cancellation', methods=['POST'])
 @login_required
 def confirm_cancellation(request_id):
-    """Confirmar cancelación de una requisición"""
-    # Solo admin o almacenista puede confirmar
-    if current_user.role not in ['admin', 'almacenista']:
-        return jsonify({'success': False, 'message': 'No tiene permiso para confirmar cancelación'}), 403
-        
+    """Almacén/admin autoriza la cancelación que pidió el requisitador autor."""
     req = Request.query.get_or_404(request_id)
-    
+    denegado = deny_unless(req, 'authorize_cancellation')
+    if denegado:
+        return denegado
     try:
-        req.status = 'cancelada'
-        req.cancellation_requested = False # Ya se atendió
-        
-        # Cancelar también todos los items pendientes
-        for item in req.items:
-            if item.item_status not in ['abastecido', 'entregado']:
-                item.item_status = 'cancelado'
-                
+        cancel_requisition(req, current_user, 'cancelación autorizada por almacén')
+        create_system_alert(
+            alert_type='cancelacion_autorizada',
+            message=f'{current_user.username} autorizó la cancelación de tu RQ{req.request_number}',
+            severity='info',
+            target_user_id=req.user_id,
+            request_id=req.id
+        )
         db.session.commit()
-        return jsonify({'success': True, 'message': 'Requisición cancelada exitosamente'})
+        return jsonify({'success': True, 'message': 'Requisición cancelada'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/request/<int:request_id>/cancel', methods=['POST'])
+@login_required
+def cancel_request_directly(request_id):
+    """Almacén/admin cancela directamente una requisición creada por almacén/admin."""
+    req = Request.query.get_or_404(request_id)
+    denegado = deny_unless(req, 'cancel_directly')
+    if denegado:
+        return denegado
+    try:
+        cancel_requisition(req, current_user, f'cancelada directamente por {current_user.username}')
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Requisición cancelada'})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
@@ -4069,13 +4080,10 @@ def update_request_dates(request_id):
     """Actualizar fechas de la requisición"""
     req = Request.query.get_or_404(request_id)
     
-    # Dentro de la ventana de edición libre edita el autor, un almacenista o un
-    # admin. Fuera de ella se mantiene la regla anterior: admin, o el autor
-    # mientras la requisición siga pendiente.
-    permitido, _ = can_edit_request(req, current_user)
-    if not permitido and current_user.role != 'admin' and \
-            (req.user_id != current_user.id or req.status != 'pendiente'):
-        return jsonify({'success': False, 'message': 'No tiene permiso para editar fechas'}), 403
+    # Las fechas son parte de "modificar libremente toda la requisición".
+    denegado = deny_unless(req, 'full_edit')
+    if denegado:
+        return denegado
 
     try:
         data = request.form
@@ -4112,73 +4120,12 @@ def api_update_request_notes(id):
     """Actualizar notas de una requisición"""
     try:
         req = Request.query.get_or_404(id)
+        denegado = deny_unless(req, 'notes')
+        if denegado:
+            return denegado
         req.notes = request.form.get('notes', '').strip()
         db.session.commit()
         return jsonify({'success': True, 'message': 'Notas actualizadas'})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/api/request/<int:id>/request-cancellation', methods=['POST'])
-@login_required
-def api_request_cancellation(id):
-    """Requisitador solicita cancelación de una requisición"""
-    try:
-        req = Request.query.get_or_404(id)
-
-        # Verificar que el usuario es requisitador
-        if current_user.role != 'requisitador':
-            return jsonify({'success': False, 'message': 'Solo requisitadores pueden solicitar cancelación'})
-
-        # Verificar que la requisición no está en estados finales
-        if req.status in ['en_entrega', 'completada', 'cancelada']:
-            return jsonify({'success': False, 'message': f'No se puede cancelar una requisición en estado "{req.status}"'})
-
-        req.cancellation_requested = True
-        req.cancellation_requested_by = current_user.id
-        req.cancellation_requested_at = now_mx()
-        db.session.commit()
-
-        # === ALERTA DEL SISTEMA: Solicitud de cancelación (para todos) ===
-        fp_code = req.project.fp_code if req.project else ''
-        create_system_alert(
-            alert_type='cancelacion_solicitada',
-            message=f'{current_user.username} ha solicitado la cancelacion de la RQ{req.request_number} del FP{fp_code}',
-            severity='danger',
-            target_user_id=None,
-            request_id=req.id
-        )
-
-        return jsonify({'success': True, 'message': 'Solicitud de cancelación enviada'})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/api/request/<int:id>/confirm-cancellation', methods=['POST'])
-@login_required
-def api_confirm_cancellation(id):
-    """Admin/Almacenista confirma cancelación de una requisición"""
-    try:
-        req = Request.query.get_or_404(id)
-
-        # Verificar permisos
-        if current_user.role not in ['admin', 'almacenista']:
-            return jsonify({'success': False, 'message': 'No tiene permisos para confirmar cancelación'})
-
-        # Verificar que hay una solicitud pendiente
-        if not req.cancellation_requested:
-            return jsonify({'success': False, 'message': 'No hay solicitud de cancelación pendiente'})
-
-        req.status = 'cancelada'
-        # Cancelar todos los items
-        for item in req.items:
-            if item.item_status != 'cancelado':
-                item.item_status = 'cancelado'
-
-        db.session.commit()
-        return jsonify({'success': True, 'message': 'Requisición cancelada'})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'message': str(e)})
@@ -4207,17 +4154,195 @@ def request_is_freely_editable(req):
     return request_edit_seconds_left(req) > 0
 
 
-def can_edit_request(req, user):
-    """(permitido, motivo). Dentro de la ventana edita el autor, un almacenista
-    o un admin; fuera de ella ya nadie edita de forma directa."""
-    if user.role not in ('admin', 'almacenista') and req.user_id != user.id:
-        return False, 'Solo el autor de la requisición, un almacenista o un administrador puede editarla.'
-    if not request_is_freely_editable(req):
-        if req.status in ('cancelada', 'completada'):
-            return False, f'La requisición está {req.status} y ya no puede editarse.'
-        return False, (f'La edición libre solo dura {REQUEST_EDIT_WINDOW_MINUTES} minutos después de crear '
-                       'la requisición. Para cambiar o cancelar un material, solicita el cambio al autor.')
-    return True, ''
+STAFF_ROLES = ('admin', 'almacenista')
+
+# Acciones posibles sobre una requisición; request_permissions dice cuáles aplican.
+REQUEST_ACTIONS = (
+    'full_edit',               # modificar libremente: proyecto, depto, fechas, agregar/quitar materiales
+    'notes',                   # notas de la requisición y de sus materiales
+    'increase_qty', 'decrease_qty',
+    'cancel_item',             # cancelar un material
+    'swap_direct',             # intercambiar un material por otro, sin autorización
+    'suggest_swap',            # almacén sugiere un intercambio que autoriza el autor
+    'accept_swap',             # el autor autoriza la sugerencia de almacén
+    'request_cancellation',    # el autor pide cancelar la requisición
+    'cancel_directly',         # cancelar la requisición sin solicitud previa
+    'authorize_cancellation',  # almacén autoriza la cancelación que pidió el autor
+    'review_stock',            # analizar contra stock: qué se abastece y qué se compra
+    'supply',                  # completar el abastecimiento con lo que llega de compras
+)
+
+PERMISSION_DENIED_MESSAGES = {
+    'full_edit': 'No puedes modificar libremente esta requisición.',
+    'notes': 'No puedes cambiar las notas de esta requisición.',
+    'increase_qty': 'No puedes aumentar la cantidad de este material.',
+    'decrease_qty': 'No puedes reducir la cantidad de este material.',
+    'cancel_item': 'No puedes cancelar materiales de esta requisición.',
+    'swap_direct': 'No puedes intercambiar materiales de esta requisición.',
+    'suggest_swap': 'Solo almacén o administración puede sugerir cambios en requisiciones de un requisitador.',
+    'accept_swap': 'Solo el autor de la requisición puede autorizar el cambio sugerido.',
+    'request_cancellation': 'No puedes solicitar la cancelación de esta requisición.',
+    'cancel_directly': 'No puedes cancelar directamente esta requisición.',
+    'authorize_cancellation': 'No puedes autorizar la cancelación de esta requisición.',
+    'review_stock': 'Solo almacén o administración puede revisar el stock.',
+    'supply': 'Solo almacén o administración puede registrar el abastecimiento.',
+}
+
+
+def request_permissions(req, user):
+    """Qué puede hacer `user` sobre `req`. Devuelve un dict con REQUEST_ACTIONS en
+    True/False más contexto (mode, in_window, seconds_left, closed).
+
+    Reglas (la ventana es de REQUEST_EDIT_WINDOW_MINUTES desde que se creó):
+    - Requisitador autor
+        · dentro de la ventana: edición libre (notas, subir/bajar cantidad, cancelar
+          o intercambiar materiales), pedir la cancelación y autorizar sugerencias
+          de almacén;
+        · fuera de ella: notas, solo bajar cantidad, pedir la cancelación y
+          autorizar sugerencias de almacén.
+    - Almacén/admin en una requisición cuyo autor es almacén/admin: edición libre
+      sin límite de tiempo, cancelarla directamente, revisar stock y abastecer.
+    - Almacén/admin en una requisición cuyo autor es requisitador: sugerir
+      intercambios, notas, autorizar la cancelación solicitada, revisar stock y
+      abastecer (igual dentro y fuera de la ventana).
+    - Cancelada o completada: solo lectura.
+    """
+    perms = dict.fromkeys(REQUEST_ACTIONS, False)
+    es_staff = user.role in STAFF_ROLES
+    autor_staff = bool(req.user and req.user.role in STAFF_ROLES)
+    if es_staff:
+        modo = 'staff_own' if autor_staff else 'staff_review'
+    elif req.user_id == user.id:
+        modo = 'author'
+    else:
+        modo = 'none'
+
+    en_ventana = request_is_freely_editable(req)
+    cerrada = req.status in ('cancelada', 'completada')
+    # Una requisición en entrega ya salió del almacén: no se cancela.
+    cancelable = req.status not in ('cancelada', 'completada', 'en_entrega')
+    perms.update(mode=modo, access=modo != 'none', closed=cerrada, in_window=en_ventana,
+                 seconds_left=request_edit_seconds_left(req), author_is_staff=autor_staff)
+
+    if modo == 'none' or cerrada:
+        return perms
+    if modo == 'staff_own':
+        perms.update(full_edit=True, notes=True, increase_qty=True, decrease_qty=True,
+                     cancel_item=True, swap_direct=True, cancel_directly=cancelable,
+                     review_stock=True, supply=True)
+    elif modo == 'staff_review':
+        perms.update(suggest_swap=True, notes=True, review_stock=True, supply=True,
+                     authorize_cancellation=cancelable and bool(req.cancellation_requested))
+    else:
+        perms.update(notes=True, decrease_qty=True, accept_swap=True,
+                     request_cancellation=cancelable and not req.cancellation_requested)
+        if en_ventana:
+            perms.update(full_edit=True, increase_qty=True, cancel_item=True, swap_direct=True)
+    return perms
+
+
+def deny_unless(req, *acciones):
+    """None si current_user puede hacer alguna de `acciones` en `req`; si no, la
+    respuesta JSON 403 lista para devolver."""
+    perms = request_permissions(req, current_user)
+    if any(perms.get(a) for a in acciones):
+        return None
+    if perms['closed']:
+        motivo = f'La requisición está {req.status} y ya no puede modificarse.'
+    elif perms['mode'] == 'author' and not perms['in_window'] and \
+            any(a in ('full_edit', 'increase_qty', 'cancel_item', 'swap_direct') for a in acciones):
+        motivo = (f'Pasados los {REQUEST_EDIT_WINDOW_MINUTES} minutos de edición libre ya solo puedes cambiar '
+                  'notas, reducir cantidades, solicitar la cancelación o autorizar cambios sugeridos por almacén.')
+    else:
+        motivo = PERMISSION_DENIED_MESSAGES.get(acciones[0], 'No tienes permiso para esta acción.')
+    return jsonify({'success': False, 'message': motivo}), 403
+
+
+def item_lock_reason(item):
+    """Motivo por el que un material ya no admite cambios de cantidad, intercambio
+    o cancelación; None si se puede modificar."""
+    if item.item_status == 'cancelado':
+        return 'Ese material está cancelado.'
+    if item.item_status == 'entregado' or (item.quantity_delivered or 0) > 0:
+        return 'Ese material ya se entregó (total o parcialmente) y no puede modificarse.'
+    return None
+
+
+def retire_pending_change_requests(item, nota, excepto_id=None):
+    """Las sugerencias pendientes de un material dejan de aplicar cuando éste cambia."""
+    for cambio in ItemChangeRequest.query.filter_by(request_item_id=item.id, status='pendiente').all():
+        if cambio.id == excepto_id:
+            continue
+        cambio.status = 'rechazado'
+        cambio.resolved_at = now_mx()
+        cambio.response_notes = nota
+
+
+def apply_item_swap(item, material, quantity=None, user=None, excepto_cambio_id=None):
+    """Cambia el material de un renglón SIN borrar el registro de request_item.
+
+    El análisis contra stock deja de aplicar: el renglón regresa a 'pendiente'
+    con quantity_supplied en 0 (si estaba abastecido o pendiente de compra) y se
+    borran las compras que se hubieran solicitado para él. Devuelve un resumen
+    para la bitácora y los mensajes.
+    """
+    anterior = item.material.name if item.material else (item.new_material_name or 'material')
+    estado_anterior = item.item_status
+    surtido_anterior = item.quantity_supplied or 0
+
+    item.material_id = material.id
+    item.is_new_material = False
+    item.new_material_code = None
+    item.new_material_name = None
+    item.new_material_unit = None
+    item.new_material_category = None
+    if quantity and quantity > 0:
+        item.quantity_requested = quantity
+
+    compras = PurchaseRequest.query.filter_by(request_item_id=item.id).all()
+    compras_borradas = [{'folio': c.request_number, 'cantidad': c.quantity,
+                         'estado': c.status_ref.name if c.status_ref else c.status} for c in compras]
+    for compra in compras:
+        db.session.delete(compra)
+    item.quantity_to_purchase = 0
+    item.quantity_supplied = 0
+    item.item_status = 'pendiente'
+
+    retire_pending_change_requests(item, f'Sin efecto: el material cambió a {material.name}.',
+                                   excepto_id=excepto_cambio_id)
+    recalculate_request_status(item.request)
+    return {
+        'anterior': anterior, 'nuevo': material.name,
+        'estado_anterior': estado_anterior, 'surtido_anterior': surtido_anterior,
+        'compras_borradas': compras_borradas,
+    }
+
+
+def log_item_swap(item, resumen, origen):
+    """Bitácora de un intercambio, incluidas las compras borradas."""
+    req_num = item.request.request_number if item.request else ''
+    cambios = {'material': (resumen['anterior'], resumen['nuevo'])}
+    if resumen['estado_anterior'] != 'pendiente':
+        cambios['item_status'] = (resumen['estado_anterior'], 'pendiente')
+    if resumen['surtido_anterior']:
+        cambios['quantity_supplied'] = (resumen['surtido_anterior'], 0)
+    log_change('request_item', item.id, 'UPDATE', cambios, notes=f'RQ{req_num}: {origen}')
+    for compra in resumen['compras_borradas']:
+        log_change('purchase_request', item.id, 'DELETE', {},
+                   notes=(f"RQ{req_num}: compra {compra['folio']} ({compra['cantidad']:g}, {compra['estado']}) "
+                          f"borrada por intercambio de {resumen['anterior']} a {resumen['nuevo']}"))
+
+
+def cancel_requisition(req, user, motivo):
+    """Cancela una requisición y sus materiales que aún no se abastecen ni entregan."""
+    req.status = 'cancelada'
+    req.cancellation_requested = False
+    for item in req.items:
+        if item.item_status not in ('abastecido', 'entregado'):
+            item.item_status = 'cancelado'
+            retire_pending_change_requests(item, 'Sin efecto: la requisición se canceló.')
+    log_change('request', req.id, 'UPDATE', {'status': ('activa', 'cancelada')},
+               notes=f'RQ{req.request_number}: {motivo}')
 
 
 def fp_exit_limit(fp_code, material):
@@ -4388,6 +4513,9 @@ def api_update_item_notes(id):
     """Actualizar notas de un item"""
     try:
         item = RequestItem.query.get_or_404(id)
+        denegado = deny_unless(item.request, 'notes')
+        if denegado:
+            return denegado
         item.item_notes = request.form.get('notes', '').strip()
         db.session.commit()
         return jsonify({'success': True, 'message': 'Notas actualizadas'})
@@ -4399,84 +4527,99 @@ def api_update_item_notes(id):
 @app.route('/api/request-item/<int:id>/update-quantity', methods=['POST'])
 @login_required
 def api_update_item_quantity(id):
-    """Modificar la cantidad de un item.
+    """Aumentar o reducir la cantidad de un material, según request_permissions.
 
-    Dentro de la ventana de edición libre se puede subir o bajar. Fuera de ella
-    solo se permite reducir un item aún pendiente, como antes.
+    Si el material ya se había analizado contra stock se ajusta lo abastecido y la
+    compra pendiente; si se aumenta un material ya abastecido regresa a 'pendiente'
+    para que almacén lo vuelva a analizar.
     """
     try:
         item = RequestItem.query.get_or_404(id)
-        libre, _ = can_edit_request(item.request, current_user)
+        req = item.request
+        bloqueo = item_lock_reason(item)
+        if bloqueo:
+            return jsonify({'success': False, 'message': bloqueo}), 400
 
-        if not libre and item.item_status != 'pendiente':
-            return jsonify({'success': False, 'message': 'Solo se puede modificar items pendientes'})
-
-        new_qty = float(request.form.get('quantity', 0))
+        new_qty = request.form.get('quantity', type=float) or 0
         if new_qty <= 0:
-            return jsonify({'success': False, 'message': 'La cantidad debe ser mayor a 0'})
-        if not libre and new_qty > item.quantity_requested:
-            return jsonify({'success': False, 'message': (
-                f'Pasados los {REQUEST_EDIT_WINDOW_MINUTES} minutos de edición libre solo se puede '
-                'reducir la cantidad. Para aumentarla, levanta una requisición nueva.')})
-
+            return jsonify({'success': False, 'message': 'La cantidad debe ser mayor a 0'}), 400
         anterior = item.quantity_requested
+        if abs(new_qty - anterior) < 1e-9:
+            return jsonify({'success': True, 'message': 'Sin cambios'})
+
+        denegado = deny_unless(req, 'increase_qty' if new_qty > anterior else 'decrease_qty')
+        if denegado:
+            return denegado
+
+        estado_anterior = item.item_status
+        surtido = item.quantity_supplied or 0
         item.quantity_requested = new_qty
-        # Si ya se había analizado contra stock, la compra pendiente se recalcula.
         if item.item_status == 'pendiente_compra':
-            sync_item_purchase(item, max(0, new_qty - (item.quantity_supplied or 0)), user=current_user)
+            surtido = min(surtido, new_qty)
+            item.quantity_supplied = surtido
+            falta = max(0, new_qty - surtido)
+            sync_item_purchase(item, falta, user=current_user)
+            if falta <= 0:
+                item.item_status = 'abastecido'
+        elif item.item_status == 'abastecido':
+            if new_qty < anterior:
+                item.quantity_supplied = min(surtido, new_qty)
+            else:
+                # Hace falta más de lo que ya se abasteció: almacén vuelve a analizarlo.
+                item.quantity_supplied = 0
+                item.item_status = 'pendiente'
+                sync_item_purchase(item, 0, user=current_user)
+        recalculate_request_status(req)
+
+        log_change('request_item', item.id, 'UPDATE', {
+            'quantity_requested': (anterior, new_qty),
+            'item_status': (estado_anterior, item.item_status),
+        }, notes=f'RQ{req.request_number}: cantidad modificada')
         db.session.commit()
-        log_change('request_item', item.id, 'UPDATE', {'quantity_requested': (anterior, new_qty)},
-                   notes=f'RQ{item.request.request_number}: cantidad modificada')
         return jsonify({'success': True, 'message': 'Cantidad actualizada'})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'message': str(e)})
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/api/request-item/<int:id>/update-material', methods=['POST'])
 @login_required
 def api_update_item_material(id):
-    """Cambiar el material de un renglón. Solo dentro de la ventana de edición libre."""
+    """Intercambiar el material de un renglón directamente (sin autorización).
+
+    Lo puede hacer el requisitador autor dentro de la ventana de edición libre, y
+    almacén/admin en las requisiciones que creó almacén/admin. El registro de
+    request_item se conserva; ver apply_item_swap.
+    """
     item = RequestItem.query.get_or_404(id)
-    permitido, motivo = can_edit_request(item.request, current_user)
-    if not permitido:
-        return jsonify({'success': False, 'message': motivo}), 403
+    denegado = deny_unless(item.request, 'swap_direct')
+    if denegado:
+        return denegado
+    bloqueo = item_lock_reason(item)
+    if bloqueo:
+        return jsonify({'success': False, 'message': bloqueo}), 400
 
     material = Material.query.get(request.form.get('material_id', type=int) or 0)
     if not material:
         return jsonify({'success': False, 'message': 'Material no encontrado'}), 400
+    if material.id == item.material_id:
+        return jsonify({'success': False, 'message': 'Es el mismo material que ya tiene el renglón'}), 400
 
-    anterior = item.material.name if item.material else (item.new_material_name or '—')
-    item.material_id = material.id
-    item.is_new_material = False
-    item.new_material_code = None
-    item.new_material_name = None
-    item.new_material_unit = None
-    item.new_material_category = None
-    # El material cambió: lo analizado contra stock ya no aplica.
-    item.quantity_supplied = 0
-    item.item_status = 'pendiente'
-    sync_item_purchase(item, 0, user=current_user)
-
-    nueva_cantidad = request.form.get('quantity', type=float)
-    if nueva_cantidad and nueva_cantidad > 0:
-        item.quantity_requested = nueva_cantidad
-
-    recalculate_request_status(item.request)
+    resumen = apply_item_swap(item, material, request.form.get('quantity', type=float), user=current_user)
+    log_item_swap(item, resumen, 'material intercambiado directamente')
     db.session.commit()
-    log_change('request_item', item.id, 'UPDATE', {'material': (anterior, material.name)},
-               notes=f'RQ{item.request.request_number}: material sustituido en edición libre')
-    return jsonify({'success': True, 'message': f'Material cambiado a {material.name}'})
+    extra = ' Se borró la compra solicitada.' if resumen['compras_borradas'] else ''
+    return jsonify({'success': True, 'message': f'Material cambiado a {material.name}.{extra}'})
 
 
 @app.route('/api/request/<int:id>/items', methods=['POST'])
 @login_required
 def api_add_request_item(id):
-    """Agregar un material a la requisición. Solo dentro de la ventana de edición libre."""
+    """Agregar un material a la requisición (edición libre)."""
     req = Request.query.get_or_404(id)
-    permitido, motivo = can_edit_request(req, current_user)
-    if not permitido:
-        return jsonify({'success': False, 'message': motivo}), 403
+    denegado = deny_unless(req, 'full_edit')
+    if denegado:
+        return denegado
 
     material = Material.query.get(request.form.get('material_id', type=int) or 0)
     if not material:
@@ -4496,21 +4639,24 @@ def api_add_request_item(id):
     )
     db.session.add(item)
     recalculate_request_status(req)
-    db.session.commit()
+    db.session.flush()
     log_change('request_item', item.id, 'CREATE', {},
                notes=f'RQ{req.request_number}: {material.name} agregado en edición libre')
+    db.session.commit()
     return jsonify({'success': True, 'message': f'{material.name} agregado', 'item_id': item.id})
 
 
 @app.route('/api/request-item/<int:id>', methods=['DELETE'])
 @login_required
 def api_delete_request_item(id):
-    """Quitar un material de la requisición. Solo dentro de la ventana de edición libre."""
+    """Quitar un material de la requisición (edición libre)."""
     item = RequestItem.query.get_or_404(id)
     req = item.request
-    permitido, motivo = can_edit_request(req, current_user)
-    if not permitido:
-        return jsonify({'success': False, 'message': motivo}), 403
+    denegado = deny_unless(req, 'full_edit')
+    if denegado:
+        return denegado
+    if (item.quantity_delivered or 0) > 0 or item.item_status == 'entregado':
+        return jsonify({'success': False, 'message': 'Ese material ya se entregó; no se puede quitar.'}), 400
 
     if len(req.items) <= 1:
         return jsonify({'success': False, 'message': 'La requisición debe conservar al menos un material. '
@@ -4521,24 +4667,24 @@ def api_delete_request_item(id):
     ItemChangeRequest.query.filter_by(request_item_id=item.id).delete()
     db.session.delete(item)
     recalculate_request_status(req)
-    db.session.commit()
     log_change('request_item', id, 'DELETE', {},
                notes=f'RQ{req.request_number}: {nombre} eliminado en edición libre')
+    db.session.commit()
     return jsonify({'success': True, 'message': f'{nombre} eliminado de la requisición'})
 
 
 @app.route('/api/request/<int:id>/update-core', methods=['POST'])
 @login_required
 def api_update_request_core(id):
-    """Cambiar proyecto y departamento. Solo dentro de la ventana de edición libre.
+    """Cambiar proyecto y departamento (edición libre).
 
     El área se mantiene igual al departamento: en esta app son el mismo dato y
     tener dos campos abiertos solo los dejaba discrepar.
     """
     req = Request.query.get_or_404(id)
-    permitido, motivo = can_edit_request(req, current_user)
-    if not permitido:
-        return jsonify({'success': False, 'message': motivo}), 403
+    denegado = deny_unless(req, 'full_edit')
+    if denegado:
+        return denegado
 
     cambios = {}
 
@@ -4577,9 +4723,9 @@ def api_update_request_core(id):
     if not cambios:
         return jsonify({'success': True, 'message': 'Sin cambios que guardar'})
 
-    db.session.commit()
     log_change('request', req.id, 'UPDATE', cambios,
-               notes=f'RQ{req.request_number}: datos generales editados en ventana libre')
+               notes=f'RQ{req.request_number}: datos generales editados')
+    db.session.commit()
     return jsonify({'success': True, 'message': 'Requisición actualizada',
                     'changed': list(cambios.keys())})
 
@@ -4591,8 +4737,9 @@ def api_analyze_item_stock(id):
     try:
         item = RequestItem.query.get_or_404(id)
 
-        if current_user.role not in ['admin', 'almacenista']:
-            return jsonify({'success': False, 'message': 'Sin permisos para esta acción'})
+        denegado = deny_unless(item.request, 'review_stock')
+        if denegado:
+            return denegado
 
         if item.item_status != 'pendiente':
             return jsonify({'success': False, 'message': 'Item ya fue procesado'})
@@ -4666,28 +4813,31 @@ def api_analyze_item_stock(id):
 @app.route('/api/request-item/<int:id>/cancel', methods=['POST'])
 @login_required
 def api_cancel_item(id):
-    """Cancelar un item individual"""
+    """Cancelar un material de la requisición (según request_permissions)."""
     try:
         item = RequestItem.query.get_or_404(id)
+        denegado = deny_unless(item.request, 'cancel_item')
+        if denegado:
+            return denegado
+        bloqueo = item_lock_reason(item)
+        if bloqueo:
+            return jsonify({'success': False, 'message': bloqueo}), 400
 
-        # Solo admin o el requisitador autor de la requisición pueden cancelar items
-        if current_user.role == 'admin':
-            pass
-        elif current_user.role == 'requisitador' and item.request.user_id == current_user.id:
-            pass
-        else:
-            return jsonify({'success': False, 'message': 'No tiene permisos para cancelar este material'})
-
-        if item.item_status != 'pendiente':
-            return jsonify({'success': False, 'message': 'Solo se pueden cancelar items pendientes'})
-
+        estado_anterior = item.item_status
         item.item_status = 'cancelado'
+        item.quantity_supplied = 0
+        # Si se había pedido compra y compras aún no la cierra, ya no hace falta.
+        sync_item_purchase(item, 0, user=current_user)
+        retire_pending_change_requests(item, 'Sin efecto: el material se canceló.')
         recalculate_request_status(item.request)
+        nombre = item.material.name if item.material else (item.new_material_name or 'material')
+        log_change('request_item', item.id, 'UPDATE', {'item_status': (estado_anterior, 'cancelado')},
+                   notes=f'RQ{item.request.request_number}: {nombre} cancelado')
         db.session.commit()
         return jsonify({'success': True, 'message': 'Material cancelado'})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'message': str(e)})
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/api/request-item/<int:id>/mark-supplied', methods=['POST'])
@@ -4697,8 +4847,9 @@ def api_mark_item_supplied(id):
     try:
         item = RequestItem.query.get_or_404(id)
 
-        if current_user.role not in ['admin', 'almacenista']:
-            return jsonify({'success': False, 'message': 'Sin permisos para esta acción'})
+        denegado = deny_unless(item.request, 'supply')
+        if denegado:
+            return denegado
 
         if item.item_status != 'pendiente_compra':
             return jsonify({'success': False, 'message': 'Esta acción solo aplica a items pendientes de compra'})
@@ -4750,8 +4901,9 @@ def api_partial_supply_item(id):
     """
     try:
         item = RequestItem.query.get_or_404(id)
-        if current_user.role not in ['admin', 'almacenista']:
-            return jsonify({'success': False, 'message': 'Sin permisos para esta acción'})
+        denegado = deny_unless(item.request, 'supply')
+        if denegado:
+            return denegado
         if item.item_status not in ['pendiente_compra', 'abastecido']:
             return jsonify({'success': False, 'message': 'Solo aplica a items en pendiente_compra o parcialmente abastecidos'})
 
@@ -5194,24 +5346,23 @@ def reports():
 @app.route('/api/request-item/<int:item_id>/change-request', methods=['POST'])
 @login_required
 def api_create_item_change_request(item_id):
-    """Un almacenista o admin propone cancelar un material o cambiarlo por otro.
-
-    No surte efecto hasta que el autor de la requisición lo acepta.
+    """Almacén/admin sugiere intercambiar un material de una requisición creada por
+    un requisitador. No surte efecto hasta que el autor la autoriza.
     """
-    if current_user.role not in ('admin', 'almacenista'):
-        return jsonify({'success': False, 'message': 'Solo un almacenista o un administrador puede solicitar cambios'}), 403
-
     item = RequestItem.query.get_or_404(item_id)
     req  = item.request
 
-    if req.status in ('cancelada', 'completada'):
-        return jsonify({'success': False, 'message': f'La requisición está {req.status}'}), 400
-    if item.item_status == 'cancelado':
-        return jsonify({'success': False, 'message': 'Ese material ya está cancelado'}), 400
+    denegado = deny_unless(req, 'suggest_swap')
+    if denegado:
+        return denegado
+    bloqueo = item_lock_reason(item)
+    if bloqueo:
+        return jsonify({'success': False, 'message': bloqueo}), 400
 
-    change_type = (request.form.get('change_type') or '').strip()
-    if change_type not in ('cancelacion', 'intercambio'):
-        return jsonify({'success': False, 'message': 'Tipo de cambio inválido'}), 400
+    # Almacén solo sugiere intercambios; cancelar un material es decisión del autor.
+    change_type = (request.form.get('change_type') or 'intercambio').strip()
+    if change_type != 'intercambio':
+        return jsonify({'success': False, 'message': 'Almacén solo puede sugerir el intercambio de un material'}), 400
 
     if ItemChangeRequest.query.filter_by(request_item_id=item.id, status='pendiente').first():
         return jsonify({'success': False, 'message': 'Ese material ya tiene una solicitud de cambio esperando respuesta'}), 400
@@ -5254,10 +5405,11 @@ def api_create_item_change_request(item_id):
         request_id=req.id,
     )
 
-    db.session.commit()
+    db.session.flush()
     log_change('item_change_request', cambio.id, 'CREATE', {},
-               notes=f'RQ{req.request_number}: solicitud de {cambio.change_label} — {detalle}')
-    return jsonify({'success': True, 'message': 'Solicitud enviada al autor de la requisición',
+               notes=f'RQ{req.request_number}: sugerencia de {cambio.change_label} — {detalle}')
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Sugerencia enviada al autor de la requisición',
                     'change_id': cambio.id})
 
 
@@ -5268,9 +5420,10 @@ def api_resolve_item_change_request(change_id):
     cambio = ItemChangeRequest.query.get_or_404(change_id)
     req = cambio.request
 
-    # Solo el autor decide. Un admin puede destrabar si el autor ya no está.
-    if req.user_id != current_user.id and current_user.role != 'admin':
-        return jsonify({'success': False, 'message': 'Solo el autor de la requisición puede aceptar o rechazar el cambio'}), 403
+    # Solo el autor (requisitador) autoriza o rechaza lo que sugiere almacén.
+    denegado = deny_unless(req, 'accept_swap')
+    if denegado:
+        return denegado
     if cambio.status != 'pendiente':
         return jsonify({'success': False, 'message': f'Esa solicitud ya fue {cambio.status}'}), 400
 
@@ -5292,34 +5445,36 @@ def api_resolve_item_change_request(change_id):
             target_user_id=cambio.requested_by,
             request_id=req.id,
         )
-        db.session.commit()
         log_change('item_change_request', cambio.id, 'UPDATE', {'status': ('pendiente', 'rechazado')},
                    notes=f'RQ{req.request_number}: cambio rechazado')
+        db.session.commit()
         return jsonify({'success': True, 'message': 'Solicitud rechazada'})
 
     # Aceptada: aplicar el cambio
+    bloqueo = item_lock_reason(item)
+    if bloqueo:
+        return jsonify({'success': False, 'message': bloqueo}), 400
     cambio.status = 'aceptado'
     anterior = item.material.name if item.material else (item.new_material_name or 'material')
 
     if cambio.change_type == 'cancelacion':
+        # Sugerencias de cancelación creadas antes de las reglas actuales.
         item.item_status = 'cancelado'
-        # Si tenía compra pendiente, ya no hace falta.
+        item.quantity_supplied = 0
         sync_item_purchase(item, 0, user=current_user)
+        retire_pending_change_requests(item, 'Sin efecto: el material se canceló.', excepto_id=cambio.id)
+        recalculate_request_status(req)
         detalle = f'{anterior} cancelado'
     else:
-        item.material_id    = cambio.new_material_id
-        item.is_new_material = False
-        item.new_material_code = None
-        item.new_material_name = None
-        item.new_material_unit = None
-        item.quantity_requested = cambio.new_quantity or item.quantity_requested
-        # El material cambió: el análisis vs stock anterior ya no aplica.
-        item.quantity_supplied = 0
-        item.item_status = 'pendiente'
-        sync_item_purchase(item, 0, user=current_user)
+        # Mismo intercambio que el directo: conserva el renglón, lo regresa a
+        # pendiente y borra la compra solicitada.
+        resumen = apply_item_swap(item, cambio.new_material, cambio.new_quantity,
+                                  user=current_user, excepto_cambio_id=cambio.id)
+        log_item_swap(item, resumen, f'intercambio sugerido por almacén y autorizado por {current_user.username}')
         detalle = f'{anterior} → {cambio.new_material.name}'
+        if resumen['compras_borradas']:
+            detalle += ' (se borró la compra solicitada)'
 
-    recalculate_request_status(req)
     create_system_alert(
         alert_type='cambio_requisicion',
         message=f'{current_user.username} autorizó {cambio.change_label.lower()} en RQ{req.request_number}: {detalle}',
@@ -5327,9 +5482,9 @@ def api_resolve_item_change_request(change_id):
         target_user_id=cambio.requested_by,
         request_id=req.id,
     )
-    db.session.commit()
     log_change('item_change_request', cambio.id, 'UPDATE', {'status': ('pendiente', 'aceptado')},
                notes=f'RQ{req.request_number}: {cambio.change_label} aplicada — {detalle}')
+    db.session.commit()
     return jsonify({'success': True, 'message': f'Cambio aplicado: {detalle}'})
 
 
