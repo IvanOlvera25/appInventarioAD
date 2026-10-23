@@ -89,26 +89,45 @@
                 <!-- Datos generales (solo durante la ventana) -->
                 <div class="card mb-4" id="coreEditCard">
                     <div class="card-header py-2">
-                        <h6 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Proyecto, área y departamento</h6>
+                        <h6 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Proyecto y departamento</h6>
                     </div>
                     <div class="card-body">
-                        <div class="row g-2 align-items-end">
-                            <div class="col-md-4">
-                                <label class="form-label small mb-1">FP del proyecto</label>
-                                <input type="text" class="form-control form-control-sm text-uppercase" id="coreFpCode"
-                                       value="{{ requisition.project.fp_code }}" autocomplete="off">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label small mb-1">Área</label>
-                                <input type="text" class="form-control form-control-sm" id="coreArea"
-                                       value="{{ requisition.area or '' }}" autocomplete="off">
+                        <div class="row g-3">
+                            <div class="col-md-7">
+                                <label class="form-label small mb-1">Proyecto</label>
+                                <!-- Nunca es texto libre: se busca y se elige uno dado de alta -->
+                                <input type="hidden" id="coreProjectId" value="{{ requisition.project_id }}">
+                                <input type="hidden" id="coreFpCode" value="{{ requisition.project.fp_code }}">
+                                <div class="position-relative">
+                                    <input type="search" class="form-control form-control-sm" id="coreProjectSearch"
+                                           placeholder="Busca por FP, nombre del proyecto o cliente" autocomplete="off">
+                                    <div id="coreProjectResults" class="list-group position-absolute w-100 shadow"
+                                         style="z-index:1056; max-height:240px; overflow-y:auto; display:none;"></div>
+                                </div>
+                                <div class="form-text" id="coreProjectCurrent">
+                                    Actual: <strong>{{ requisition.project.fp_code }}</strong> ·
+                                    {{ requisition.project.name }}{% if requisition.project.client %} ·
+                                    {{ requisition.project.client }}{% endif %}
+                                </div>
                             </div>
                             <div class="col-md-3">
                                 <label class="form-label small mb-1">Departamento</label>
-                                <input type="text" class="form-control form-control-sm" id="coreDepartment"
-                                       value="{{ requisition.department or '' }}" autocomplete="off">
+                                <select class="form-select form-select-sm" id="coreDepartment">
+                                    {% set depto_actual = requisition.department or '' %}
+                                    {% set nombres = [] %}
+                                    {% for d in departments %}
+                                        {% set nombre = d.name if d.name is defined else d %}
+                                        {% if nombres.append(nombre) %}{% endif %}
+                                        <option value="{{ nombre }}" {% if nombre == depto_actual %}selected{% endif %}>
+                                            {{ nombre }}</option>
+                                    {% endfor %}
+                                    {# El departamento guardado puede no estar en el catálogo: se conserva #}
+                                    {% if depto_actual and depto_actual not in nombres %}
+                                        <option value="{{ depto_actual }}" selected>{{ depto_actual }} (actual)</option>
+                                    {% endif %}
+                                </select>
                             </div>
-                            <div class="col-md-2">
+                            <div class="col-md-2 d-flex align-items-end">
                                 <button class="btn btn-primary btn-sm w-100" onclick="saveRequestCore()">
                                     <i class="fas fa-save me-1"></i>Guardar
                                 </button>
@@ -193,12 +212,15 @@
                         <div class="row g-2 align-items-end">
                             <div class="col-md-7">
                                 <label class="form-label small mb-1">Material</label>
-                                <select class="form-select form-select-sm" id="addItemMaterial">
-                                    <option value="">Seleccione un material...</option>
-                                    {% for m in materials %}
-                                    <option value="{{ m.id }}">{{ m.code }} - {{ m.name }} ({{ m.unit }})</option>
-                                    {% endfor %}
-                                </select>
+                                <!-- Buscador contra el catálogo: nunca texto libre -->
+                                <input type="hidden" id="addItemMaterial">
+                                <div class="position-relative">
+                                    <input type="search" class="form-control form-control-sm" id="addItemMaterialSearch"
+                                           placeholder="Busca por código, nombre o categoría" autocomplete="off">
+                                    <div id="addItemMaterialResults" class="list-group position-absolute w-100 shadow"
+                                         style="z-index:1056; max-height:240px; overflow-y:auto; display:none;"></div>
+                                </div>
+                                <div class="form-text" id="addItemMaterialPicked"></div>
                             </div>
                             <div class="col-md-3">
                                 <label class="form-label small mb-1">Cantidad</label>
@@ -586,12 +608,14 @@
                 <div id="swapMaterialBlock">
                     <div class="mb-3">
                         <label class="form-label">Material de reemplazo</label>
-                        <select class="form-select" id="swapMaterial">
-                            <option value="">Seleccione un material...</option>
-                            {% for m in materials %}
-                            <option value="{{ m.id }}">{{ m.code }} - {{ m.name }} ({{ m.unit }})</option>
-                            {% endfor %}
-                        </select>
+                        <input type="hidden" id="swapMaterial">
+                        <div class="position-relative">
+                            <input type="search" class="form-control" id="swapMaterialSearch"
+                                   placeholder="Busca por código, nombre o categoría" autocomplete="off">
+                            <div id="swapMaterialResults" class="list-group position-absolute w-100 shadow"
+                                 style="z-index:1060; max-height:240px; overflow-y:auto; display:none;"></div>
+                        </div>
+                        <div class="form-text" id="swapMaterialPicked"></div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Cantidad</label>
@@ -913,14 +937,121 @@
         return res.json();
     }
 
+    // ===== BUSCADORES CONTRA CATÁLOGO =====
+    // Ningún campo que identifique un proyecto o un material es texto libre: se
+    // escribe para buscar y se elige una fila existente, que es la que viaja.
+
+    /** Conecta un buscador: input de texto → resultados → campo oculto con el id. */
+    function conectarBuscador({ campoBusqueda, campoOculto, contenedor, etiqueta,
+                                url, extraer, alElegir }) {
+        const input = document.getElementById(campoBusqueda);
+        const oculto = document.getElementById(campoOculto);
+        const lista = document.getElementById(contenedor);
+        const elegido = etiqueta ? document.getElementById(etiqueta) : null;
+        let temporizador, version = 0;
+
+        function cerrar() { lista.style.display = 'none'; lista.innerHTML = ''; }
+
+        function pintar(filas) {
+            if (!filas.length) {
+                lista.innerHTML = '<div class="list-group-item text-muted small">Sin coincidencias</div>';
+                lista.style.display = '';
+                return;
+            }
+            lista.innerHTML = '';
+            filas.forEach(fila => {
+                const boton = document.createElement('button');
+                boton.type = 'button';
+                boton.className = 'list-group-item list-group-item-action py-2';
+                boton.innerHTML = fila.html;
+                boton.addEventListener('click', () => {
+                    oculto.value = fila.id;
+                    input.value = fila.texto;
+                    if (elegido) elegido.innerHTML = `<i class="fas fa-check text-success me-1"></i>${fila.texto}`;
+                    cerrar();
+                    if (alElegir) alElegir(fila);
+                });
+                lista.appendChild(boton);
+            });
+            lista.style.display = '';
+        }
+
+        input.addEventListener('input', () => {
+            clearTimeout(temporizador);
+            // Al escribir se invalida la selección previa: así no se guarda algo
+            // distinto de lo que el usuario ve en el campo.
+            oculto.value = '';
+            if (elegido) elegido.innerHTML = '';
+            const termino = input.value.trim();
+            if (termino.length < 2) { cerrar(); return; }
+            const miVersion = ++version;
+            temporizador = setTimeout(async () => {
+                try {
+                    const res = await fetch(url(termino));
+                    const data = await res.json();
+                    if (miVersion !== version) return;   // llegó tarde: descartar
+                    pintar(extraer(data));
+                } catch (err) {
+                    cerrar();
+                }
+            }, 250);
+        });
+
+        input.addEventListener('keydown', e => { if (e.key === 'Escape') cerrar(); });
+        document.addEventListener('click', e => {
+            if (!lista.contains(e.target) && e.target !== input) cerrar();
+        });
+        return { limpiar() { input.value = ''; oculto.value = ''; if (elegido) elegido.innerHTML = ''; cerrar(); } };
+    }
+
+    const esc = v => String(v ?? '').replace(/[&<>"']/g, c =>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    function buscadorDeMateriales(prefijo, alElegir) {
+        return conectarBuscador({
+            campoBusqueda: `${prefijo}Search`,
+            campoOculto: prefijo,
+            contenedor: `${prefijo}Results`,
+            etiqueta: `${prefijo}Picked`,
+            url: t => `/api/materials/search?q=${encodeURIComponent(t)}`,
+            extraer: data => (data.materials || []).map(m => ({
+                id: m.id,
+                texto: `${m.code} - ${m.name}`,
+                html: `<strong>${esc(m.code)}</strong> ${esc(m.name)}
+                       <small class="text-muted d-block">${esc(m.unit || '')} · ${esc(m.category || '')}</small>`,
+            })),
+            alElegir,
+        });
+    }
+
+    const buscadorProyecto = conectarBuscador({
+        campoBusqueda: 'coreProjectSearch',
+        campoOculto: 'coreProjectId',
+        contenedor: 'coreProjectResults',
+        etiqueta: 'coreProjectCurrent',
+        url: t => `/api/projects/search?q=${encodeURIComponent(t)}`,
+        extraer: data => (data.projects || []).map(p => ({
+            id: p.id,
+            fp_code: p.fp_code,
+            texto: `${p.fp_code} · ${p.name}`,
+            html: `<strong>${esc(p.fp_code)}</strong> ${esc(p.name)}
+                   <small class="text-muted d-block">${esc(p.client || 'Sin cliente')}</small>`,
+        })),
+        // El FP viaja junto al id por si el backend prefiere resolver por código
+        alElegir: fila => { document.getElementById('coreFpCode').value = fila.fp_code; },
+    });
+
+    const buscadorAgregar = buscadorDeMateriales('addItemMaterial');
+    const buscadorSwap = buscadorDeMateriales('swapMaterial');
+
     async function saveRequestCore() {
         const feedback = document.getElementById('coreEditFeedback');
         feedback.innerHTML = '<span class="text-muted">Guardando…</span>';
         try {
             const data = await postForm(`/api/request/${requestId}/update-core`, {
+                project_id: document.getElementById('coreProjectId').value,
                 fp_code: document.getElementById('coreFpCode').value.trim(),
-                area: document.getElementById('coreArea').value.trim(),
-                department: document.getElementById('coreDepartment').value.trim(),
+                department: document.getElementById('coreDepartment').value,
             });
             feedback.innerHTML = data.success
                 ? `<span class="text-success"><i class="fas fa-check me-1"></i>${data.message}</span>`
@@ -954,7 +1085,7 @@
     function openSwapModal(itemId, needsApproval) {
         document.getElementById('swapItemId').value = itemId;
         document.getElementById('swapNeedsApproval').value = needsApproval ? '1' : '0';
-        document.getElementById('swapMaterial').value = '';
+        buscadorSwap.limpiar();
         document.getElementById('swapQuantity').value = '';
         document.getElementById('swapReason').value = '';
         document.getElementById('swapChangeType').value = 'intercambio';

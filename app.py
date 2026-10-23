@@ -4530,7 +4530,11 @@ def api_delete_request_item(id):
 @app.route('/api/request/<int:id>/update-core', methods=['POST'])
 @login_required
 def api_update_request_core(id):
-    """Cambiar proyecto, área y departamento. Solo dentro de la ventana de edición libre."""
+    """Cambiar proyecto y departamento. Solo dentro de la ventana de edición libre.
+
+    El área se mantiene igual al departamento: en esta app son el mismo dato y
+    tener dos campos abiertos solo los dejaba discrepar.
+    """
     req = Request.query.get_or_404(id)
     permitido, motivo = can_edit_request(req, current_user)
     if not permitido:
@@ -4538,25 +4542,37 @@ def api_update_request_core(id):
 
     cambios = {}
 
+    # El proyecto se elige de un buscador, así que llega su id. Se acepta el
+    # fp_code como respaldo, pero nunca se crea un proyecto desde aquí.
+    project_id = request.form.get('project_id', type=int)
     fp_code = (request.form.get('fp_code') or '').strip()
-    if fp_code:
+    proyecto = None
+    if project_id:
+        proyecto = Project.query.get(project_id)
+        if not proyecto:
+            return jsonify({'success': False, 'message': 'El proyecto seleccionado ya no existe'}), 400
+    elif fp_code:
         proyecto = Project.query.filter_by(fp_code=fp_code).first()
         if not proyecto:
-            return jsonify({'success': False, 'message': f'No existe el proyecto {fp_code}'}), 400
-        if proyecto.id != req.project_id:
-            anterior = req.project.fp_code if req.project else '—'
-            cambios['proyecto'] = (anterior, proyecto.fp_code)
-            req.project_id = proyecto.id
+            return jsonify({'success': False, 'message':
+                            f'No existe el proyecto {fp_code}. Elígelo de la lista de búsqueda.'}), 400
 
-    area = (request.form.get('area') or '').strip()
-    if area and area != (req.area or ''):
-        cambios['area'] = (req.area or '—', area)
-        req.area = area
+    if proyecto and proyecto.id != req.project_id:
+        anterior = req.project.fp_code if req.project else '—'
+        cambios['proyecto'] = (anterior, proyecto.fp_code)
+        req.project_id = proyecto.id
 
     departamento = (request.form.get('department') or '').strip()
     if departamento and departamento != (req.department or ''):
         cambios['department'] = (req.department or '—', departamento)
         req.department = departamento
+
+    # 'area' y 'department' son lo mismo en la práctica: el formulario ya solo
+    # pide departamento y aquí se mantienen en sincronía, de paso para que
+    # sp_resumen_fp —que agrupa por request.area— no vea el campo vacío.
+    if req.department and req.area != req.department:
+        cambios['area'] = (req.area or '—', req.department)
+        req.area = req.department
 
     if not cambios:
         return jsonify({'success': True, 'message': 'Sin cambios que guardar'})
