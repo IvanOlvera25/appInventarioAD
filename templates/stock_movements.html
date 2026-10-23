@@ -721,13 +721,24 @@
                         </div>
                     </div>
 
+                    <!-- Área destino (opcional) -->
+                    <div class="mb-3" id="returnAreaBlock" style="display:none;">
+                        <label class="form-label fw-bold">Área que resguarda el material <small class="text-muted fw-normal">(opcional)</small></label>
+                        <select class="form-select" name="area" id="returnAreaSelect">
+                            <option value="">Sin área específica</option>
+                        </select>
+                        <small class="form-text text-muted">
+                            El retorno queda bajo esa área y el material puede volver a salir para este mismo proyecto.
+                        </small>
+                    </div>
+
                     <!-- Notas -->
                     <div class="mb-3" id="returnNotesBlock" style="display:none;">
                         <label class="form-label fw-bold">Notas del Retorno</label>
                         <textarea class="form-control" name="notes" rows="2" placeholder="Observaciones..."></textarea>
                     </div>
 
-                    <div class="alert alert-info small mb-0">
+                    <div class="alert alert-info small mb-0" id="returnConditionHelp">
                         <i class="fas fa-info-circle me-1"></i>
                         Al registrar el retorno, todos los items de este material en las requisiciones del proyecto
                         donde se especificó retorno se marcarán como <strong>"Retornado"</strong>.
@@ -1609,6 +1620,8 @@
         // ===================================================================
         const returnModal = document.getElementById('returnModal');
         if (returnModal) {
+            const returnAreaBlock  = document.getElementById('returnAreaBlock');
+            const returnAreaSelect = document.getElementById('returnAreaSelect');
             const returnFpInput       = document.getElementById('returnFpInput');
             const returnFpSearchBtn   = document.getElementById('returnFpSearchBtn');
             const returnFpFeedback    = document.getElementById('returnFpFeedback');
@@ -1684,11 +1697,23 @@
                         data.materials.forEach(mat => {
                             returnMaterialsMap[mat.id] = {
                                 pending_quantity: mat.pending_quantity,
-                                unit: mat.unit
+                                unit: mat.unit,
+                                has_movements: mat.has_movements,
+                                requested: mat.requested,
+                                can_reuse: mat.can_reuse,
+                                can_recycle: mat.can_recycle,
+                                recycled_options: mat.recycled_options || []
                             };
-                            const text = `${mat.code} - ${mat.name} (Pendiente: ${mat.pending_quantity} ${mat.unit})`;
+                            // Sin salidas registradas se puede regresar igual, pero se avisa.
+                            const detalle = mat.has_movements
+                                ? `Pendiente de regresar: ${mat.pending_quantity} ${mat.unit}`
+                                : `Requisitado: ${mat.requested} ${mat.unit} — sin salidas`;
+                            const text = `${mat.code} - ${mat.name} (${detalle})`;
                             const option = new Option(text, mat.id);
                             option.dataset.materialId = mat.id;
+                            // saveReturn vive fuera de este ámbito, así que el
+                            // pendiente viaja en el propio <option>.
+                            option.dataset.pending = mat.pending_quantity;
                             returnMaterialSelect.add(option);
 
                             if (returnMaterialSelect.tomselect) {
@@ -1700,9 +1725,11 @@
                             returnMaterialSelect.tomselect.refreshOptions(false);
                         }
                         returnMaterialBlock.style.display = 'block';
-                        returnFpFeedback.innerHTML = `<span class="text-success"><i class="fas fa-check-circle me-1"></i>FP encontrado — ${data.materials.length} material(es) con salidas</span>`;
+                        const conSalida = data.materials.filter(m => m.has_movements).length;
+                        returnFpFeedback.innerHTML = `<span class="text-success"><i class="fas fa-check-circle me-1"></i>` +
+                            `FP encontrado — ${data.materials.length} material(es) requisitado(s), ${conSalida} con salidas registradas</span>`;
                     } else {
-                        returnFpFeedback.innerHTML = `<span class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>No se encontraron materiales con salidas pendientes de retorno para este FP.</span>`;
+                        returnFpFeedback.innerHTML = `<span class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>Este FP no tiene materiales requisitados ni salidas registradas.</span>`;
                     }
                 } catch (err) {
                     returnFpFeedback.innerHTML = `<span class="text-danger"><i class="fas fa-times-circle me-1"></i>Error al buscar el proyecto. Verifica el código FP.</span>`;
@@ -1736,35 +1763,81 @@
                 const matInfo = returnMaterialsMap[this.value];
                 if (matInfo) {
                     returnQuantityUnit.textContent = matInfo.unit;
-                    returnQuantityInput.max = matInfo.pending_quantity;
-                    returnQuantityHelp.innerHTML = `<i class="fas fa-info-circle me-1"></i>Máximo disponible para retorno: <strong>${matInfo.pending_quantity} ${matInfo.unit}</strong>`;
+                    // En un retorno general el pendiente es una referencia, no un
+                    // tope: puede regresar material entregado fuera del sistema.
+                    returnQuantityInput.removeAttribute('max');
+                    returnQuantityHelp.innerHTML = matInfo.has_movements
+                        ? `<i class="fas fa-info-circle me-1"></i>Pendiente de regresar: <strong>${matInfo.pending_quantity} ${matInfo.unit}</strong> (requisitado: ${matInfo.requested})`
+                        : `<i class="fas fa-exclamation-triangle me-1 text-warning"></i>Este material no tiene salidas registradas para el FP. Requisitado: <strong>${matInfo.requested} ${matInfo.unit}</strong>`;
                 }
 
-                // Cargar medidas recicladas vinculadas a este material
-                try {
-                    const res = await fetch(`/api/materials/${this.value}/recycled-options`);
-                    const data = await res.json();
-                    returnRecycledOptions = data.materials || [];
-                    updateRecycleSelects();
-                } catch (err) {
-                    returnRecycledOptions = [];
+                // Medidas recicladas: ya vienen con el material; se consulta el
+                // endpoint solo como respaldo.
+                returnRecycledOptions = (matInfo && matInfo.recycled_options) || [];
+                if (!returnRecycledOptions.length) {
+                    try {
+                        const res = await fetch(`/api/materials/${this.value}/recycled-options`);
+                        const data = await res.json();
+                        returnRecycledOptions = data.materials || [];
+                    } catch (err) {
+                        returnRecycledOptions = [];
+                    }
                 }
+                updateRecycleSelects();
 
+                // Deshabilitar las condiciones que el material no admite
+                const condReu = document.getElementById('condReutilizable');
+                const condRec = document.getElementById('condReciclable');
+                condReu.disabled = matInfo ? !matInfo.can_reuse : false;
+                condRec.disabled = returnRecycledOptions.length === 0;
+                condReu.closest('.form-check').classList.toggle('opacity-50', condReu.disabled);
+                condRec.closest('.form-check').classList.toggle('opacity-50', condRec.disabled);
+                condRec.title = condRec.disabled
+                    ? 'Este material no tiene medidas recicladas registradas'
+                    : '';
+
+                await cargarAreasRetorno();
                 returnConditionBlock.style.display = 'block';
+                returnAreaBlock.style.display = 'block';
                 returnNotesBlock.style.display = 'block';
                 returnSubmitBtn.disabled = false;
             });
 
+            // Áreas del catálogo, para dejar el retorno bajo un área concreta
+            let areasRetornoCargadas = false;
+            async function cargarAreasRetorno() {
+                if (areasRetornoCargadas) return;
+                try {
+                    const res = await fetch('/api/warehouse-locations?type=area');
+                    const data = await res.json();
+                    (data.locations || []).forEach(l => {
+                        returnAreaSelect.add(new Option(l.name, l.name));
+                    });
+                    areasRetornoCargadas = true;
+                } catch (err) {
+                    console.warn('No se pudieron cargar las áreas para el retorno', err);
+                }
+            }
+
             // Toggle sección reciclado y cantidad al elegir la condición
             document.querySelectorAll('input[name="return_condition"]').forEach(radio => {
                 radio.addEventListener('change', function() {
+                    const ayuda = document.getElementById('returnConditionHelp');
                     if (this.value === 'reciclable') {
                         returnRecycleSection.style.display = 'block';
                         returnQuantityBlock.style.display = 'none';
+                        ayuda.innerHTML = '<i class="fas fa-sync me-1"></i>' +
+                            'Cada medida reciclada entra al inventario como <strong>entrada</strong> ' +
+                            'a su propio material, con el FP de este proyecto. El material original no recupera stock.';
                     } else {
                         // Reutilizable o Desecho: mostrar campo de cantidad
                         returnRecycleSection.style.display = 'none';
                         returnQuantityBlock.style.display = 'block';
+                        ayuda.innerHTML = this.value === 'reutilizable'
+                            ? '<i class="fas fa-star me-1"></i>El material <strong>regresa al stock</strong> ' +
+                              'y queda disponible para volver a salir, incluso para este mismo proyecto.'
+                            : '<i class="fas fa-trash me-1"></i>Queda constancia del retorno, pero el material ' +
+                              '<strong>no regresa al inventario</strong>.';
                     }
                 });
             });
@@ -2186,9 +2259,19 @@
                 showToast('Ingrese una cantidad válida para el retorno', true);
                 return;
             }
-            const maxQty = parseFloat(qtyInput.max);
-            if (maxQty && qty > maxQty + 0.001) {
-                showToast(`La cantidad no puede exceder ${maxQty}`, true);
+            // El pendiente es referencia: si se excede se confirma, no se bloquea.
+            const opcion = document.getElementById('returnMaterialSelect').selectedOptions[0];
+            const pendiente = parseFloat(opcion?.dataset.pending || 0);
+            if (pendiente > 0 && qty > pendiente + 0.001 &&
+                !confirm(`Vas a regresar ${qty} pero solo hay ${pendiente} pendientes de retorno para este FP. ¿Continuar?`)) {
+                return;
+            }
+        } else {
+            // Reciclable: debe haber al menos una medida con cantidad
+            const lineas = [...document.querySelectorAll('#recycleLinesContainer .recycle-line')]
+                .filter(l => l.querySelector('select')?.value && parseFloat(l.querySelector('input')?.value) > 0);
+            if (!lineas.length) {
+                showToast('Indique al menos una medida reciclada con su cantidad', true);
                 return;
             }
         }
