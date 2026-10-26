@@ -4390,6 +4390,18 @@ def cancel_requisition(req, user, motivo):
                notes=f'RQ{req.request_number}: {motivo}')
 
 
+def fp_exit_limit_enforced():
+    """¿Se aplica el tope de sp_resumen_fp a una salida contra requisición?
+
+    No se aplica si la validación de stock está apagada ("Stock: Libre", que
+    permite sacar aunque el stock quede negativo) ni si las salidas libres están
+    habilitadas: ambos toggles existen justamente para poder sacar material sin
+    las restricciones de la requisición. Antes el tope se aplicaba siempre y
+    dejaba el máximo en 0 para todo lo que el procedimiento no listara.
+    """
+    return get_stock_check_enabled() and not get_free_exit_enabled()
+
+
 def fp_exit_limit(fp_code, material):
     """Máximo que sp_resumen_fp autoriza sacar de un material para un FP.
 
@@ -6985,10 +6997,13 @@ def get_requisitioned_materials():
     # así almacén y el procedimiento no pueden discrepar. Si el procedimiento no
     # devuelve ese result set, se usa el cálculo local como respaldo.
     disponibilidad, filas_sp = {'by_id': {}, 'by_code': {}, 'by_name': {}}, []
-    try:
-        disponibilidad, filas_sp = read_fp_availability(db.engine, fp_code)
-    except Exception:
-        app.logger.exception('No se pudo leer la disponibilidad de %s con sp_resumen_fp', fp_code)
+    if fp_exit_limit_enforced():
+        # Con stock libre o salidas libres el tope del procedimiento no manda: si
+        # lo aplicara, los materiales sin saldo abastecido desaparecerían del listado.
+        try:
+            disponibilidad, filas_sp = read_fp_availability(db.engine, fp_code)
+        except Exception:
+            app.logger.exception('No se pudo leer la disponibilidad de %s con sp_resumen_fp', fp_code)
     usa_sp = bool(disponibilidad['by_id'] or disponibilidad['by_code'] or disponibilidad['by_name'])
 
     def max_desde_sp(mat_id, code, name):
@@ -7142,8 +7157,10 @@ def register_exit():
         if not material:
             return jsonify({'success': False, 'message': 'Material no encontrado.'})
 
-        # Tope autorizado por sp_resumen_fp para este FP y material.
-        tope = fp_exit_limit(fp_code, material)
+        # Tope autorizado por sp_resumen_fp para este FP y material. En modo
+        # Salida Libre no se aplica: ese toggle existe para poder sacar material
+        # sin las restricciones de la requisición.
+        tope = fp_exit_limit(fp_code, material) if fp_exit_limit_enforced() else None
         if tope is not None and quantity > tope + 0.001:
             return jsonify({
                 'success': False,
@@ -7435,15 +7452,20 @@ def register_exit_multiple():
         movements_created = []
         errors = []
 
-        # Tope autorizado por sp_resumen_fp. Se lee una vez para toda la salida y
-        # se va descontando conforme se reparten los materiales.
+        # Tope autorizado por sp_resumen_fp. Solo aplica a una salida contra
+        # requisición: los consumibles no pasan por una (van al FP administrativo
+        # '0', que el procedimiento no conoce), la salida libre existe justamente
+        # para saltarse ese límite, y el modo Salida Libre global lo desactiva
+        # para todas. Sin esta guarda el tope quedaba en 0 y bloqueaba la salida.
+        aplica_tope_fp = fp_exit_limit_enforced() and not (is_consumable_exit or is_free_exit)
         topes_fp = {}
-        try:
-            indices_fp, _ = read_fp_availability(db.engine, fp_code)
-            if indices_fp['by_id'] or indices_fp['by_code'] or indices_fp['by_name']:
-                topes_fp = indices_fp
-        except Exception:
-            app.logger.exception('No se pudo leer el tope de salida de %s con sp_resumen_fp', fp_code)
+        if aplica_tope_fp:
+            try:
+                indices_fp, _ = read_fp_availability(db.engine, fp_code)
+                if indices_fp['by_id'] or indices_fp['by_code'] or indices_fp['by_name']:
+                    topes_fp = indices_fp
+            except Exception:
+                app.logger.exception('No se pudo leer el tope de salida de %s con sp_resumen_fp', fp_code)
         restante_fp = {}
 
         def tope_autorizado(mat):
