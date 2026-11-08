@@ -115,11 +115,11 @@
                             <h6 class="mb-0"><i class="fas fa-cogs me-2"></i>Opciones Especiales</h6>
                         </div>
                         <div class="card-body">
-                            <!-- Opciones de Reciclaje (Mutuamente Exclusivas) -->
+                            <!-- Opciones de Reciclaje: reciclable y reutilizable pueden ir juntas; "Es Reciclado" va sola -->
                             <div class="row mb-3">
                                 <div class="col-12">
-                                    <label class="form-label text-muted small">Opciones de Reciclaje (seleccione solo
-                                        una):</label>
+                                    <label class="form-label text-muted small">Opciones de Reciclaje ("Se Puede Reciclar" y
+                                        "Se Puede Reutilizar" pueden marcarse juntas; "Es Reciclado" va sola):</label>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="form-check" data-bs-toggle="tooltip" data-bs-placement="top"
@@ -347,15 +347,19 @@
         }
     }
 
-    // Manejar opciones de reciclaje mutuamente exclusivas
+    // Reciclable y reutilizable pueden ir juntas; "Es Reciclado" excluye a las otras dos
     function handleRecycleOption(checkbox) {
         if (checkbox.checked) {
-            // Desmarcar las otras opciones
-            document.querySelectorAll('.recycle-option').forEach(cb => {
-                if (cb !== checkbox) {
-                    cb.checked = false;
-                }
-            });
+            const reciclado = document.getElementById('is_recycled');
+            if (checkbox === reciclado) {
+                document.querySelectorAll('.recycle-option').forEach(cb => {
+                    if (cb !== checkbox) {
+                        cb.checked = false;
+                    }
+                });
+            } else {
+                reciclado.checked = false;
+            }
         }
 
         // Mostrar/ocultar selector de material origen si es "Es Reciclado"

@@ -2657,7 +2657,7 @@ def add_material():
             # Opciones de tela (is_fabric_roll se determina por la categoría)
             is_fabric_roll=is_fabric,
             fabric_width=float(request.form.get('fabric_width', 0) or 0) if request.form.get('fabric_width') else None,
-            # Opciones de reciclaje (mutuamente exclusivas)
+            # Opciones de reciclaje: un material puede ser reciclable y reutilizable a la vez
             can_recycle=bool(request.form.get('can_recycle')),
             can_reuse=bool(request.form.get('can_reuse')),
             is_recycled=bool(request.form.get('is_recycled')),
@@ -6302,7 +6302,7 @@ def edit_material(material_id):
             if current_user.role == 'admin':
                 material.unit_cost = float(request.form.get('unit_cost') or 0)
 
-            # Actualizar opciones de reciclaje (mutuamente exclusivas)
+            # Actualizar opciones de reciclaje: puede ser reciclable y reutilizable a la vez
             material.can_recycle = bool(request.form.get('can_recycle'))
             material.can_reuse = bool(request.form.get('can_reuse'))
             material.is_recycled = bool(request.form.get('is_recycled'))

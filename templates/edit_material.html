@@ -193,9 +193,9 @@
                             <div class="col-md-6">
                                 <div class="card bg-light">
                                     <div class="card-body">
-                                        <!-- Opciones de Reciclaje (Mutuamente Exclusivas) -->
-                                        <label class="form-label text-muted small">Opciones de Reciclaje (seleccione
-                                            solo una):</label>
+                                        <!-- Opciones de Reciclaje: reciclable y reutilizable pueden ir juntas; "Es reciclado" va sola -->
+                                        <label class="form-label text-muted small">Opciones de Reciclaje ("Se puede reciclar" y
+                                            "Se puede reutilizar" pueden marcarse juntas; "Es reciclado" va sola):</label>
 
                                         <div class="form-check form-switch mb-3" data-bs-toggle="tooltip"
                                             data-bs-placement="right"
@@ -531,14 +531,19 @@
         }
     }
 
-    // ---- Opciones de reciclaje mutuamente exclusivas ----
+    // ---- Reciclable y reutilizable pueden ir juntas; "Es reciclado" excluye a las otras dos ----
     function handleRecycleOption(checkbox) {
         if (checkbox.checked) {
-            document.querySelectorAll('.recycle-option').forEach(cb => {
-                if (cb !== checkbox) {
-                    cb.checked = false;
-                }
-            });
+            const reciclado = document.getElementById('is_recycled');
+            if (checkbox === reciclado) {
+                document.querySelectorAll('.recycle-option').forEach(cb => {
+                    if (cb !== checkbox) {
+                        cb.checked = false;
+                    }
+                });
+            } else {
+                reciclado.checked = false;
+            }
         }
 
         // Mostrar/ocultar selector de material origen
