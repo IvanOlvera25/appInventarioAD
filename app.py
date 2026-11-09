@@ -512,6 +512,15 @@ with app.app_context():
     try:
         from sqlalchemy import text as _text4
         with db.engine.connect() as _conn4:
+            # -- user.area: el Jefe de Área solo ve lo de su área --
+            _has_area = _conn4.execute(_text4(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user' AND COLUMN_NAME = 'area'"
+            )).scalar()
+            if not _has_area:
+                _conn4.execute(_text4('ALTER TABLE `user` ADD COLUMN area VARCHAR(120) DEFAULT NULL'))
+                print("  ✅ Columna 'area' agregada a user")
+
             # -- stock_movement.requester: separar solicitante de usuario --
             _has_req = _conn4.execute(_text4(
                 "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
@@ -1941,6 +1950,12 @@ ROLE_PERMISSIONS = {
         'register_movements', 'view_material_usage_charts',
         'view_tools', 'reserve_tools', 'manage_tools'
     },
+    # Jefe de Área: solo consulta, acotada al área que tiene asignada. No
+    # registra movimientos ni requisiciones; sí aparta herramienta para su área.
+    'jefe_area': {
+        'view_project_deliveries', 'view_movements_readonly',
+        'view_tools', 'reserve_tools'
+    },
     'admin': {
         '*', 'view_inventory', 'create_requisition', 'list_requisitions',
         'view_project_deliveries', 'view_movements_readonly',
@@ -1955,6 +1970,53 @@ def has_perm(user, perm):
         return False
     perms = ROLE_PERMISSIONS.get(user.role, set())
     return '*' in perms or perm in perms
+
+def available_areas():
+    """Áreas a las que se puede ligar un Jefe de Área.
+
+    Son las mismas que usa el resto de la app: los departamentos del catálogo
+    (que es lo que se guarda en request.area y en el área del movimiento) más
+    las ubicaciones marcadas como área.
+    """
+    nombres, vistos = [], set()
+    def agregar(valor):
+        limpio = (valor or '').strip()
+        clave = limpio.casefold()
+        if limpio and clave not in vistos:
+            vistos.add(clave)
+            nombres.append(limpio)
+
+    try:
+        for d in Department.query.filter_by(is_active=True).order_by(Department.name).all():
+            agregar(d.name)
+    except Exception:
+        for d in DEPARTMENTS_STATIC:
+            agregar(d)
+    try:
+        for l in (WarehouseLocation.query
+                  .filter_by(location_type='area', is_active=True)
+                  .order_by(WarehouseLocation.name).all()):
+            agregar(l.name)
+    except Exception:
+        pass
+    return sorted(nombres, key=str.casefold)
+
+
+def area_scope():
+    """Área que acota lo que ve el usuario actual, o None si ve todo.
+
+    Solo el Jefe de Área queda acotado. Devuelve None para los demás roles para
+    que las consultas no cambien de comportamiento.
+    """
+    if not current_user.is_authenticated:
+        return None
+    return current_user.scoped_area
+
+
+def same_area(valor, area):
+    """Compara dos nombres de área sin distinguir mayúsculas ni espacios."""
+    return (valor or '').strip().casefold() == (area or '').strip().casefold()
+
 
 def role_required(*roles):
     def deco(f):
@@ -1987,7 +2049,8 @@ def seed_verification_codes_fixed():
     codes = [
         ("REQ-AB12CD", "requisitador"),
         ("ALM-34EF56", "almacenista"),
-        ("ADM-7890AA", "admin")
+        ("ADM-7890AA", "admin"),
+        ("JEF-5678BB", "jefe_area")
     ]
 
     for code, role in codes:
@@ -2930,6 +2993,14 @@ def project_report(project_id):
     project = Project.query.get_or_404(project_id)
     try:
         report = read_project_report(db.engine, project.fp_code)
+        # El Jefe de Área solo ve los materiales de su área.
+        area = area_scope()
+        if area:
+            report['materials'] = [m for m in report.get('materials', [])
+                                   if same_area(m.get('area'), area)]
+            report['requests'] = [r for r in report.get('requests', [])
+                                  if same_area(r.get('area') or r.get('department'), area)]
+            report['scoped_area'] = area
         report['materials'] = _enrich_report_materials(project, report.get('materials', []))
         report['project'] = {
             'id': project.id, 'fp_code': project.fp_code, 'name': project.name,
@@ -5167,6 +5238,14 @@ def stock_movements():
 
     query = StockMovement.query.join(Material)
 
+    # El Jefe de Área solo ve salidas y retornos de su área.
+    area_propia = area_scope()
+    if area_propia:
+        query = query.filter(
+            func.lower(func.trim(StockMovement.area)) == area_propia.strip().lower(),
+            StockMovement.movement_type.in_(('salida', 'retorno')),
+        )
+
     # Filtro por rollo de tela: por número de rollo (busca en los rollos vinculados)
     if roll_filter:
         matched_roll_ids = [
@@ -6898,6 +6977,14 @@ def export_movements():
     # Construir consulta
     query = StockMovement.query.join(Material)
 
+    # El Jefe de Área solo ve salidas y retornos de su área.
+    area_propia = area_scope()
+    if area_propia:
+        query = query.filter(
+            func.lower(func.trim(StockMovement.area)) == area_propia.strip().lower(),
+            StockMovement.movement_type.in_(('salida', 'retorno')),
+        )
+
     if start_date:
         query = query.filter(StockMovement.created_at >= datetime.strptime(start_date, '%Y-%m-%d'))
     if end_date:
@@ -8065,6 +8152,7 @@ def init_db():
                 ('REQ-AB12CD', 'requisitador'),
                 ('ALM-34EF56', 'almacenista'),
                 ('ADM-7890AA', 'admin'),
+                ('JEF-5678BB', 'jefe_area'),
             ]
             for code, role in seeds:
                 db.session.add(VerificationCode(code=code, role=role, expires_at=now_mx()+timedelta(days=90)))
@@ -9680,11 +9768,13 @@ def admin_users_and_codes():
         ("REQ-AB12CD", "requisitador"),
         ("ALM-34EF56", "almacenista"),
         ("ADM-7890AA", "admin"),
+        ("JEF-5678BB", "jefe_area"),
     ]
 
     return render_template('admin_users_codes.html',
                            users=users,
                            codes=codes,
+                           areas=available_areas(),
                            fixed_codes=fixed_codes)
 
 
@@ -9848,13 +9938,44 @@ def admin_codes_reseed():
 def admin_user_set_role(user_id):
     try:
         role = (request.form.get('role') or '').strip()
-        if role not in ('requisitador', 'almacenista', 'admin'):
+        if role not in ('requisitador', 'almacenista', 'admin', 'jefe_area'):
             return jsonify({'success': False, 'message': 'Rol inválido'}), 400
 
         u = User.query.get_or_404(user_id)
         u.role = role
+        # Un Jefe de Área sin área asignada no vería nada, así que se avisa.
+        aviso = ''
+        if role == 'jefe_area' and not (u.area or '').strip():
+            aviso = ' Falta asignarle su área para que pueda ver información.'
+        elif role != 'jefe_area':
+            u.area = None   # el área solo aplica a ese rol
         db.session.commit()
-        return jsonify({'success': True, 'message': f'Rol actualizado a {role}'})
+        return jsonify({'success': True, 'message': f'Rol actualizado a {u.role_label}.{aviso}',
+                        'needs_area': role == 'jefe_area' and not (u.area or '').strip()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+
+@app.route('/admin/users/<int:user_id>/set-area', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_user_set_area(user_id):
+    """Asigna el área de un Jefe de Área: define todo lo que puede ver."""
+    try:
+        u = User.query.get_or_404(user_id)
+        if u.role != 'jefe_area':
+            return jsonify({'success': False,
+                            'message': 'El área solo aplica a un Jefe de Área'}), 400
+
+        area = (request.form.get('area') or '').strip()
+        anterior = u.area or '—'
+        u.area = area or None
+        db.session.commit()
+        log_change('user', u.id, 'UPDATE', {'area': (anterior, u.area or '—')},
+                   notes=f'Área del Jefe de Área {u.username}')
+        return jsonify({'success': True, 'area': u.area or '',
+                        'message': f'Área asignada: {u.area or "sin asignar"}'})
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
@@ -10496,6 +10617,11 @@ def tool_reservations():
     f_to     = _parse_date(request.args.get('date_to'))
 
     query = ToolReservation.query.join(Tool)
+
+    # El Jefe de Área solo ve los apartados de su área.
+    area_propia = area_scope()
+    if area_propia:
+        query = query.filter(func.lower(func.trim(ToolReservation.area)) == area_propia.strip().lower())
 
     if f_status == 'vigentes':
         query = query.filter(ToolReservation.status.in_(['pendiente', 'en_uso']))
@@ -11232,6 +11358,14 @@ def create_tool_reservation(tool_id):
             return jsonify({'success': False, 'message': f'{tool.code} está dada de baja'}), 400
 
         area = (data.get('area') or '').strip()
+        # El Jefe de Área solo aparta para la suya: si manda otra, se corrige
+        # en lugar de rechazar, y si la omite se asume la propia.
+        area_propia = area_scope()
+        if area_propia:
+            if area and not same_area(area, area_propia):
+                return jsonify({'success': False,
+                                'message': f'Solo puedes apartar herramienta para tu área ({area_propia}).'}), 403
+            area = area_propia
         if not area:
             return jsonify({'success': False, 'message': 'Indica el área que aparta la herramienta'}), 400
 

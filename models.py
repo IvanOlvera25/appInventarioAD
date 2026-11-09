@@ -15,8 +15,11 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
+    # requisitador | almacenista | admin | jefe_area
     role = db.Column(db.String(50), nullable=False, default='requisitador')
     department = db.Column(db.String(100), nullable=True)
+    # Área a la que está ligado un Jefe de Área: solo ve lo de esa área.
+    area = db.Column(db.String(120), nullable=True)
     is_leader = db.Column(db.Boolean, default=False)
     is_verified = db.Column(db.Boolean, default=False)
     verified_at = db.Column(db.DateTime)
@@ -29,6 +32,25 @@ class User(UserMixin, db.Model):
     def full_name(self):
         """Returns the employee name if linked, otherwise the username"""
         return self.employee_name or self.username
+
+    @property
+    def is_area_chief(self):
+        """Jefe de Área: su vista se limita al área que tiene asignada."""
+        return self.role == 'jefe_area'
+
+    @property
+    def scoped_area(self):
+        """Área que acota lo que este usuario puede ver, o None si ve todo."""
+        return (self.area or '').strip() or None if self.is_area_chief else None
+
+    @property
+    def role_label(self):
+        return {
+            'requisitador': 'Requisitador',
+            'almacenista':  'Almacenista',
+            'admin':        'Administrador',
+            'jefe_area':    'Jefe de Área',
+        }.get(self.role, (self.role or '').replace('_', ' ').title())
 
 class Department(db.Model):
     id = db.Column(db.Integer, primary_key=True)

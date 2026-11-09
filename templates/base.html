@@ -319,6 +319,13 @@
 
 <body>
     {% if current_user.is_authenticated %}
+    {% if current_user.is_area_chief and not current_user.area %}
+    <div class="alert alert-warning text-center mb-0 rounded-0 small">
+        <i class="fas fa-triangle-exclamation me-1"></i>
+        Tu usuario es <strong>Jefe de Área</strong> pero no tiene un área asignada,
+        así que no verás información. Pídele a un administrador que te la asigne.
+    </div>
+    {% endif %}
     <!-- Sidebar -->
     <div class="sidebar" id="sidebar">
         <!-- Logo -->
@@ -334,14 +341,18 @@
             <a class="nav-link" href="{{ url_for('dashboard') }}" title="Dashboard">
                 <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
             </a>
+            {# El Jefe de Área solo consulta lo de su área: no se le ofrece el
+               inventario completo, las requisiciones ni los rollos de tela. #}
+            {% if not current_user.is_area_chief %}
             <a class="nav-link" href="{{ url_for('materials') }}" title="Materiales">
                 <i class="fas fa-boxes"></i><span>Materiales</span>
             </a>
-            <a class="nav-link" href="{{ url_for('requests') }}" title="Requisiciones">
-                <i class="fas fa-file-invoice"></i><span>Requisiciones</span>
-            </a>
             <a class="nav-link" href="{{ url_for('fabric_rolls') }}" title="Rollos de Tela">
                 <i class="fas fa-scroll"></i><span>Rollos de Tela</span>
+            </a>
+            {% endif %}
+            <a class="nav-link" href="{{ url_for('requests') }}" title="{{ 'Resumen de proyecto' if current_user.is_area_chief else 'Requisiciones' }}">
+                <i class="fas fa-file-invoice"></i><span>{{ 'Resumen de proyecto' if current_user.is_area_chief else 'Requisiciones' }}</span>
             </a>
             <a class="nav-link" href="{{ url_for('stock_movements') }}" title="Movimientos">
                 <i class="fas fa-exchange-alt"></i><span>Movimientos</span>

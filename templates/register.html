@@ -27,9 +27,11 @@
   .req { --c1: #00BFA6; --c1a: rgba(0,191,166,.15); }
   .alm { --c1: #4e8cff; --c1a: rgba(78,140,255,.15); }
   .adm { --c1: #ff6b6b; --c1a: rgba(255,107,107,.15); }
+  .jef { --c1: #f0a500; --c1a: rgba(240,165,0,.15); }
   .role-icon.req { background: var(--c1a); color: var(--c1); }
   .role-icon.alm { background: var(--c1a); color: var(--c1); }
   .role-icon.adm { background: var(--c1a); color: var(--c1); }
+  .role-icon.jef { background: var(--c1a); color: var(--c1); }
   .small-muted { color: #94a3b8; }
   .modal-content { border-radius: 18px; border: 1px solid rgba(0,0,0,.06); box-shadow: 0 30px 80px rgba(0,0,0,.25); }
   .form-control { border-radius: 12px !important; }
@@ -64,6 +66,15 @@
           <div class="role-icon alm shadow-sm"><i class="fas fa-boxes-stacked fa-2x"></i></div>
           <h4 class="text-white mb-1">Almacenista</h4>
           <p class="small-muted mb-0">Código esperado: <strong class="text-uppercase">ALM-XXXXXX</strong></p>
+        </div>
+      </div>
+      <!-- Jefe de Área -->
+      <div class="col-12 col-md-6 col-lg-4">
+        <div class="role-card p-4 h-100" data-role="jefe_area" data-prefix="JEF"
+             data-color="#f0a500" data-title="Jefe de Área" onclick="openRegisterModal(this)">
+          <div class="role-icon jef shadow-sm"><i class="fas fa-user-tie fa-2x"></i></div>
+          <h4 class="text-white mb-1">Jefe de Área</h4>
+          <p class="small-muted mb-0">Código esperado: <strong class="text-uppercase">JEF-XXXXXX</strong></p>
         </div>
       </div>
       <!-- Administrador -->

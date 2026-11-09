@@ -10,6 +10,7 @@
   .badge-role.req { background: rgba(0,191,166,.12); color:#00BFA6; }
   .badge-role.alm { background: rgba(78,140,255,.12); color:#4e8cff; }
   .badge-role.adm { background: rgba(255,107,107,.12); color:#ff6b6b; }
+  .badge-role.jef { background: rgba(240,165,0,.14); color:#f0a500; }
   .small-muted { color:#64748b; }
   .sticky-actions { position: sticky; right: 0; background: #fff; }
 </style>
@@ -54,9 +55,27 @@
                   <td>{{ u.username }}</td>
                   <td>{{ u.email }}</td>
                   <td>
-                    <span class="badge badge-role {{ 'adm' if u.role=='admin' else ('alm' if u.role=='almacenista' else 'req') }}">
-                      {{ u.role or '—' }}
+                    <span class="badge badge-role {{ 'adm' if u.role=='admin' else ('alm' if u.role=='almacenista' else ('jef' if u.role=='jefe_area' else 'req')) }}">
+                      {{ u.role_label }}
                     </span>
+                    {% if u.role == 'jefe_area' %}
+                      {# El área define todo lo que este usuario puede ver #}
+                      <select class="form-select form-select-sm mt-1"
+                              style="max-width: 13rem;"
+                              onchange="setArea({{ u.id }}, this.value)"
+                              aria-label="Área del jefe">
+                        <option value="" {% if not u.area %}selected{% endif %}>Sin asignar…</option>
+                        {% for a in areas %}
+                        <option value="{{ a }}" {% if u.area == a %}selected{% endif %}>{{ a }}</option>
+                        {% endfor %}
+                        {% if u.area and u.area not in areas %}
+                        <option value="{{ u.area }}" selected>{{ u.area }} (fuera del catálogo)</option>
+                        {% endif %}
+                      </select>
+                      {% if not u.area %}
+                      <small class="text-danger d-block">Sin área no ve información.</small>
+                      {% endif %}
+                    {% endif %}
                   </td>
                   <td>
                     {% if u.is_leader %}
@@ -73,6 +92,7 @@
                       <ul class="dropdown-menu dropdown-menu-end">
                         <li><a class="dropdown-item" href="#" onclick="setRole({{u.id}}, 'requisitador')">Requisitador</a></li>
                         <li><a class="dropdown-item" href="#" onclick="setRole({{u.id}}, 'almacenista')">Almacenista</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="setRole({{u.id}}, 'jefe_area')">Jefe de Área</a></li>
                         <li><a class="dropdown-item" href="#" onclick="setRole({{u.id}}, 'admin')">Admin</a></li>
                       </ul>
                       <button class="btn btn-sm btn-outline-info" title="Líder" onclick="toggleLeader({{u.id}})">
@@ -108,7 +128,7 @@
               <div class="p-3 border rounded-3 h-100">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                   <strong>{{ code }}</strong>
-                  <span class="badge badge-role {{ 'adm' if role=='admin' else ('alm' if role=='almacenista' else 'req') }}">{{ role }}</span>
+                  <span class="badge badge-role {{ 'adm' if role=='admin' else ('alm' if role=='almacenista' else ('jef' if role=='jefe_area' else 'req')) }}">{{ role }}</span>
                 </div>
                 <div class="small-muted">Código fijo (permanente)</div>
               </div>
@@ -181,6 +201,19 @@ document.getElementById('btnReseed').addEventListener('click', async () => {
   showToast(data.message || (data.success ? 'Ok' : 'Error'));
   if (data.success) setTimeout(() => location.reload(), 600);
 });
+
+async function setArea(userId, area){
+  const fd = new FormData();
+  fd.append('area', area);
+  try {
+    const res = await fetch(`/admin/users/${userId}/set-area`, { method: 'POST', body: fd });
+    const data = await res.json();
+    showToast(data.message || (data.success ? 'Área actualizada' : 'No se pudo actualizar'));
+    if (data.success) setTimeout(() => location.reload(), 900);
+  } catch (e) {
+    showToast('Error de red al asignar el área');
+  }
+}
 
 async function setRole(userId, role){
   const fd = new FormData();

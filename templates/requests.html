@@ -60,25 +60,35 @@
 <div class="row">
     <div class="col-12">
         <!-- Pestañas de navegación -->
+        {% set solo_resumen = current_user.is_area_chief %}
         <ul class="nav nav-tabs mb-4" id="requestsTabs" role="tablist">
+            {% if not solo_resumen %}
             <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="list-tab" data-bs-toggle="tab" data-bs-target="#list-pane"
                     type="button" role="tab">
                     <i class="fas fa-list me-1"></i>Lista de Requisiciones
                 </button>
             </li>
+            {% endif %}
             <li class="nav-item" role="presentation">
-                <button class="nav-link" id="projects-tab" data-bs-toggle="tab" data-bs-target="#projects-pane"
-                    type="button" role="tab">
+                <button class="nav-link {{ 'active' if solo_resumen }}" id="projects-tab" data-bs-toggle="tab"
+                    data-bs-target="#projects-pane" type="button" role="tab">
                     <i class="fas fa-folder-open me-1"></i>Resumen del proyecto
                 </button>
             </li>
         </ul>
+        {% if solo_resumen and current_user.area %}
+        <div class="alert alert-info py-2 small">
+            <i class="fas fa-filter me-1"></i>
+            Estás viendo únicamente los materiales del área <strong>{{ current_user.area }}</strong>.
+        </div>
+        {% endif %}
 
         <!-- Contenido de las pestañas -->
         <div class="tab-content" id="requestsTabContent">
             <!-- Tab 1: Lista de Requisiciones -->
-            <div class="tab-pane fade show active" id="list-pane" role="tabpanel">
+            <div class="tab-pane fade {{ '' if solo_resumen else 'show active' }}" id="list-pane" role="tabpanel"
+                 {% if solo_resumen %}hidden{% endif %}>
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0"><i class="fas fa-file-alt me-2"></i>Requisiciones de Materiales</h5>
@@ -448,7 +458,8 @@
                 </div>
             </div>
 
-            <div class="tab-pane fade" id="projects-pane" role="tabpanel" aria-labelledby="projects-tab">
+            <div class="tab-pane fade {{ 'show active' if solo_resumen }}" id="projects-pane" role="tabpanel"
+                 aria-labelledby="projects-tab">
                 <div class="card">
                     <div class="card-header"><h5 class="mb-0">Resumen del proyecto</h5></div>
                     <div class="card-body">
