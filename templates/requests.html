@@ -5,13 +5,39 @@
 
 {% block content %}
 <style>
-    /* Resumen de proyecto: las cantidades se leen en columna, así que van con
-       cifras de ancho fijo y alineadas a la derecha. */
+    /* Resumen de proyecto: las columnas numéricas se comparan en vertical, así
+       que llevan ancho fijo, cifras de ancho uniforme y alineación a la derecha.
+       Con `table-layout: fixed` las columnas no se mueven entre áreas, que era
+       lo que hacía ver la tabla desalineada al bajar por el reporte. */
+    .project-materials { table-layout: fixed; width: 100%; }
     .project-materials th,
-    .project-materials td { vertical-align: middle; white-space: nowrap; }
-    .project-materials td.text-end,
-    .project-materials th.text-end { font-variant-numeric: tabular-nums; }
-    .project-materials th { font-size: .78rem; text-transform: uppercase; letter-spacing: .02em; }
+    .project-materials td { vertical-align: middle; }
+
+    /* Identificación: lo que puede ser largo se acomoda, no empuja la tabla. */
+    .project-materials th.col-id,   .project-materials td.col-id   { width: 5rem; }
+    .project-materials th.col-name, .project-materials td.col-name { width: auto; }
+    .project-materials th.col-unit, .project-materials td.col-unit { width: 5.5rem; }
+    .project-materials th.col-cat,  .project-materials td.col-cat  { width: 9rem; }
+    .project-materials th.col-num,  .project-materials td.col-num  { width: 7rem; }
+    .project-materials th.col-state,.project-materials td.col-state{ width: 8.5rem; }
+
+    .project-materials td.col-name,
+    .project-materials td.col-cat { overflow-wrap: anywhere; }
+
+    /* Cifras: mismo ancho por dígito para que las columnas cuadren visualmente */
+    .project-materials .col-num,
+    .project-materials .col-id { font-variant-numeric: tabular-nums; text-align: right; }
+
+    .project-materials thead th {
+        font-size: .72rem; text-transform: uppercase; letter-spacing: .03em;
+        white-space: normal; line-height: 1.15; vertical-align: bottom;
+    }
+    .project-materials td.col-state { text-align: center; }
+
+    /* En pantallas chicas la tabla se desplaza en lugar de comprimirse */
+    @media (max-width: 992px) {
+        .project-materials { table-layout: auto; min-width: 54rem; }
+    }
 </style>
 <!-- Definir variables globales para usar en todo el template -->
 {% set status_colors = {

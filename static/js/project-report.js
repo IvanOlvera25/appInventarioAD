@@ -69,16 +69,16 @@
                 materials += `<section class="mb-4"><h6 class="bg-light border rounded p-2">${esc(area)}</h6>
                     <div class="table-responsive"><table class="table table-sm table-striped align-middle project-materials">
                     <thead><tr>
-                        <th class="text-end">ID</th>
-                        <th>Nombre</th>
-                        <th>Unidad</th>
-                        <th>Categoría</th>
-                        <th class="text-end">Requisitado</th>
-                        <th class="text-end">Abastecido</th>
-                        <th class="text-end">Pend. compra</th>
-                        <th class="text-end">Entregado</th>
-                        <th class="text-end">Pend. entrega</th>
-                        <th>Estado</th>
+                        <th class="col-id">ID</th>
+                        <th class="col-name">Nombre</th>
+                        <th class="col-unit">Unidad</th>
+                        <th class="col-cat">Categoría</th>
+                        <th class="col-num">Requisitado</th>
+                        <th class="col-num">Abastecido</th>
+                        <th class="col-num">Pend. compra</th>
+                        <th class="col-num">Entregado</th>
+                        <th class="col-num">Pend. entrega</th>
+                        <th class="col-state">Estado</th>
                     </tr></thead><tbody>`;
                 rows.forEach(m => {
                     const pending = m.quantity_pending;
@@ -87,16 +87,16 @@
                         : ['success', 'Completo'];
                     const purchase = m.quantity_pending_purchase || 0;
                     materials += `<tr>
-                        <td class="text-end text-muted">${m.material_id ? esc(m.material_id) : '—'}</td>
-                        <td>${esc(m.name)}</td>
-                        <td>${esc(m.unit)}</td>
-                        <td>${esc(m.category)}</td>
-                        <td class="text-end">${number(m.quantity_requested)}</td>
-                        <td class="text-end">${number(m.quantity_supplied || 0)}</td>
-                        <td class="text-end${purchase > 0.001 ? ' text-warning fw-semibold' : ''}">${number(purchase)}</td>
-                        <td class="text-end">${number(m.quantity_delivered)}</td>
-                        <td class="text-end">${number(pending)}</td>
-                        <td><span class="badge bg-${status[0]}">${status[1]}</span></td></tr>`;
+                        <td class="col-id text-muted">${m.material_id ? esc(m.material_id) : '—'}</td>
+                        <td class="col-name">${esc(m.name)}</td>
+                        <td class="col-unit">${esc(m.unit)}</td>
+                        <td class="col-cat">${esc(m.category)}</td>
+                        <td class="col-num">${number(m.quantity_requested)}</td>
+                        <td class="col-num">${number(m.quantity_supplied || 0)}</td>
+                        <td class="col-num${purchase > 0.001 ? ' text-warning fw-semibold' : ''}">${number(purchase)}</td>
+                        <td class="col-num">${number(m.quantity_delivered)}</td>
+                        <td class="col-num">${number(pending)}</td>
+                        <td class="col-state"><span class="badge bg-${status[0]}">${status[1]}</span></td></tr>`;
                 });
                 materials += '</tbody></table></div></section>';
             }

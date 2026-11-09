@@ -512,6 +512,29 @@ with app.app_context():
     try:
         from sqlalchemy import text as _text4
         with db.engine.connect() as _conn4:
+            # -- stock_movement.requester: separar solicitante de usuario --
+            _has_req = _conn4.execute(_text4(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stock_movement' "
+                "AND COLUMN_NAME = 'requester'"
+            )).scalar()
+            if not _has_req:
+                _conn4.execute(_text4(
+                    'ALTER TABLE `stock_movement` ADD COLUMN requester VARCHAR(150) DEFAULT NULL'))
+                print("  ✅ Columna 'requester' agregada a stock_movement")
+
+            # Rescatar el solicitante que quedó dentro de las notas. Idempotente:
+            # solo toca filas con requester vacío.
+            _bf_req = _conn4.execute(_text4(
+                "UPDATE `stock_movement` "
+                "SET requester = NULLIF(TRIM(SUBSTRING_INDEX("
+                "        SUBSTRING_INDEX(notes, 'Solicitante:', -1), '.', 1)), '') "
+                "WHERE (requester IS NULL OR requester = '') "
+                "  AND notes LIKE '%Solicitante:%'"
+            ))
+            if getattr(_bf_req, 'rowcount', 0):
+                print(f"  ✅ Solicitante rescatado de las notas en {_bf_req.rowcount} movimiento(s)")
+
             # -- Catálogo de departamentos --
             # Alta y edición de requisiciones ofrecían listas distintas: una fija
             # en el HTML y otra estática en el código. Ahora ambas leen la tabla
@@ -2820,53 +2843,84 @@ def search_report_projects():
 
 
 def _enrich_report_materials(project, materials):
-    """Agrega al resumen del FP lo que el procedimiento no conoce: el id del
-    material, lo abastecido y lo pendiente de compra, que viven en la app.
+    """Completa el resumen del FP sin pisar lo que ya dice el procedimiento.
 
-    El procedimiento identifica cada material por los campos que devuelve, así
-    que el cruce se intenta por id, luego por código y al final por nombre.
+    sp_resumen_fp devuelve una fila por (área, material) y trae material_id,
+    quantity_supplied y quantity_to_purchase ya calculados para esa área. Esos
+    valores mandan: antes se sobrescribían con un cálculo local agregado de todo
+    el proyecto, así que un material presente en dos áreas mostraba el mismo
+    número en ambas en lugar del suyo.
+
+    Lo local solo se usa como respaldo, para una revisión del procedimiento que
+    no devolviera esas columnas.
     """
-    filas = (db.session.query(RequestItem, Material)
-             .join(Request, RequestItem.request_id == Request.id)
-             .outerjoin(Material, RequestItem.material_id == Material.id)
-             .filter(Request.project_id == project.id,
-                     RequestItem.item_status != 'cancelado')
-             .all())
+    def numero(valor):
+        try:
+            return round(float(valor or 0), 4)
+        except (TypeError, ValueError):
+            return 0.0
+
+    faltan_datos = [f for f in materials
+                    if f.get('quantity_supplied') is None or f.get('quantity_to_purchase') is None]
 
     por_id, por_codigo, por_nombre = {}, {}, {}
+    if faltan_datos:
+        filas = (db.session.query(RequestItem, Material)
+                 .join(Request, RequestItem.request_id == Request.id)
+                 .outerjoin(Material, RequestItem.material_id == Material.id)
+                 .filter(Request.project_id == project.id,
+                         RequestItem.item_status != 'cancelado')
+                 .all())
 
-    def acumular(destino, clave, item, material):
-        if not clave:
-            return
-        datos = destino.setdefault(clave, {
-            'material_id': material.id if material else None,
-            'code': material.code if material else (item.new_material_code or ''),
-            'supplied': 0.0, 'pending_purchase': 0.0,
-        })
-        datos['supplied'] += float(item.quantity_supplied or 0)
-        datos['pending_purchase'] += item_pending_purchase(item)
+        def acumular(destino, clave, item, material):
+            if not clave:
+                return
+            datos = destino.setdefault(clave, {
+                'material_id': material.id if material else None,
+                'code': material.code if material else (item.new_material_code or ''),
+                'supplied': 0.0, 'pending_purchase': 0.0,
+            })
+            datos['supplied'] += float(item.quantity_supplied or 0)
+            datos['pending_purchase'] += item_pending_purchase(item)
 
-    for item, material in filas:
-        nombre = (material.name if material else item.new_material_name) or ''
-        codigo = (material.code if material else item.new_material_code) or ''
-        if material:
-            acumular(por_id, material.id, item, material)
-        acumular(por_codigo, codigo.strip().casefold(), item, material)
-        acumular(por_nombre, nombre.strip().casefold(), item, material)
+        for item, material in filas:
+            nombre = (material.name if material else item.new_material_name) or ''
+            codigo = (material.code if material else item.new_material_code) or ''
+            if material:
+                acumular(por_id, material.id, item, material)
+            acumular(por_codigo, codigo.strip().casefold(), item, material)
+            acumular(por_nombre, nombre.strip().casefold(), item, material)
+
+    # Código del material: el procedimiento no lo devuelve, así que se resuelve
+    # del catálogo local por id, en una sola consulta.
+    ids = {f.get('material_id') for f in materials if f.get('material_id')}
+    codigos = {}
+    if ids:
+        codigos = {m.id: m.code for m in Material.query.filter(Material.id.in_(ids)).all()}
 
     for fila in materials:
-        datos = None
-        for clave, mapa in ((fila.get('material_id') or fila.get('id'), por_id),
-                            (str(fila.get('code') or '').strip().casefold(), por_codigo),
-                            (str(fila.get('name') or '').strip().casefold(), por_nombre)):
-            if clave and clave in mapa:
-                datos = mapa[clave]
-                break
-        fila['material_id'] = (fila.get('material_id') or fila.get('id')
-                               or (datos or {}).get('material_id'))
-        fila['code'] = fila.get('code') or (datos or {}).get('code') or ''
-        fila['quantity_supplied'] = round((datos or {}).get('supplied', 0.0), 4)
-        fila['quantity_pending_purchase'] = round((datos or {}).get('pending_purchase', 0.0), 4)
+        mat_id = fila.get('material_id') or fila.get('id')
+
+        respaldo = None
+        if fila.get('quantity_supplied') is None or fila.get('quantity_to_purchase') is None:
+            for clave, mapa in ((mat_id, por_id),
+                                (str(fila.get('code') or '').strip().casefold(), por_codigo),
+                                (str(fila.get('name') or '').strip().casefold(), por_nombre)):
+                if clave and clave in mapa:
+                    respaldo = mapa[clave]
+                    break
+
+        fila['material_id'] = mat_id or (respaldo or {}).get('material_id')
+        fila['code'] = (fila.get('code') or codigos.get(fila['material_id'])
+                        or (respaldo or {}).get('code') or '')
+
+        # Lo abastecido y lo pendiente de compra los da el procedimiento por área.
+        fila['quantity_supplied'] = (numero(fila['quantity_supplied'])
+                                     if fila.get('quantity_supplied') is not None
+                                     else round((respaldo or {}).get('supplied', 0.0), 4))
+        fila['quantity_pending_purchase'] = (numero(fila['quantity_to_purchase'])
+                                             if fila.get('quantity_to_purchase') is not None
+                                             else round((respaldo or {}).get('pending_purchase', 0.0), 4))
     return materials
 
 
@@ -5682,6 +5736,13 @@ def api_set_purchase_status(purchase_id):
         except ValueError:
             return jsonify({'success': False, 'message': 'Fecha límite inválida'}), 400
 
+    # Al cerrar la compra, el espejo request_item.quantity_to_purchase deja de
+    # reflejar lo pendiente. Se recalcula para que sp_resumen_fp —que lee esa
+    # columna— no siga reportando una compra que ya se cerró.
+    if estado.is_final and compra.item:
+        db.session.flush()
+        compra.item.quantity_to_purchase = item_pending_purchase(compra.item)
+
     # Si compras cierra la compra, el renglón deja de estar pendiente de compra.
     if estado.is_final and compra.item and compra.item.item_status == 'pendiente_compra':
         item = compra.item
@@ -6041,6 +6102,8 @@ def import_movements():
                     fecha=fecha,
                     hora=hora,
                     personal=str(row['Personal']).strip() if not pd.isna(row['Personal']) else None,
+                    requester=(str(row['Solicitante']).strip()
+                               if 'Solicitante' in row.index and not pd.isna(row['Solicitante']) else None),
                     area=str(row['Area']).strip() if not pd.isna(row['Area']) else None,
                     user_id=current_user.id,
                     notes=f"Importado desde Excel: {filename}"
@@ -6095,6 +6158,7 @@ def download_movements_template():
         'Fecha': ['2025-06-12', '2025-06-12'],
         'Hora': ['10:30', '14:15'],
         'Personal': ['Juan Pérez', 'María García'],
+        'Solicitante': ['Luis Hernández', ''],
         'Area': ['Producción', 'Almacén']
     }
 
@@ -6877,7 +6941,9 @@ def export_movements():
             'Cliente': cliente,
             'Fecha': movement.fecha.strftime('%Y-%m-%d') if movement.fecha else movement.created_at.strftime('%Y-%m-%d'),
             'Hora': movement.hora.strftime('%H:%M') if movement.hora else movement.created_at.strftime('%H:%M'),
-            'Entregado a': movement.personal or movement.user.username,
+            'Solicita/Regresa': movement.requester or '',
+            'Usuario': (movement.user.full_name or movement.user.username) if movement.user else '',
+            'Atendio': movement.personal or '',
             'Area': movement.area or '',
             'Fecha Creacion': movement.created_at.strftime('%Y-%m-%d %H:%M:%S'),
             'Fecha Modificacion': movement.updated_at.strftime('%Y-%m-%d %H:%M:%S') if movement.updated_at else ''
@@ -7189,6 +7255,7 @@ def register_exit():
             fecha=now_mx().date(),
             hora=now_mx().time(),
             personal=current_user.username,
+            requester=(data.get('requester') or '').strip() or None,
             user_id=current_user.id,
             notes=f"Solicitante: {data.get('requester', 'N/A')}. {data.get('notes', '')}",
             reference_type='requisicion'
@@ -7585,6 +7652,7 @@ def register_exit_multiple():
                     fecha=now_mx().date(),
                     hora=now_mx().time(),
                     personal=deliverer_name,
+                    requester=(requester_name or '').strip() or None,
                     user_id=current_user.id,
                     notes=f"{notes_prefix}{notes}",
                     reference_type=ref_type
@@ -7722,6 +7790,8 @@ def register_return():
         condition   = (request.form.get('condition_on_return') or '').strip()
         area        = (request.form.get('area') or '').strip()
         notes       = (request.form.get('notes') or '').strip()
+        # Quién entrega el material de vuelta: la contraparte del movimiento.
+        returned_by = (request.form.get('returned_by') or '').strip()
 
         if not fp_code or not material_id:
             return jsonify({'success': False, 'message': 'Proyecto y material son obligatorios'})
@@ -7774,6 +7844,8 @@ def register_return():
         idm = f"RET-{ahora.strftime('%y%m%d')}-{consecutivo + 1:04d}"
 
         detalle = f"Condición: {condition}."
+        if returned_by:
+            detalle += f" Devuelve: {returned_by}."
         if area:
             detalle += f" Área: {area}."
         if notes:
@@ -7788,6 +7860,7 @@ def register_return():
             fecha=ahora.date(),
             hora=ahora.time(),
             personal=current_user.username,
+            requester=returned_by or None,
             # El área deja el retorno disponible bajo esa área para volver a salir.
             area=area or '',
             unit_cost=material.unit_cost,
@@ -7821,6 +7894,7 @@ def register_return():
                     area=area or '',
                     unit_cost=reciclado.unit_cost,
                     reference_type='reciclaje',
+                    requester=returned_by or None,
                     user_id=current_user.id,
                     notes=(f'Reciclaje de {material.code} — {material.name} '
                            f'(retorno de {fp_code}). {notes}').strip()

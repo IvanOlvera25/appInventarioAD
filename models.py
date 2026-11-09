@@ -214,7 +214,12 @@ class StockMovement(db.Model):
     fp_code = db.Column(db.String(100))  # Código de proyecto
     fecha = db.Column(db.Date)  # Fecha específica
     hora = db.Column(db.Time)  # Hora específica
-    personal = db.Column(db.String(100))  # Personal
+    # Quién del almacén atendió el movimiento (entregó o recibió el material).
+    personal = db.Column(db.String(100))
+    # Contraparte: quien solicita la salida o quien regresa el material. Antes
+    # iba incrustada en notes como "Solicitante: X." y se extraía partiendo el
+    # texto, así que no se podía filtrar ni reportar por ella.
+    requester = db.Column(db.String(150))
     area = db.Column(db.String(100))  # Área
     unit_cost = db.Column(db.Float)
     reference_id = db.Column(db.Integer)  # ID de la requisición o compra

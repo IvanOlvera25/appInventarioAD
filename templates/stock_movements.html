@@ -118,7 +118,8 @@
                                 <th>FP</th>
                                 <th>Cliente</th>
                                 <th>Fecha/Hora</th>
-                                <th>Entregado a</th>
+                                <th>Solicita / Regresa</th>
+                                <th>Usuario</th>
                                 <th>Área</th>
                                 <th>Estado</th>
                                 <th>Acciones</th>
@@ -203,11 +204,22 @@
                                     <small class="text-muted">{{ movement.hora.strftime('%H:%M') if movement.hora else
                                         '--:--' }}</small>
                                 </td>
+                                {# Contraparte: quien pide la salida o regresa el material.
+                                   Antes se extraía partiendo el texto de las notas. #}
                                 <td>
-                                    {% if movement.movement_type == 'salida' and movement.notes and 'Solicitante:' in movement.notes %}
-                                        {{ movement.notes.split('Solicitante:')[1].split('.')[0] | trim }}
+                                    {% if movement.requester %}
+                                    {{ movement.requester }}
                                     {% else %}
-                                        {{ movement.personal or movement.user.username }}
+                                    <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                {# Usuario del sistema que registró el movimiento, y debajo
+                                   quién del almacén lo atendió si es alguien distinto. #}
+                                <td>
+                                    {{ movement.user.full_name or movement.user.username if movement.user else '—' }}
+                                    {% if movement.personal and movement.user
+                                          and movement.personal not in (movement.user.username, movement.user.full_name) %}
+                                    <br><small class="text-muted">Atendió: {{ movement.personal }}</small>
                                     {% endif %}
                                 </td>
                                 <td>
@@ -719,6 +731,16 @@
                             <i class="fas fa-info-circle me-1"></i>
                             Seleccione las medidas recicladas vinculadas al material original
                         </div>
+                    </div>
+
+                    <!-- Quién devuelve el material -->
+                    <div class="mb-3" id="returnByBlock" style="display:none;">
+                        <label class="form-label fw-bold">Quién entrega el material</label>
+                        <input type="text" class="form-control" name="returned_by" id="returnedByInput"
+                               placeholder="Nombre de quien regresa el material" autocomplete="off">
+                        <small class="form-text text-muted">
+                            Queda registrado aparte del usuario que captura el movimiento.
+                        </small>
                     </div>
 
                     <!-- Área destino (opcional) -->
@@ -1798,6 +1820,7 @@
 
                 await cargarAreasRetorno();
                 returnConditionBlock.style.display = 'block';
+                document.getElementById('returnByBlock').style.display = 'block';
                 returnAreaBlock.style.display = 'block';
                 returnNotesBlock.style.display = 'block';
                 returnSubmitBtn.disabled = false;
