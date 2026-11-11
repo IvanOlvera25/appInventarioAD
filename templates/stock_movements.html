@@ -733,8 +733,9 @@
                         </div>
                     </div>
 
-                    <!-- Quién devuelve el material -->
-                    <div class="mb-3" id="returnByBlock" style="display:none;">
+                    <!-- Quién devuelve el material. Visible desde que abre el modal:
+                         escondido tras elegir material, era fácil no capturarlo. -->
+                    <div class="mb-3" id="returnByBlock">
                         <label class="form-label fw-bold">Quién entrega el material</label>
                         <input type="text" class="form-control" name="returned_by" id="returnedByInput"
                                placeholder="Nombre de quien regresa el material" autocomplete="off">
@@ -908,6 +909,20 @@
 
         const exitPersonnelCard = document.getElementById('exitPersonnelCard');
         const exitRequesterSelect = document.getElementById('exitRequesterSelect');
+
+        /** Nombre del solicitante elegido, funcione o no TomSelect sobre el select. */
+        window.nombreSolicitanteSalida = function () {
+            const sel = exitRequesterSelect;
+            if (!sel) return '';
+            if (sel.tomselect) {
+                const valor = sel.tomselect.getValue();
+                const opcion = sel.tomselect.options ? sel.tomselect.options[valor] : null;
+                if (opcion) return String(opcion.text || opcion.nombre || '').trim();
+            }
+            const opcion = sel.options[sel.selectedIndex];
+            if (!opcion) return '';
+            return String(opcion.dataset.nombre || opcion.textContent || '').trim();
+        };
         const exitRequesterLoader = document.getElementById('exitRequesterLoader');
         const exitDelivererName = document.getElementById('exitDelivererName');
         const exitFreeAreaRow = document.getElementById('exitFreeAreaRow');
@@ -1592,7 +1607,9 @@
                 department: (isConsumable || isFree) ? '' : exitDepartmentSelect.value,
                 area_libre: isFree ? exitFreeAreaSelect.value : '',
                 requester_id: requesterSelected.value,
-                requester_name: requesterSelected.dataset.nombre,
+                // TomSelect reconstruye las opciones nativas y se lleva los data-*,
+                // así que el nombre se resuelve de su propio almacén primero.
+                requester_name: nombreSolicitanteSalida(),
                 deliverer_name: exitDelivererName.value,
                 notes: exitNotes.value,
                 is_consumable_exit: isConsumable,
@@ -1820,7 +1837,6 @@
 
                 await cargarAreasRetorno();
                 returnConditionBlock.style.display = 'block';
-                document.getElementById('returnByBlock').style.display = 'block';
                 returnAreaBlock.style.display = 'block';
                 returnNotesBlock.style.display = 'block';
                 returnSubmitBtn.disabled = false;

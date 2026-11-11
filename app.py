@@ -2002,6 +2002,19 @@ def available_areas():
     return sorted(nombres, key=str.casefold)
 
 
+def requester_from_notes(notes):
+    """Rescata el solicitante incrustado en las notas ("Solicitante: X.").
+
+    Red de seguridad: si por cualquier ruta llegara el movimiento sin el campo
+    propio pero con el nombre en la nota, no se pierde el dato.
+    """
+    if not notes or 'Solicitante:' not in notes:
+        return None
+    resto = notes.split('Solicitante:', 1)[1]
+    nombre = resto.split('.', 1)[0].strip()
+    return nombre or None
+
+
 def area_scope():
     """Área que acota lo que ve el usuario actual, o None si ve todo.
 
@@ -7342,7 +7355,8 @@ def register_exit():
             fecha=now_mx().date(),
             hora=now_mx().time(),
             personal=current_user.username,
-            requester=(data.get('requester') or '').strip() or None,
+            requester=((data.get('requester') or '').strip()
+                       or requester_from_notes(f"Solicitante: {data.get('requester', '')}.")),
             user_id=current_user.id,
             notes=f"Solicitante: {data.get('requester', 'N/A')}. {data.get('notes', '')}",
             reference_type='requisicion'
@@ -7739,7 +7753,8 @@ def register_exit_multiple():
                     fecha=now_mx().date(),
                     hora=now_mx().time(),
                     personal=deliverer_name,
-                    requester=(requester_name or '').strip() or None,
+                    requester=((requester_name or '').strip()
+                               or requester_from_notes(f"{notes_prefix}{notes}")),
                     user_id=current_user.id,
                     notes=f"{notes_prefix}{notes}",
                     reference_type=ref_type
@@ -8520,14 +8535,20 @@ def register():
     # GET: mostrar formulario
     return render_template('register.html')
 
+# Códigos permanentes. Si se agrega un rol hay que darlo de alta aquí y en
+# ROLE_PREFIX: la pantalla de Usuarios & Códigos los muestra desde su propia
+# lista, así que un código que falte aquí se ve válido pero el registro lo
+# rechaza.
 VALID_CODES = {
     "REQ-AB12CD": "requisitador",
     "ALM-34EF56": "almacenista",
     "ADM-7890AA": "admin",
+    "JEF-5678BB": "jefe_area",
 }
 
 # Mapa para reconstruir el código desde el rol elegido en el modal
-ROLE_PREFIX = {"requisitador": "REQ", "almacenista": "ALM", "admin": "ADM"}
+ROLE_PREFIX = {"requisitador": "REQ", "almacenista": "ALM", "admin": "ADM",
+               "jefe_area": "JEF"}
 
 def _normalize_full_code(selected_role: str, code_input: str) -> str:
     """
@@ -9764,12 +9785,10 @@ def admin_users_and_codes():
     # Lista de códigos (fijos y cualesquiera extra que existan)
     codes = VerificationCode.query.order_by(asc(VerificationCode.role), asc(VerificationCode.code)).all()
 
-    fixed_codes = [
-        ("REQ-AB12CD", "requisitador"),
-        ("ALM-34EF56", "almacenista"),
-        ("ADM-7890AA", "admin"),
-        ("JEF-5678BB", "jefe_area"),
-    ]
+    # Derivado de VALID_CODES, que es lo que valida el registro: así la página
+    # no puede mostrar un código que el alta rechace, como pasó con el de
+    # Jefe de Área.
+    fixed_codes = sorted(VALID_CODES.items(), key=lambda par: par[1])
 
     return render_template('admin_users_codes.html',
                            users=users,
